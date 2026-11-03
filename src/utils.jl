@@ -1,0 +1,62 @@
+using Static, StaticArrays, SparseArrays, LinearAlgebra, FastLinAlg
+
+SR(first, last) = StaticArrays.SUnitRange(dynamic(first), dynamic(last))
+
+zero!(aa::AbstractArray) = fill!(aa, zero(eltype(aa)))
+SparseArrays.nnz(aa::AbstractArray) = length(aa)
+
+function uniformscaling!(M::AbstractMatrix, k)
+    LinearAlgebra.checksquare(M)
+    for i in axes(M, 1)
+        @inbounds M[i, i] += k
+    end
+    return M
+end
+
+function cumsum1!(A, B)
+    total = A[1]
+    @inbounds for ind in eachindex(B)
+        total += B[ind]
+        A[ind + 1] = total
+    end
+    return A
+end
+
+function computestartindices(blocksizes)
+    startind = Vector{Int}(undef, length(blocksizes))
+    if !isempty(blocksizes)
+        startind[1] = 1
+        @inbounds startind[2:end] .= view(blocksizes, 1:length(blocksizes) - 1)
+        cumsum!(startind)
+    end
+    return startind
+end
+
+sparse_dense_decision(ndims, sparsity, blocksizes) = sparse_dense_decision(ndims, block_sparse_nnz(sparsity, blocksizes))
+sparse_dense_decision(ndims, nnz) = (nnz * 64) < (25 * ndims * (ndims - 40)) # Threshold nnz (for lower triangle) = 25/64 * (d^2 - 40d)
+
+function block_sparse_nnz(sparsity, blocksizes)
+    # Compute the number of non-zeros in a block sparse matrix
+    nnz = 0
+    for col in 1:size(sparsity, 2)
+        @inbounds bc = blocksizes[col]
+        for r in nzrange(sparsity, col)
+            nnz += bc * @inbounds blocksizes[rowvals(sparsity)[r]]
+        end
+    end
+    return nnz
+end
+
+function find_diag_inds(A::SparseMatrixCSC{T, Ti}) where {T, Ti}
+    n = A.n
+    diag_inds = Vector{Ti}(undef, n)
+    @inbounds for col in 1:n
+        for idx in nzrange(A, col)
+            if A.rowval[idx] == col
+                diag_inds[col] = idx
+                break
+            end
+        end
+    end
+    return diag_inds
+end

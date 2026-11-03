@@ -1,0 +1,27 @@
+name = "BlockMatrices"
+uuid = "a7d4e89f-9c3b-4d0e-8f5a-5b8c7d1e4f28"
+version = "0.1.0"
+authors = ["Oliver Woodford"]
+
+[deps]
+FastLinAlg = "e4b2c56d-7a1e-4f9b-8c3d-3e6f5a9b2c06"
+HybridArrays = "1baab800-613f-4b0a-84e4-9cd3431bfbb9"
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
+Static = "aedffcd0-7271-4cad-89d0-dc628f76c6d3"
+StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
+
+[compat]
+FastLinAlg = "0.1"
+HybridArrays = "0.4"
+LinearAlgebra = "1.10"
+SparseArrays = "1.10"
+Static = "0.8.7, 1"
+StaticArrays = "1"
+julia = "1.10"
+
+[extras]
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Test"]
