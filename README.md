@@ -1,5 +1,9 @@
 # BlockMatrices.jl
 
+[![Documentation](https://img.shields.io/badge/docs-dev-blue.svg)](https://ojwoodford.github.io/BlockMatrices.jl/dev/)
+[![Build Status](https://github.com/ojwoodford/BlockMatrices.jl/actions/workflows/CI.yml/badge.svg?branch=main)](https://github.com/ojwoodford/BlockMatrices.jl/actions/workflows/CI.yml?query=branch%3Amain)
+[![codecov](https://codecov.io/gh/ojwoodford/BlockMatrices.jl/branch/main/graph/badge.svg)](https://codecov.io/gh/ojwoodford/BlockMatrices.jl)
+
 High-performance block-structured dense (`BlockDenseMatrix`) and sparse (`BlockSparseMatrix`) matrices in Julia, designed for zero-allocation assembly of Jacobians, Gauss-Newton / second-order Hessians, and Schur complement systems.
 
 ## Features
