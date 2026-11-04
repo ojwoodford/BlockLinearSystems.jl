@@ -196,5 +196,12 @@ using BlockMatrices, SparseArrays, StaticArrays, Static, HybridArrays, LinearAlg
         S = sparse([1, 2, 2, 3, 3], [1, 1, 2, 2, 3], [10.0, 1.0, 20.0, 2.0, 30.0], 3, 3)
         dinds = find_diag_inds(S)
         @test S.nzval[dinds] == [10.0, 20.0, 30.0]
+
+        # inplacecumsum!
+        x = [1, 2, 3, 4]
+        @test inplacecumsum!(x) === x
+        @test x == [1, 3, 6, 10]
+        y = Float64[]
+        @test inplacecumsum!(y) == Float64[]
     end
 end

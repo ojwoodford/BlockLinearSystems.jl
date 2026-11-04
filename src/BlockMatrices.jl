@@ -1,13 +1,12 @@
 module BlockMatrices
 
-using FastLinAlg
 using Static, StaticArrays, HybridArrays, SparseArrays, LinearAlgebra
 
 export BlockSparseMatrix, BlockDenseMatrix
 export block, validblock, zero!, copy_structure, uniformscaling!
 export symmetrifyfull, symmetrifyfull!, symmetrifysparse, makesparseindices
 export cacheindices, clearindicescache, updatelastrowsym!
-export sparse_dense_decision, block_sparse_nnz, computestartindices, find_diag_inds
+export sparse_dense_decision, block_sparse_nnz, computestartindices, find_diag_inds, inplacecumsum!
 
 include("utils.jl")
 include("BlockDenseMatrix.jl")

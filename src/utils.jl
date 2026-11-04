@@ -1,9 +1,25 @@
-using Static, StaticArrays, SparseArrays, LinearAlgebra, FastLinAlg
+using Static, StaticArrays, SparseArrays, LinearAlgebra
 
 SR(first, last) = StaticArrays.SUnitRange(dynamic(first), dynamic(last))
 
 zero!(aa::AbstractArray) = fill!(aa, zero(eltype(aa)))
 SparseArrays.nnz(aa::AbstractArray) = length(aa)
+
+"""
+    inplacecumsum!(A::AbstractVector)
+
+Single-argument in-place cumulative sum overwriting `A` with `cumsum(A)` and returning `A`.
+"""
+function inplacecumsum!(A::AbstractVector)
+    total = zero(eltype(A))
+    @inbounds for ind in eachindex(A)
+        @fastmath total += A[ind]
+        A[ind] = total
+    end
+    return A
+end
+
+precompile(inplacecumsum!, (Vector{Int},))
 
 function uniformscaling!(M::AbstractMatrix, k)
     LinearAlgebra.checksquare(M)
@@ -27,7 +43,7 @@ function computestartindices(blocksizes)
     if !isempty(blocksizes)
         startind[1] = 1
         @inbounds startind[2:end] .= view(blocksizes, 1:length(blocksizes) - 1)
-        cumsum!(startind)
+        inplacecumsum!(startind)
     end
     return startind
 end
