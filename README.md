@@ -4,32 +4,92 @@
 [![Build Status](https://github.com/ojwoodford/BlockLinearSystems.jl/actions/workflows/CI.yml/badge.svg?branch=main)](https://github.com/ojwoodford/BlockLinearSystems.jl/actions/workflows/CI.yml?query=branch%3Amain)
 [![codecov](https://codecov.io/gh/ojwoodford/BlockLinearSystems.jl/branch/main/graph/badge.svg)](https://codecov.io/gh/ojwoodford/BlockLinearSystems.jl)
 
-High-performance block-structured dense (`DenseBlockLinearSystem`) and sparse (`SparseBlockLinearSystem`) matrices in Julia, designed for zero-allocation assembly of Jacobians, Gauss-Newton / second-order Hessians, and Schur complement systems.
+High-performance block-structured dense (`DenseBlockLinearSystem`) and sparse (`SparseBlockLinearSystem`) linear system accumulators in Julia, designed for zero-allocation assembly of Jacobians, Gauss-Newton / Levenberg-Marquardt Hessians, and Schur complement systems in nonlinear optimization and factor graphs.
 
-## Features
+---
 
-- **`SparseBlockLinearSystem{T}`**: Contiguous column-major storage of each non-zero block inside a single flat `Vector{T}`, eliminating pointer chasing during block accumulation.
-- **`DenseBlockLinearSystem{T}`**: Dense `Matrix{T}` partitioned by variable block offsets, returning stack-wrapped `SizedMatrix` or `HybridArray` views when indexed with `StaticInt` dimensions.
-- **Fast Conversion & Symmetrification**: Precompute gather indices once with `makesparseindices(bsm, true)` to scatter lower-triangular block-sparse accumulators into symmetric `SparseMatrixCSC` matrices with zero allocations.
-- **Submatrix & Schur Support**: Extract and symmetrify principal block submatrices in-place via `symmetrifyfull!(mat, bsm, blocks)`.
+## Why BlockLinearSystems.jl?
+
+In nonlinear least squares (NLS), bundle adjustment (BA), and SLAM, optimization problems are naturally organized around variable blocks (e.g. 6-DoF camera poses, 3-DoF landmarks). Accumulating cost factor Hessian contributions into a standard `SparseMatrixCSC` during optimization requires costly searches across compressed column pointers, causing significant allocation and cache penalties.
+
+`BlockLinearSystems.jl` provides dedicated block linear system accumulators specifically tuned for this workflow:
+- **Contiguous Block Storage**: Each non-zero block $(i, j)$ is stored contiguously in column-major order in a flat buffer, making block accumulation a single contiguous memory write.
+- **Zero-Allocation Views**: Accessing blocks with static dimensions (`static(N)` or `Val(N)`) returns stack-allocated `SizedMatrix` or `HybridArray` views, enabling unrolled SIMD addition with StaticArrays (`.+=`).
+- **Zero-Allocation Solver Scatter**: In iterative solvers, `sparse_with_map` precomputes the CSC pattern and an integer scatter map once during setup. In each iteration, `copyto!(csc_mat, bsm, scatter_map)` updates the sparse solver matrix with **zero allocations**.
+- **Schur Complement Subsystems**: `symmetrifyfull!(dest, bsm, camera_blocks)` extracts and symmetrifies principal block submatrices in-place for fast Schur elimination.
+- **Thread-Local Clones**: `copy_structure(sys)` creates a lightweight thread-local accumulator sharing index structures, reduced after assembly via a fast BLAS vector addition (`sys.data .+= thread_sys.data`).
+
+### Design Scope: Accumulators, Not General Matrices
+
+`DenseBlockLinearSystem` and `SparseBlockLinearSystem` intentionally do **not** subtype `AbstractMatrix` or implement generic linear algebra (`mul!`, `*`, scalar iteration). This package is strictly an ultra-fast block accumulator and Schur assembler. Once accumulated, systems are converted or scattered into standard `Matrix` or `SparseMatrixCSC` formats for factorization with SuiteSparse, LDLFactorizations, or BLAS.
+
+---
+
+## Comparison
+
+| Capability | Standard `SparseMatrixCSC` | Standard `Matrix` | `SparseBlockLinearSystem` | `DenseBlockLinearSystem` |
+| :--- | :--- | :--- | :--- | :--- |
+| **Block Access Overhead** | High (search per element) | SubArray / slice allocation | **Zero allocations** (`SizedMatrix`/`HybridArray`) | **Zero allocations** (`SizedMatrix`/`HybridArray`) |
+| **Block Write Locality** | Strided across columns | Strided across rows/columns | **Contiguous slice in `Vector{T}`** | Contiguous column slices |
+| **Multi-Threaded Assembly** | Complex non-zero merge | High memory footprint | **Flat `copy_structure` + vector reduction** | Flat buffer reduction |
+| **Iterative Solver Scatter** | Full re-assembly or nzval math | N/A | **Zero allocations** (`copyto!`) | Zero allocations (direct buffer) |
+| **Schur Subsystem Extraction** | Expensive sparse matrix indexing | Dense matrix slicing | **$O(\text{nnz}_C)$ in-place submatrix extraction** | Submatrix copy |
+
+---
 
 ## Quick Start
+
+### 1. Zero-Allocation Optimization Loop (Sparse)
 
 ```julia
 using BlockLinearSystems, SparseArrays, Static, StaticArrays
 
-# 1. DenseBlockLinearSystem with blocks of sizes [2, 3] (offsets [1, 3, 6])
-bdm = DenseBlockLinearSystem{Float64}([1, 3, 6])
-block(bdm, 1, 1, static(2), static(2)) .= @SMatrix [2.0 0.5; 0.5 3.0]
-block(bdm, 2, 1, static(3), static(2)) .= @SMatrix [1.0 0.0; 0.0 1.0; -1.0 1.0]
-block(bdm, 2, 2, static(3), static(3)) .= @SMatrix [4.0 0.0 0.0; 0.0 4.0 0.0; 0.0 0.0 4.0]
-H_dense = symmetrifyfull(bdm)
+# 1. Define block sizes and block sparsity pattern (lower-triangular)
+#    Blocks: 2 poses of dim 6, 1 landmark of dim 3
+blocksizes = [6, 6, 3]
+block_coords = [(1, 1), (2, 1), (2, 2), (3, 1), (3, 2), (3, 3)]
+bsm = SparseBlockLinearSystem{Float64}(block_coords, blocksizes)
 
-# 2. SparseBlockLinearSystem (lower-triangular block pattern, stored transposed)
-sparsity_t = sparse([true true; false true])
-bsm = SparseBlockLinearSystem{Float64}(sparsity_t, [2, 3], [2, 3])
-block(bsm, 1, 1) .= [2.0 0.5; 0.5 3.0]
-block(bsm, 2, 1) .= [1.0 0.0; 0.0 1.0; -1.0 1.0]
-block(bsm, 2, 2) .= [4.0 0.0 0.0; 0.0 4.0 0.0; 0.0 0.0 4.0]
-H_sparse = symmetrifysparse(bsm)
+# 2. Setup solver matrix and scatter map once (setup phase)
+H_csc, scatter_map = sparse_with_map(bsm; symmetric=true)
+
+# 3. Inside iterative solver loop (0 allocations):
+zero!(bsm)
+
+# Accumulate pose-pose block using static dimensions
+H_pose = @SMatrix rand(6, 6)
+block(bsm, 1, 1, Val(6), Val(6)) .+= H_pose
+
+# Accumulate landmark-pose block using static dimensions
+H_meas = @SMatrix rand(3, 6)
+block(bsm, 3, 1, Val(3), Val(6)) .+= H_meas
+
+# Scatter into CSC matrix with exactly 0 allocations:
+copyto!(H_csc, bsm, scatter_map)
+# Now pass H_csc to your sparse Cholesky / LDLᵀ solver!
+```
+
+### 2. Dense Block System
+
+```julia
+using BlockLinearSystems, Static
+
+# Construct a dense system partitioned into blocks of sizes [2, 3]
+bdm = DenseBlockLinearSystem{Float64}([2, 3])
+
+# Zero-allocation block indexing
+block(bdm, 1, 1, Val(2), Val(2)) .= [2.0 0.5; 0.5 3.0]
+block(bdm, 2, 1, Val(3), Val(2)) .= [1.0 0.0; 0.0 1.0; -1.0 1.0]
+block(bdm, 2, 2, Val(3), Val(3)) .= [4.0 0.0 0.0; 0.0 4.0 0.0; 0.0 0.0 4.0]
+
+# Symmetrify in-place: mirrors lower triangle to upper triangle
+symmetrifyfull!(bdm)
+```
+
+### 3. Schur Complement Submatrix Extraction
+
+```julia
+# Extract only the camera submatrix (blocks 1 and 2) in-place:
+H_cameras = Matrix{Float64}(undef, 12, 12)
+symmetrifyfull!(H_cameras, bsm, [1, 2])
 ```
