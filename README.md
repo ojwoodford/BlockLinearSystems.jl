@@ -11,7 +11,7 @@ High-performance block-structured dense (`BlockDenseMatrix`) and sparse (`BlockS
 - **`BlockSparseMatrix{T}`**: Contiguous column-major storage of each non-zero block inside a single flat `Vector{T}`, eliminating pointer chasing during block accumulation.
 - **`BlockDenseMatrix{T}`**: Dense `Matrix{T}` partitioned by variable block offsets, returning stack-wrapped `SizedMatrix` or `HybridArray` views when indexed with `StaticInt` dimensions.
 - **Fast Conversion & Symmetrification**: Precompute gather indices once with `makesparseindices(bsm, true)` to scatter lower-triangular block-sparse accumulators into symmetric `SparseMatrixCSC` matrices with zero allocations.
-- **Submatrix & Schur Support**: Extract and symmetrify principal block submatrices in-place via `symmetrifyfull!(mat, bsm, blocks)` and decide between sparse and dense solvers via `sparse_dense_decision`.
+- **Submatrix & Schur Support**: Extract and symmetrify principal block submatrices in-place via `symmetrifyfull!(mat, bsm, blocks)`.
 
 ## Quick Start
 

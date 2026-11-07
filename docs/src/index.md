@@ -10,7 +10,7 @@
 - **Zero-Allocation Static Views**: Indexing [`block(M, i, j, rows, cols)`](@ref block) with `StaticInt` dimensions returns stack-wrapped `SizedMatrix` or `HybridArray` views over the underlying storage for SIMD-accelerated block operations.
 - **Fast Symmetric CSC Conversion**: [`makesparseindices`](@ref) precomputes the 1-based gather indices mapping `bsm.data` to a full symmetric `SparseMatrixCSC`, enabling $O(\text{nnz})$ in-place scatter into sparse Cholesky / $LDL^T$ solver matrices.
 - **Dense & Submatrix Symmetrification**: [`symmetrifyfull`](@ref) and [`symmetrifyfull!`](@ref) mirror lower-triangular block accumulators into full symmetric dense matrices or principal block submatrices (e.g. for Schur complement reduced camera systems).
-- **Automatic Sparse vs. Dense Thresholding**: [`sparse_dense_decision`](@ref) and [`block_sparse_nnz`](@ref) determine whether a block-structured system is faster to solve using sparse or dense linear algebra.
+- **Block Sparsity Statistics**: [`block_sparse_nnz`](@ref) computes the scalar non-zero count implied by a block sparsity pattern, e.g. to help a solver choose between sparse and dense linear algebra.
 
 ## Quick Start
 

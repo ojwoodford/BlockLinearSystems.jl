@@ -236,23 +236,6 @@ Updates the block size of the final row/column block of a symmetric `BlockSparse
 updatelastrowsym!
 
 """
-    sparse_dense_decision(ndims, sparsity, blocksizes) -> Bool
-    sparse_dense_decision(ndims, nnz) -> Bool
-
-Heuristic returning `true` when a symmetric linear system of dimension `ndims` with lower-triangular non-zero count `nnz` is faster to factorize as a sparse matrix than as a dense matrix:
-`64 * nnz < 25 * ndims * (ndims - 40)`.
-
-# Example
-```julia
-using BlockMatrices
-
-sparse_dense_decision(100, 1500) # true
-sparse_dense_decision(30, 100)   # false
-```
-"""
-sparse_dense_decision
-
-"""
     block_sparse_nnz(sparsity, blocksizes) -> Int
 
 Computes the total number of scalar non-zeros in a block-sparse matrix given its block `sparsity::SparseMatrixCSC` pattern and `blocksizes` vector.

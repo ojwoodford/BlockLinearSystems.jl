@@ -177,16 +177,10 @@ using BlockMatrices, SparseArrays, StaticArrays, Static, HybridArrays, LinearAlg
     end
 
     @testset "Helper Functions" begin
-        # sparse_dense_decision & block_sparse_nnz
-        @test sparse_dense_decision(100, 2343)
-        @test !sparse_dense_decision(100, 2344)
-        @test !sparse_dense_decision(40, 0)
-        @test !sparse_dense_decision(10, 0)
-
+        # block_sparse_nnz
         sparsity = sparse([true true; false true])
         @test block_sparse_nnz(sparsity, [2, 3]) == 2 * 2 + 2 * 3 + 3 * 3
         @test block_sparse_nnz(sparse([true false; false true]), [2, 3]) == 2 * 2 + 3 * 3
-        @test sparse_dense_decision(5, sparsity, [2, 3]) == sparse_dense_decision(5, 19)
 
         # computestartindices
         @test computestartindices([2, 3, 1, 4]) == [1, 3, 6, 7]

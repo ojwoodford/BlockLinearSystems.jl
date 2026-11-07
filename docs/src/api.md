@@ -32,7 +32,6 @@ updatelastrowsym!
 ## Sparsity & Offset Utilities
 
 ```@docs
-sparse_dense_decision
 block_sparse_nnz
 computestartindices
 find_diag_inds

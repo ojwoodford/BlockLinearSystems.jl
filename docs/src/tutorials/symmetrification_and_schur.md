@@ -44,10 +44,9 @@ symmetrifyfull!(H_sub, bsm, [1])
 
 ## Choosing Between Sparse and Dense Representations
 
-For small or densely connected graphs, dense Cholesky factorization outperforms sparse factorization due to lower indexing overhead and BLAS/SIMD efficiency. [`sparse_dense_decision`](@ref) implements an empirical crossover threshold based on matrix dimension `ndims` and lower-triangular non-zeros [`block_sparse_nnz`](@ref):
+For small or densely connected graphs, dense Cholesky factorization outperforms sparse factorization due to lower indexing overhead and BLAS/SIMD efficiency. [`block_sparse_nnz`](@ref) computes the number of scalar non-zeros implied by a block sparsity pattern, which a solver can use to choose between a [`BlockSparseMatrix`](@ref) and a [`BlockDenseMatrix`](@ref):
 
 ```julia
-blocksizes = [6, 6, 6, 3, 3, 3, 3, 3]
-ndims = sum(blocksizes)
-use_sparse = sparse_dense_decision(ndims, sparsity_t, blocksizes)
+blocksizes = [2, 2]
+nnz_lower = block_sparse_nnz(sparsity_t, blocksizes) # 2*2 + 2*2 + 2*2 = 12
 ```
