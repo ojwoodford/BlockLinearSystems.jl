@@ -23,12 +23,31 @@ end
                0  0  7  8  9  13;
                0  0  0  0  0  0 ]
 
-        # Construct a matching BSM
-        b = SparseBlockLinearSystem{Float64}(sparse([0 0 1; 1 0 0; 0 1 1; 0 0 0]' .> 0), [3, 3, 1, 1], [2, 3, 1])
+        # 1. Construct using TransposedPattern
+        pattern_t = sparse([0 0 1; 1 0 0; 0 1 1; 0 0 0]' .> 0)
+        b = SparseBlockLinearSystem{Float64}(TransposedPattern(pattern_t), [3, 3, 1, 1], [2, 3, 1])
         block(b, 2, 1) .= reshape(1.:6., (3, 2))
         block(b, 3, 2, 1, 3) .= SMatrix{1, 3, Float64, 3}(7:9)
         block(b, 1, 3, static(3), static(1)) .= [10.; 11; 12]
         block(b, 3, 3) .= 13.
+
+        # 2. Construct using standard (natural orientation) pattern
+        pattern_natural = sparse(pattern_t')
+        b_nat = SparseBlockLinearSystem{Float64}(pattern_natural, [3, 3, 1, 1], [2, 3, 1])
+        block(b_nat, 2, 1) .= reshape(1.:6., (3, 2))
+        block(b_nat, 3, 2, 1, 3) .= SMatrix{1, 3, Float64, 3}(7:9)
+        block(b_nat, 1, 3, static(3), static(1)) .= [10.; 11; 12]
+        block(b_nat, 3, 3) .= 13.
+        @test Matrix(b_nat) == out
+
+        # 3. Construct using block coordinates [(row, col), ...]
+        coords = [(2, 1), (3, 2), (1, 3), (3, 3)]
+        b_coords = SparseBlockLinearSystem{Float64}(coords, [3, 3, 1, 1], [2, 3, 1])
+        block(b_coords, 2, 1) .= reshape(1.:6., (3, 2))
+        block(b_coords, 3, 2, 1, 3) .= SMatrix{1, 3, Float64, 3}(7:9)
+        block(b_coords, 1, 3, static(3), static(1)) .= [10.; 11; 12]
+        block(b_coords, 3, 3) .= 13.
+        @test Matrix(b_coords) == out
 
         # HybridArray block views (StaticInt row / Integer col and Integer row / StaticInt col)
         hb1 = block(b, 2, 1, static(3), 2)
@@ -49,6 +68,26 @@ end
         @test validblock(b, 2, 1)
         @test !validblock(b, 1, 2)
         @test !validblock(b, 10, 10)
+
+        # Accessors
+        @test blocksizes(b, 1) == [3, 3, 1, 1]
+        @test blocksizes(b, 2) == [2, 3, 1]
+        @test blocksizes(b) == ([3, 3, 1, 1], [2, 3, 1])
+        @test nblocks(b, 1) == 4
+        @test nblocks(b, 2) == 3
+        @test nblocks(b) == (4, 3)
+        @test blockdata(b) === b.data
+        @test blockrange(b, 1, 1) == 1:3
+        @test blockrange(b, 1, 2) == 4:6
+        @test blockrange(b, 2, 2) == 3:5
+
+        # eachstoredblock iterator
+        stored_coords = [(r, c) for (r, c, B) in eachstoredblock(b)]
+        @test (2, 1) in stored_coords
+        @test (3, 2) in stored_coords
+        @test (1, 3) in stored_coords
+        @test (3, 3) in stored_coords
+        @test length(stored_coords) == 4
 
         m = Matrix(b)
         @test typeof(m) == Matrix{Float64}
@@ -101,7 +140,7 @@ end
                 0  0  13  14  15  16]
         outsym = max.(out2, out2')
 
-        bs = SparseBlockLinearSystem{Int64}(sparse([0 0 0; 1 1 0; 0 1 1]' .> 0), [2, 3, 1], [2, 3, 1])
+        bs = SparseBlockLinearSystem{Int64}(TransposedPattern(sparse([0 0 0; 1 1 0; 0 1 1]' .> 0)), [2, 3, 1], [2, 3, 1])
         block(bs, 2, 1) .= reshape(1:6, (3, 2))
         block(bs, 3, 2, 1, 3) .= SVector{3, Int64}(13:15)'
         block(bs, 2, 2, 3, 3) .= [7 8 9; 8 10 11; 9 11 12]
@@ -143,7 +182,7 @@ end
         @test Matrix(s3) == outsym
 
         # uniformscaling! on symmetric BSM with full diagonal blocks
-        bs_diag = SparseBlockLinearSystem{Float64}(sparse([1 0; 1 1]' .> 0), [2, 2])
+        bs_diag = SparseBlockLinearSystem{Float64}(TransposedPattern(sparse([1 0; 1 1]' .> 0)), [2, 2])
         block(bs_diag, 1, 1) .= [1.0 0.0; 0.0 2.0]
         block(bs_diag, 2, 1) .= [0.5 0.0; 0.0 0.5]
         block(bs_diag, 2, 2) .= [3.0 0.0; 0.0 4.0]
@@ -151,14 +190,15 @@ end
         @test diag(Matrix(bs_diag)) == [11.0, 12.0, 13.0, 14.0]
 
         # uniformscaling! error on non-square or missing diagonal
-        bs_rect = SparseBlockLinearSystem{Float64}(sparse([true;;]), [2], [3])
+        bs_rect = SparseBlockLinearSystem{Float64}(TransposedPattern(sparse([true;;])), [2], [3])
         @test_throws ArgumentError uniformscaling!(bs_rect, 1.0)
-        bs_nodiag = SparseBlockLinearSystem{Float64}(sparse([false true; true false]), [2, 2])
+        bs_nodiag = SparseBlockLinearSystem{Float64}(TransposedPattern(sparse([false true; true false])), [2, 2])
         @test_throws ArgumentError uniformscaling!(bs_nodiag, 1.0)
     end
 
     @testset "DenseBlockLinearSystem" begin
-        bdm = DenseBlockLinearSystem{Float64}([1, 3, 5])
+        # Construct using block sizes [2, 2]
+        bdm = DenseBlockLinearSystem{Float64}([2, 2])
         @test validblock(bdm, 1, 1) == true
         @test validblock(bdm, 2, 2) == true
         @test validblock(bdm, 3, 1) == false
@@ -170,6 +210,22 @@ end
         @test length(bdm) == 16
         @test length(bdm.data) == 16
         @test eltype(bdm) == Float64
+
+        # Accessors
+        @test blocksizes(bdm, 1) == [2, 2]
+        @test blocksizes(bdm, 2) == [2, 2]
+        @test blocksizes(bdm) == ([2, 2], [2, 2])
+        @test nblocks(bdm, 1) == 2
+        @test nblocks(bdm, 2) == 2
+        @test nblocks(bdm) == (2, 2)
+        @test blockdata(bdm) === bdm.data
+        @test blockrange(bdm, 1, 1) == 1:2
+        @test blockrange(bdm, 1, 2) == 3:4
+
+        # eachstoredblock iterator
+        all_blocks = [(r, c) for (r, c, B) in eachstoredblock(bdm)]
+        @test length(all_blocks) == 4
+        @test all_blocks == [(1, 1), (2, 1), (1, 2), (2, 2)]
 
         uniformscaling!(bdm, 1.0)
         @test bdm[1, 1] == 1.0
@@ -208,32 +264,37 @@ end
         @test all(iszero, bdm.data)
 
         mat_buf = ones(2, 3)
-        bdm_rect = DenseBlockLinearSystem{Float64}(mat_buf, [1, 3], [1, 4])
+        bdm_rect = DenseBlockLinearSystem{Float64}(mat_buf, [2], [3])
         @test size(bdm_rect) == (2, 3)
         zero!(mat_buf)
         @test all(iszero, mat_buf)
     end
 
     @testset "Helper Functions" begin
-        # block_sparse_nnz
+        # block_sparse_nnz (exported)
         sparsity = sparse([true true; false true])
         @test block_sparse_nnz(sparsity, [2, 3]) == 2 * 2 + 2 * 3 + 3 * 3
         @test block_sparse_nnz(sparse([true false; false true]), [2, 3]) == 2 * 2 + 3 * 3
 
-        # computestartindices
-        @test computestartindices([2, 3, 1, 4]) == [1, 3, 6, 7]
-        @test computestartindices(Int[]) == Int[]
+        # computestartindices (unexported helper, accessible via module)
+        @test BlockLinearSystems.computestartindices([2, 3, 1, 4]) == [1, 3, 6, 7]
+        @test BlockLinearSystems.computestartindices(Int[]) == Int[]
 
-        # find_diag_inds
+        # find_diag_inds (unexported helper, accessible via module)
         S = sparse([1, 2, 2, 3, 3], [1, 1, 2, 2, 3], [10.0, 1.0, 20.0, 2.0, 30.0], 3, 3)
-        dinds = find_diag_inds(S)
+        dinds = BlockLinearSystems.find_diag_inds(S)
         @test S.nzval[dinds] == [10.0, 20.0, 30.0]
 
-        # inplacecumsum!
+        # inplacecumsum! (unexported helper, accessible via module)
         x = [1, 2, 3, 4]
-        @test inplacecumsum!(x) === x
+        @test BlockLinearSystems.inplacecumsum!(x) === x
         @test x == [1, 3, 6, 10]
         y = Float64[]
-        @test inplacecumsum!(y) == Float64[]
+        @test BlockLinearSystems.inplacecumsum!(y) == Float64[]
+
+        # Unexported status verified
+        @test !(:computestartindices in names(BlockLinearSystems))
+        @test !(:find_diag_inds in names(BlockLinearSystems))
+        @test !(:inplacecumsum! in names(BlockLinearSystems))
     end
 end

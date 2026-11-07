@@ -1,6 +1,16 @@
 using StaticArrays, HybridArrays, LinearAlgebra
 import SparseArrays
 
+"""
+    TransposedPattern(pattern::SparseMatrixCSC{Bool, Int})
+
+Wrapper indicating that the provided block sparsity pattern is already in transposed orientation
+(size is `(length(colblocksizes), length(rowblocksizes))`).
+"""
+struct TransposedPattern
+    pattern::SparseArrays.SparseMatrixCSC{Bool, Int}
+end
+
 struct SparseBlockLinearSystem{T}
     data::Vector{T}                                             # Storage for all the matrix data
     indices::SparseArrays.SparseMatrixCSC{Int, Int}             # Start indices for each block matrix
@@ -12,25 +22,25 @@ struct SparseBlockLinearSystem{T}
 
     function SparseBlockLinearSystem{T}(nnzvals, indicestransposed, rowblocksizes, colblocksizes=rowblocksizes) where T
         all(i -> 0 < i <= 255, rowblocksizes) || throw(ArgumentError("Row block dimensions must be between 1 and 255"))
-        rbs = convert.(UInt8, rowblocksizes)
+        rbs = convert(Vector{UInt8}, rowblocksizes)
         sumrbs = Int(sum(rbs))
         if rowblocksizes == colblocksizes
             cbs = rbs
             sumcbs = sumrbs
         else
             all(i -> 0 < i <= 255, colblocksizes) || throw(ArgumentError("Column block dimensions must be between 1 and 255"))
-            cbs = convert.(UInt8, colblocksizes)
+            cbs = convert(Vector{UInt8}, colblocksizes)
             sumcbs = Int(sum(cbs))
         end
         size(indicestransposed) == (length(cbs), length(rbs)) || throw(DimensionMismatch("Size of indicestransposed must be ($(length(cbs)), $(length(rbs))), got $(size(indicestransposed))"))
         it = SparseArrays.sparse(indicestransposed)
-        # Eagerly compute indices as transpose of indicestransposed
         indices = SparseArrays.sparse(it')
         return new{T}(zeros(T, nnzvals), indices, it, rbs, cbs, sumrbs, sumcbs)
     end
 
-    function SparseBlockLinearSystem{T}(sparsitytransposed::SparseArrays.SparseMatrixCSC{Bool, Int}, rowblocksizes, colblocksizes=rowblocksizes) where T
-        size(sparsitytransposed) == (length(colblocksizes), length(rowblocksizes)) || throw(DimensionMismatch("Size of sparsitytransposed must be ($(length(colblocksizes)), $(length(rowblocksizes))), got $(size(sparsitytransposed))"))
+    function SparseBlockLinearSystem{T}(sparsity::SparseArrays.SparseMatrixCSC{Bool, Int}, rowblocksizes, colblocksizes=rowblocksizes; transposed::Bool=false) where T
+        sparsitytransposed = transposed ? sparsity : SparseArrays.sparse(sparsity')
+        size(sparsitytransposed) == (length(colblocksizes), length(rowblocksizes)) || throw(DimensionMismatch("Size of sparsity pattern must match block dimensions: expected ($(length(rowblocksizes)), $(length(colblocksizes))), got $(size(sparsity))"))
         # Construct the block indices sparse matrix
         indicestransposed = SparseArrays.SparseMatrixCSC{Int, Int}(sparsitytransposed.m, sparsitytransposed.n, copy(sparsitytransposed.colptr), copy(sparsitytransposed.rowval), Vector{Int}(undef, length(sparsitytransposed.rowval)))
         # Compute the block pointers and length of data storage
@@ -46,6 +56,17 @@ struct SparseBlockLinearSystem{T}
         end
         # Construct the SparseBlockLinearSystem
         return SparseBlockLinearSystem{T}(start - 1, indicestransposed, rowblocksizes, colblocksizes)
+    end
+
+    function SparseBlockLinearSystem{T}(tp::TransposedPattern, rowblocksizes, colblocksizes=rowblocksizes) where T
+        return SparseBlockLinearSystem{T}(tp.pattern, rowblocksizes, colblocksizes; transposed=true)
+    end
+
+    function SparseBlockLinearSystem{T}(blockcoords::AbstractVector{<:Tuple{Integer, Integer}}, rowblocksizes, colblocksizes=rowblocksizes) where T
+        I = [Int(c[1]) for c in blockcoords]
+        J = [Int(c[2]) for c in blockcoords]
+        sparsity = SparseArrays.sparse(I, J, true, length(rowblocksizes), length(colblocksizes))
+        return SparseBlockLinearSystem{T}(sparsity, rowblocksizes, colblocksizes; transposed=false)
     end
 
     function SparseBlockLinearSystem{T}(bsm::SparseBlockLinearSystem{T}, m::Int, n::Int=m) where T
@@ -121,6 +142,75 @@ Base.size(bsm::SparseBlockLinearSystem, dim) = dim == 1 ? bsm.m : (dim == 2 ? bs
 Base.length(bsm::SparseBlockLinearSystem) = bsm.m * bsm.n
 Base.eltype(::SparseBlockLinearSystem{T}) where T = T
 SparseArrays.nnz(bsm::SparseBlockLinearSystem) = length(bsm.data)
+
+# Accessors
+blocksizes(sys::Union{DenseBlockLinearSystem, SparseBlockLinearSystem}, dim::Integer) =
+    dim == 1 ? sys.rowblocksizes : (dim == 2 ? sys.columnblocksizes : throw(ArgumentError("Dimension out of range: must be 1 or 2")))
+
+blocksizes(sys::Union{DenseBlockLinearSystem, SparseBlockLinearSystem}) =
+    (sys.rowblocksizes, sys.columnblocksizes)
+
+nblocks(sys::Union{DenseBlockLinearSystem, SparseBlockLinearSystem}, dim::Integer) =
+    length(blocksizes(sys, dim))
+
+nblocks(sys::Union{DenseBlockLinearSystem, SparseBlockLinearSystem}) =
+    (nblocks(sys, 1), nblocks(sys, 2))
+
+blockdata(sys::DenseBlockLinearSystem) = sys.data
+blockdata(sys::SparseBlockLinearSystem) = sys.data
+
+blockrange(sys::DenseBlockLinearSystem, dim::Integer, idx::Integer) =
+    dim == 1 ? (sys.rowblockoffsets[idx]:sys.rowblockoffsets[idx+1]-1) :
+    dim == 2 ? (sys.columnblockoffsets[idx]:sys.columnblockoffsets[idx+1]-1) :
+    throw(ArgumentError("Dimension out of range: must be 1 or 2"))
+
+function blockrange(sys::SparseBlockLinearSystem, dim::Integer, idx::Integer)
+    sizes = blocksizes(sys, dim)
+    (1 <= idx <= length(sizes)) || throw(BoundsError(sizes, idx))
+    start = 1
+    for k in 1:idx-1
+        start += Int(sizes[k])
+    end
+    return start:(start + Int(sizes[idx]) - 1)
+end
+
+# eachstoredblock iterator
+struct EachStoredBlockIterator{S}
+    sys::S
+end
+
+eachstoredblock(sys::Union{DenseBlockLinearSystem, SparseBlockLinearSystem}) = EachStoredBlockIterator(sys)
+
+Base.IteratorSize(::Type{<:EachStoredBlockIterator}) = Base.SizeUnknown()
+
+function Base.iterate(iter::EachStoredBlockIterator{<:DenseBlockLinearSystem}, state=(1, 1))
+    i, j = state
+    nr, nc = nblocks(iter.sys)
+    if j > nc
+        return nothing
+    end
+    blk = block(iter.sys, i, j)
+    next_state = i < nr ? (i + 1, j) : (1, j + 1)
+    return ((i, j, blk), next_state)
+end
+
+function Base.iterate(iter::EachStoredBlockIterator{<:SparseBlockLinearSystem})
+    it = iter.sys.indicestransposed
+    cols = SparseArrays.findnz(it)
+    return iterate(iter, (cols, 1))
+end
+
+function Base.iterate(iter::EachStoredBlockIterator{<:SparseBlockLinearSystem}, state)
+    (cols, idx) = state
+    (cs, rs, vals) = cols
+    if idx > length(cs)
+        return nothing
+    end
+    c = cs[idx]
+    r = rs[idx]
+    blk = block(iter.sys, r, c)
+    return ((r, c, blk), (cols, idx + 1))
+end
 
 function diagonalblockspace(indices, blocksizes)
     total = Int(0)

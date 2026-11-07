@@ -199,6 +199,78 @@ S = sparse(bsm, idx_csc)
 makesparseindices
 
 """
+    blocksizes(sys, dim) -> Vector{UInt8}
+    blocksizes(sys) -> Tuple{Vector{UInt8}, Vector{UInt8}}
+
+Returns the block dimensions along dimension `dim` (1 for rows, 2 for columns), or a tuple of `(rowblocksizes, columnblocksizes)`.
+
+# Example
+```julia
+using BlockLinearSystems
+
+sys = DenseBlockLinearSystem{Float64}([2, 3])
+blocksizes(sys, 1) # [2, 3]
+```
+"""
+blocksizes
+
+"""
+    nblocks(sys, dim) -> Int
+    nblocks(sys) -> Tuple{Int, Int}
+
+Returns the number of blocks along dimension `dim`, or `(n_rowblocks, n_colblocks)`.
+
+# Example
+```julia
+using BlockLinearSystems
+
+sys = DenseBlockLinearSystem{Float64}([2, 3])
+nblocks(sys, 1) # 2
+nblocks(sys)    # (2, 2)
+```
+"""
+nblocks
+
+"""
+    blockdata(sys) -> Array
+
+Returns the underlying data storage buffer (a contiguous flat `Vector{T}` for [`SparseBlockLinearSystem`](@ref) or `Matrix{T}` for [`DenseBlockLinearSystem`](@ref)).
+"""
+blockdata
+
+"""
+    blockrange(sys, dim, idx) -> UnitRange{Int}
+
+Returns the 1-based global scalar coordinate range of block `idx` along dimension `dim` (1 for rows, 2 for columns).
+
+# Example
+```julia
+using BlockLinearSystems
+
+sys = DenseBlockLinearSystem{Float64}([2, 3])
+blockrange(sys, 1, 2) # 3:5
+```
+"""
+blockrange
+
+"""
+    eachstoredblock(sys)
+
+Returns an iterator yielding `(i, j, block_view)` for every structurally non-zero block in `sys`.
+
+# Example
+```julia
+using BlockLinearSystems
+
+sys = DenseBlockLinearSystem{Float64}([2, 2])
+for (i, j, B) in eachstoredblock(sys)
+    B .= 1.0
+end
+```
+"""
+eachstoredblock
+
+"""
     block_sparse_nnz(sparsity, blocksizes) -> Int
 
 Computes the total number of scalar non-zeros in a block-sparse matrix given its block `sparsity::SparseMatrixCSC` pattern and `blocksizes` vector.

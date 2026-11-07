@@ -2,10 +2,11 @@ module BlockLinearSystems
 
 using Static, StaticArrays, HybridArrays, SparseArrays, LinearAlgebra
 
-export SparseBlockLinearSystem, DenseBlockLinearSystem
+export SparseBlockLinearSystem, DenseBlockLinearSystem, TransposedPattern, BlockOffsets
 export block, validblock, zero!, copy_structure, uniformscaling!
 export symmetrifyfull, symmetrifyfull!, symmetrifysparse, makesparseindices
-export block_sparse_nnz, computestartindices, find_diag_inds, inplacecumsum!
+export block_sparse_nnz
+export blocksizes, nblocks, blockdata, blockrange, eachstoredblock
 
 include("utils.jl")
 include("DenseBlockLinearSystem.jl")
