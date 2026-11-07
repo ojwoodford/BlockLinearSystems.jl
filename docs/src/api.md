@@ -35,4 +35,5 @@ updatelastrowsym!
 block_sparse_nnz
 computestartindices
 find_diag_inds
+inplacecumsum!
 ```

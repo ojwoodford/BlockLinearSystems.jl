@@ -1,6 +1,10 @@
-using BlockMatrices, SparseArrays, StaticArrays, Static, HybridArrays, LinearAlgebra, Test
+using BlockMatrices, SparseArrays, StaticArrays, Static, HybridArrays, LinearAlgebra, Test, Aqua, JET
 
 @testset "BlockMatrices.jl" begin
+    @testset "Aqua & Code Quality" begin
+        Aqua.test_all(BlockMatrices; piracies = false) # piracies tested and resolved in Phase 1
+    end
+
     @testset "BlockSparseMatrix" begin
         # Construct a test matrix
         out = [0. 0  0  0  0  10;

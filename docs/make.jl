@@ -9,7 +9,7 @@ makedocs(
     remotes = nothing,
     warnonly = false,
     format = Documenter.HTML(
-        prettyurls = false,
+        prettyurls = get(ENV, "CI", nothing) == "true",
         sidebar_sitename = true,
     ),
     pages = [
@@ -21,3 +21,10 @@ makedocs(
         ],
     ]
 )
+
+deploydocs(
+    repo = "github.com/ojwoodford/BlockMatrices.jl.git",
+    devbranch = "main",
+    push_preview = true,
+)
+
