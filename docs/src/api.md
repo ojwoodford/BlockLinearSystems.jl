@@ -24,9 +24,6 @@ symmetrifyfull
 symmetrifyfull!
 symmetrifysparse
 makesparseindices
-cacheindices
-clearindicescache
-updatelastrowsym!
 ```
 
 ## Sparsity & Offset Utilities

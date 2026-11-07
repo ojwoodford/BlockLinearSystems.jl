@@ -1,8 +1,15 @@
 using BlockMatrices, SparseArrays, StaticArrays, Static, HybridArrays, LinearAlgebra, Test, Aqua, JET
 
+# Helper to verify zero allocations in inner block accumulation
+function test_block_alloc(b)
+    val = @SMatrix [1.0 2.0; 3.0 4.0; 5.0 6.0]
+    block(b, 2, 1, static(3), static(2)) .+= val
+    return nothing
+end
+
 @testset "BlockMatrices.jl" begin
     @testset "Aqua & Code Quality" begin
-        Aqua.test_all(BlockMatrices; piracies = false) # piracies tested and resolved in Phase 1
+        Aqua.test_all(BlockMatrices)
     end
 
     @testset "BlockSparseMatrix" begin
@@ -41,6 +48,7 @@ using BlockMatrices, SparseArrays, StaticArrays, Static, HybridArrays, LinearAlg
         @test nnz(b) == 13
         @test validblock(b, 2, 1)
         @test !validblock(b, 1, 2)
+        @test !validblock(b, 10, 10)
 
         m = Matrix(b)
         @test typeof(m) == Matrix{Float64}
@@ -54,12 +62,8 @@ using BlockMatrices, SparseArrays, StaticArrays, Static, HybridArrays, LinearAlg
         @test nnz(s) == 13
         @test Matrix(s) == out
 
-        # Internal checks & cache management
+        # Internal eager index checks
         @test all(b.indices.nzval .!= 0)
-        @test b.indices == b.indicestransposed'
-        clearindicescache(b)
-        @test isempty(b.indices.nzval)
-        cacheindices(b)
         @test b.indices == b.indicestransposed'
 
         # copy_structure and zero!
@@ -73,6 +77,20 @@ using BlockMatrices, SparseArrays, StaticArrays, Static, HybridArrays, LinearAlg
         # Direct data constructor
         b_direct = BlockSparseMatrix{Float64}(copy(b.data), b.indices, b.indicestransposed, b.rowblocksizes, b.columnblocksizes, b.m, b.n)
         @test Matrix(b_direct) == out
+
+        # Bounds & dimension checks
+        @test_throws BoundsError block(b, 10, 1)
+        @test_throws BoundsError block(b, 1, 10)
+        @test_throws ArgumentError block(b, 1, 2) # structurally zero
+        @test_throws DimensionMismatch block(b, 2, 1, static(2), static(2)) # expected 3x2
+        @test_throws DimensionMismatch block(b, 2, 1, 3, 3) # expected 3x2
+
+        # Allocation test: @inbounds block accumulation should have zero allocations
+        test_block_alloc(b) # warmup
+        @test (@allocated test_block_alloc(b)) == 0
+
+        # Block dimensions limit (> 255)
+        @test_throws ArgumentError BlockSparseMatrix{Float64}(sparse([true;;]), [300], [300])
 
         # Symmetric lower-triangular BSM tests
         out2 = [0  0  0   0   0   0 ;
@@ -115,6 +133,7 @@ using BlockMatrices, SparseArrays, StaticArrays, Static, HybridArrays, LinearAlg
         sub_mat = zeros(Int64, 4, 4)
         symmetrifyfull!(sub_mat, bs, [2, 3])
         @test sub_mat == outsym[3:6, 3:6]
+        @test_throws DimensionMismatch symmetrifyfull!(zeros(Int64, 3, 3), bs, [2, 3])
 
         s3 = symmetrifysparse(bs)
         @test issparse(s3)
@@ -131,23 +150,25 @@ using BlockMatrices, SparseArrays, StaticArrays, Static, HybridArrays, LinearAlg
         uniformscaling!(bs_diag, 10.0)
         @test diag(Matrix(bs_diag)) == [11.0, 12.0, 13.0, 14.0]
 
-        # updatelastrowsym!
-        bs_upd = updatelastrowsym!(bs_diag, [1, 2], 3)
-        @test size(bs_upd) == (5, 5)
-        @test bs_upd.rowblocksizes[end] == 3
-        @test bs_upd.columnblocksizes[end] == 3
+        # uniformscaling! error on non-square or missing diagonal
+        bs_rect = BlockSparseMatrix{Float64}(sparse([true;;]), [2], [3])
+        @test_throws ArgumentError uniformscaling!(bs_rect, 1.0)
+        bs_nodiag = BlockSparseMatrix{Float64}(sparse([false true; true false]), [2, 2])
+        @test_throws ArgumentError uniformscaling!(bs_nodiag, 1.0)
     end
 
     @testset "BlockDenseMatrix" begin
         bdm = BlockDenseMatrix{Float64}([1, 3, 5])
         @test validblock(bdm, 1, 1) == true
+        @test validblock(bdm, 2, 2) == true
+        @test validblock(bdm, 3, 1) == false
         @test size(bdm) == (4, 4)
         @test size(bdm, 1) == 4
         @test size(bdm, 2) == 4
         @test axes(bdm) == (Base.OneTo(4), Base.OneTo(4))
         @test axes(bdm, 1) == Base.OneTo(4)
         @test length(bdm) == 16
-        @test nnz(bdm.data) == 16
+        @test length(bdm.data) == 16
         @test eltype(bdm) == Float64
 
         uniformscaling!(bdm, 1.0)
@@ -161,10 +182,23 @@ using BlockMatrices, SparseArrays, StaticArrays, Static, HybridArrays, LinearAlg
         @test block(bdm, 1, 1, static(2), 2) isa HybridArray
         @test block(bdm, 1, 1, 2, static(2)) isa HybridArray
 
+        # Bounds and dimension mismatch checks
+        @test_throws BoundsError block(bdm, 3, 1)
+        @test_throws DimensionMismatch block(bdm, 1, 1, static(3), static(2))
+        @test_throws DimensionMismatch block(bdm, 1, 1, 2, 3)
+
         block(bdm, 2, 1) .= [5.0 6.0; 7.0 8.0]
+
+        # symmetrifyfull allocates new matrix, doesn't mutate
         sym_mat = symmetrifyfull(bdm)
         @test sym_mat[1:2, 3:4] == [5.0 6.0; 7.0 8.0]'
-        @test Matrix(bdm) == sym_mat
+        @test sym_mat !== bdm.data
+        @test bdm[1, 3] == 0.0 # not mutated
+
+        # symmetrifyfull! mutates in place
+        sym_in_place = symmetrifyfull!(bdm)
+        @test sym_in_place === bdm.data
+        @test bdm.data[1:2, 3:4] == [5.0 6.0; 7.0 8.0]'
 
         bdm_copy = copy_structure(bdm)
         @test size(bdm_copy) == (4, 4)

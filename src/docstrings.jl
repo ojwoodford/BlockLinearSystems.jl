@@ -130,9 +130,8 @@ uniformscaling!
 """
     symmetrifyfull(M) -> Matrix{T}
 
-Constructs or updates a full symmetric `Matrix{T}` from a lower-triangular block matrix `M`:
-- For [`BlockDenseMatrix`](@ref): mirrors the lower triangle to the upper triangle of `M.data` in-place and returns `M.data`.
-- For [`BlockSparseMatrix`](@ref): allocates a dense `Matrix{T}` and populates both triangles via [`symmetrifyfull!`](@ref).
+Constructs a full symmetric `Matrix{T}` from a lower-triangular block matrix `M` (`BlockSparseMatrix` or `BlockDenseMatrix`).
+Allocates and returns a new symmetric `Matrix{T}`. See [`symmetrifyfull!`](@ref) for the in-place version.
 
 # Example
 ```julia
@@ -140,16 +139,18 @@ using BlockMatrices
 
 bdm = BlockDenseMatrix{Float64}([1, 3, 5])
 bdm[3, 1] = 4.0
-mat = symmetrifyfull(bdm) # mat[1, 3] == 4.0
+mat = symmetrifyfull(bdm) # mat[1, 3] == 4.0, mat !== bdm.data
 ```
 """
 symmetrifyfull
 
 """
+    symmetrifyfull!(bdm::BlockDenseMatrix) -> Matrix{T}
     symmetrifyfull!(mat::Matrix{T}, bsm::BlockSparseMatrix{T}, blocks=nothing)
 
-Populates dense matrix `mat` in-place with the symmetric expansion of lower-triangular `bsm`.
-If `blocks` is a vector of block indices, extracts and symmetrifies only the principal submatrix corresponding to `blocks`.
+Symmetrifies a lower-triangular block matrix in-place:
+- For [`BlockDenseMatrix`](@ref): mirrors the lower triangle to the upper triangle of `bdm.data` in-place and returns `bdm.data`.
+- For [`BlockSparseMatrix`](@ref): populates preallocated dense matrix `mat` in-place. If `blocks` is a vector of block indices, extracts and symmetrifies only the principal submatrix corresponding to `blocks`.
 
 # Example
 ```julia
@@ -196,44 +197,6 @@ S = sparse(bsm, idx_csc)
 ```
 """
 makesparseindices
-
-"""
-    cacheindices(bsm::BlockSparseMatrix)
-
-Populates `bsm.indices` as the transpose of `bsm.indicestransposed` if not already cached.
-
-# Example
-```julia
-using BlockMatrices, SparseArrays
-
-bsm = BlockSparseMatrix{Float64}(sparse([true true; false true]), [2, 2], [2, 2])
-cacheindices(bsm)
-```
-"""
-cacheindices
-
-"""
-    clearindicescache(bsm::BlockSparseMatrix)
-
-Clears the cached `bsm.indices` non-zero values to zero length.
-
-# Example
-```julia
-using BlockMatrices, SparseArrays
-
-bsm = BlockSparseMatrix{Float64}(sparse([true true; false true]), [2, 2], [2, 2])
-cacheindices(bsm)
-clearindicescache(bsm)
-```
-"""
-clearindicescache
-
-"""
-    updatelastrowsym!(bsm::BlockSparseMatrix{T}, rowindices, blocksz) -> BlockSparseMatrix{T}
-
-Updates the block size of the final row/column block of a symmetric `BlockSparseMatrix` to `blocksz`.
-"""
-updatelastrowsym!
 
 """
     block_sparse_nnz(sparsity, blocksizes) -> Int

@@ -3,7 +3,6 @@ using Static, StaticArrays, SparseArrays, LinearAlgebra
 SR(first, last) = StaticArrays.SUnitRange(dynamic(first), dynamic(last))
 
 zero!(aa::AbstractArray) = fill!(aa, zero(eltype(aa)))
-SparseArrays.nnz(aa::AbstractArray) = length(aa)
 
 """
     inplacecumsum!(A::AbstractVector)
