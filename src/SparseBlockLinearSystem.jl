@@ -125,6 +125,10 @@ end
     return HybridArray{Tuple{StaticArrays.Dynamic(), cols}}(block(bsm, i, j, rows, cols))
 end
 
+@inline block(bsm::SparseBlockLinearSystem, i::Integer, j::Integer, ::Val{R}, ::Val{C}) where {R, C} = block(bsm, i, j, StaticInt{R}(), StaticInt{C}())
+@inline block(bsm::SparseBlockLinearSystem, i::Integer, j::Integer, ::Val{R}, cols::Integer) where R = block(bsm, i, j, StaticInt{R}(), cols)
+@inline block(bsm::SparseBlockLinearSystem, i::Integer, j::Integer, rows::Integer, ::Val{C}) where C = block(bsm, i, j, rows, StaticInt{C}())
+
 @inline function block(bsm::SparseBlockLinearSystem, i::Integer, j::Integer)
     @boundscheck begin
         (1 <= i <= length(bsm.rowblocksizes)) || throw(BoundsError(bsm, (i, j)))
@@ -300,10 +304,16 @@ function symmetrifyfull!(mat::Matrix{T}, bsm::SparseBlockLinearSystem{T}, blocks
         lengths = bsm.rowblocksizes
         starts = cumsum(vcat(1, bsm.rowblocksizes[1:end-1]))
     else
+        block_indices = blocks isa AbstractVector{Bool} ? findall(blocks) : blocks
+        if isempty(block_indices)
+            size(mat) == (0, 0) || throw(DimensionMismatch("Target matrix has size $(size(mat)), expected (0, 0)"))
+            return nothing
+        end
+        all(b -> 1 <= b <= length(bsm.rowblocksizes), block_indices) || throw(BoundsError(bsm.rowblocksizes, block_indices))
         lengths = zeros(UInt, length(bsm.rowblocksizes))
-        lengths[blocks] .= bsm.rowblocksizes[blocks]
+        lengths[block_indices] .= bsm.rowblocksizes[block_indices]
         starts = zeros(UInt, length(bsm.rowblocksizes))
-        starts[blocks] .= cumsum(vcat(1, bsm.rowblocksizes[blocks[1:end-1]]))
+        starts[block_indices] .= cumsum(vcat(1, bsm.rowblocksizes[block_indices[1:end-1]]))
     end
     m = sum(lengths)
     size(mat) == (m, m) || throw(DimensionMismatch("Target matrix has size $(size(mat)), expected ($m, $m)"))
@@ -327,6 +337,27 @@ function symmetrifyfull!(mat::Matrix{T}, bsm::SparseBlockLinearSystem{T}, blocks
         end
     end
     return nothing
+end
+
+function sparse_with_map(sparse_sys::SparseBlockLinearSystem{T}; symmetric::Bool=false) where T
+    sparse_idx = makesparseindices(sparse_sys, symmetric)
+    return sparse_with_map(sparse_sys, sparse_idx)
+end
+
+function sparse_with_map(sparse_sys::SparseBlockLinearSystem{T}, sparse_idx::SparseArrays.SparseMatrixCSC{Int, Int}) where T
+    scatter_map = copy(sparse_idx.nzval)
+    nzval = Vector{T}(undef, length(scatter_map))
+    csc_mat = SparseArrays.SparseMatrixCSC{T, Int}(sparse_idx.m, sparse_idx.n, sparse_idx.colptr, sparse_idx.rowval, nzval)
+    copyto!(csc_mat, sparse_sys, scatter_map)
+    return (csc_mat, scatter_map)
+end
+
+function Base.copyto!(dest::SparseArrays.SparseMatrixCSC{T}, src::SparseBlockLinearSystem{T}, scatter_map::AbstractVector{<:Integer}) where T
+    length(dest.nzval) == length(scatter_map) || throw(DimensionMismatch("Destination nzval length ($(length(dest.nzval))) does not match scatter map length ($(length(scatter_map)))"))
+    @inbounds for (i, idx) in enumerate(scatter_map)
+        dest.nzval[i] = src.data[idx]
+    end
+    return dest
 end
 
 function Base.Matrix(bsm::SparseBlockLinearSystem{T}) where T

@@ -172,7 +172,21 @@ end
         sub_mat = zeros(Int64, 4, 4)
         symmetrifyfull!(sub_mat, bs, [2, 3])
         @test sub_mat == outsym[3:6, 3:6]
+        # BitVector mask for blocks
+        sub_mat_bv = zeros(Int64, 4, 4)
+        symmetrifyfull!(sub_mat_bv, bs, BitVector([false, true, true]))
+        @test sub_mat_bv == outsym[3:6, 3:6]
+        # Empty blocks subset
+        empty_mat = zeros(Int64, 0, 0)
+        symmetrifyfull!(empty_mat, bs, Int[])
+        @test isempty(empty_mat)
         @test_throws DimensionMismatch symmetrifyfull!(zeros(Int64, 3, 3), bs, [2, 3])
+        @test_throws BoundsError symmetrifyfull!(zeros(Int64, 2, 2), bs, [10])
+
+        # Val static sizing
+        @test block(bs, 2, 2, Val(3), Val(3)) isa SizedMatrix{3, 3}
+        @test block(bs, 2, 1, Val(3), 2) isa HybridArray
+        @test block(bs, 2, 1, 3, Val(2)) isa HybridArray
 
         s3 = symmetrifysparse(bs)
         @test issparse(s3)
@@ -180,6 +194,24 @@ end
         @test size(s3) == (6, 6)
         @test nnz(s3) == 28
         @test Matrix(s3) == outsym
+
+        # sparse_with_map & zero-allocation copyto! (symmetric)
+        csc_sym, map_sym = sparse_with_map(bs; symmetric=true)
+        @test csc_sym == s3
+        @test length(map_sym) == nnz(s3)
+        # Test in-place update after modifying bs
+        block(bs, 2, 1) .+= 5
+        copyto!(csc_sym, bs, map_sym)
+        @test csc_sym == symmetrifysparse(bs)
+        # Verify 0 allocations on copyto!
+        copyto!(csc_sym, bs, map_sym) # warmup
+        @test (@allocated copyto!(csc_sym, bs, map_sym)) == 0
+
+        # sparse_with_map & zero-allocation copyto! (non-symmetric)
+        csc_asym, map_asym = sparse_with_map(b; symmetric=false)
+        @test csc_asym == sparse(b)
+        copyto!(csc_asym, b, map_asym) # warmup
+        @test (@allocated copyto!(csc_asym, b, map_asym)) == 0
 
         # uniformscaling! on symmetric BSM with full diagonal blocks
         bs_diag = SparseBlockLinearSystem{Float64}(TransposedPattern(sparse([1 0; 1 1]' .> 0)), [2, 2])
@@ -237,6 +269,9 @@ end
         @test block(bdm, 1, 1, static(2), static(2)) isa SizedMatrix{2, 2}
         @test block(bdm, 1, 1, static(2), 2) isa HybridArray
         @test block(bdm, 1, 1, 2, static(2)) isa HybridArray
+        @test block(bdm, 1, 1, Val(2), Val(2)) isa SizedMatrix{2, 2}
+        @test block(bdm, 1, 1, Val(2), 2) isa HybridArray
+        @test block(bdm, 1, 1, 2, Val(2)) isa HybridArray
 
         # Bounds and dimension mismatch checks
         @test_throws BoundsError block(bdm, 3, 1)

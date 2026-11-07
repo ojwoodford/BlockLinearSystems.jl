@@ -313,3 +313,30 @@ find_diag_inds(S) # [1, 3]
 ```
 """
 find_diag_inds
+
+"""
+    sparse_with_map(sparse_sys::SparseBlockLinearSystem{T}; symmetric::Bool=false) -> (SparseMatrixCSC{T, Int}, Vector{Int})
+    sparse_with_map(sparse_sys::SparseBlockLinearSystem{T}, sparse_idx::SparseMatrixCSC{Int, Int}) -> (SparseMatrixCSC{T, Int}, Vector{Int})
+
+Precomputes a standard `SparseMatrixCSC{T, Int}` alongside a `scatter_map::Vector{Int}`.
+The `scatter_map` maps entries from `sparse_sys.data` to the CSC nonzeros vector.
+
+Subsequent updates can be performed in-place with **zero allocations** via:
+```julia
+copyto!(csc_mat, sparse_sys, scatter_map)
+```
+
+# Example
+```julia
+using BlockLinearSystems, SparseArrays
+
+sys = SparseBlockLinearSystem{Float64}(sparse([true true; true true]), [2, 2])
+block(sys, 1, 1) .= 1.0
+csc_mat, scatter_map = sparse_with_map(sys; symmetric=false)
+
+# In-place update in solver loop (0 allocations):
+block(sys, 1, 1) .= 2.0
+copyto!(csc_mat, sys, scatter_map)
+```
+"""
+sparse_with_map

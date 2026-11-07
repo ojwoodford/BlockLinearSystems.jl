@@ -6,6 +6,7 @@
 SparseBlockLinearSystem
 DenseBlockLinearSystem
 TransposedPattern
+BlockOffsets
 ```
 
 ## Block Indexing & Accessors
@@ -30,6 +31,7 @@ symmetrifyfull
 symmetrifyfull!
 symmetrifysparse
 makesparseindices
+sparse_with_map
 ```
 
 ## Sparsity Statistics

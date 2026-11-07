@@ -116,6 +116,10 @@ end
     return HybridArray{Tuple{StaticArrays.Dynamic(), cols}}(block(bdm, i, j, rows, cols))
 end
 
+@inline block(bdm::DenseBlockLinearSystem, i::Integer, j::Integer, ::Val{R}, ::Val{C}) where {R, C} = block(bdm, i, j, StaticInt{R}(), StaticInt{C}())
+@inline block(bdm::DenseBlockLinearSystem, i::Integer, j::Integer, ::Val{R}, cols::Integer) where R = block(bdm, i, j, StaticInt{R}(), cols)
+@inline block(bdm::DenseBlockLinearSystem, i::Integer, j::Integer, rows::Integer, ::Val{C}) where C = block(bdm, i, j, rows, StaticInt{C}())
+
 @inline function block(bdm::DenseBlockLinearSystem, i::Integer, j::Integer)
     @boundscheck begin
         (1 <= i <= length(bdm.rowblocksizes)) || throw(BoundsError(bdm, (i, j)))
