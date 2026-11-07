@@ -2,28 +2,28 @@
 
 In factor-graph and nonlinear least squares problems, variables are naturally grouped into blocks $\mathbf{x}_1, \dots, \mathbf{x}_K$ of dimensions $d_1, \dots, d_K$, and each cost factor contributes derivatives to a small subset of block pairs $(i, j)$.
 
-`BlockMatrices.jl` provides a unified interface across [`BlockDenseMatrix`](@ref) and [`BlockSparseMatrix`](@ref) so assembly code can remain agnostic to whether the underlying storage is dense or sparse.
+`BlockLinearSystems.jl` provides a unified interface across [`DenseBlockLinearSystem`](@ref) and [`SparseBlockLinearSystem`](@ref) so assembly code can remain agnostic to whether the underlying storage is dense or sparse.
 
-## Constructing a `BlockDenseMatrix`
+## Constructing a `DenseBlockLinearSystem`
 
-A [`BlockDenseMatrix`](@ref) wraps a standard `Matrix{T}` along with 1-based block start offsets terminated by `total_dim + 1`:
+A [`DenseBlockLinearSystem`](@ref) wraps a standard `Matrix{T}` along with 1-based block start offsets terminated by `total_dim + 1`:
 
 ```julia
-using BlockMatrices, Static, StaticArrays
+using BlockLinearSystems, Static, StaticArrays
 
 blocksizes = [2, 3, 2]
 offsets = computestartindices(blocksizes)
 push!(offsets, offsets[end] + blocksizes[end]) # [1, 3, 6, 8]
 
-bdm = BlockDenseMatrix{Float64}(offsets)
+bdm = DenseBlockLinearSystem{Float64}(offsets)
 ```
 
-## Constructing a `BlockSparseMatrix`
+## Constructing a `SparseBlockLinearSystem`
 
-A [`BlockSparseMatrix`](@ref) stores only the structurally non-zero blocks in a contiguous `Vector{T}`. Because blocks are laid out row-by-row for cache locality, the constructor accepts the **transposed** block sparsity pattern (`sparsitytransposed::SparseMatrixCSC{Bool, Int}`):
+A [`SparseBlockLinearSystem`](@ref) stores only the structurally non-zero blocks in a contiguous `Vector{T}`. Because blocks are laid out row-by-row for cache locality, the constructor accepts the **transposed** block sparsity pattern (`sparsitytransposed::SparseMatrixCSC{Bool, Int}`):
 
 ```julia
-using BlockMatrices, SparseArrays
+using BlockLinearSystems, SparseArrays
 
 # For a lower-triangular 3x3 block matrix where blocks (1,1), (2,1), (2,2), (3,2), (3,3) are non-zero,
 # the transposed sparsity pattern is upper-triangular:
@@ -33,7 +33,7 @@ sparsity_t = sparse([
     false false true
 ])
 
-bsm = BlockSparseMatrix{Float64}(sparsity_t, [2, 3, 2], [2, 3, 2])
+bsm = SparseBlockLinearSystem{Float64}(sparsity_t, [2, 3, 2], [2, 3, 2])
 ```
 
 ## Indexing Blocks with `block`

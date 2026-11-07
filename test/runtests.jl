@@ -1,4 +1,4 @@
-using BlockMatrices, SparseArrays, StaticArrays, Static, HybridArrays, LinearAlgebra, Test, Aqua, JET
+using BlockLinearSystems, SparseArrays, StaticArrays, Static, HybridArrays, LinearAlgebra, Test, Aqua, JET
 
 # Helper to verify zero allocations in inner block accumulation
 function test_block_alloc(b)
@@ -7,12 +7,12 @@ function test_block_alloc(b)
     return nothing
 end
 
-@testset "BlockMatrices.jl" begin
+@testset "BlockLinearSystems.jl" begin
     @testset "Aqua & Code Quality" begin
-        Aqua.test_all(BlockMatrices)
+        Aqua.test_all(BlockLinearSystems)
     end
 
-    @testset "BlockSparseMatrix" begin
+    @testset "SparseBlockLinearSystem" begin
         # Construct a test matrix
         out = [0. 0  0  0  0  10;
                0  0  0  0  0  11;
@@ -24,7 +24,7 @@ end
                0  0  0  0  0  0 ]
 
         # Construct a matching BSM
-        b = BlockSparseMatrix{Float64}(sparse([0 0 1; 1 0 0; 0 1 1; 0 0 0]' .> 0), [3, 3, 1, 1], [2, 3, 1])
+        b = SparseBlockLinearSystem{Float64}(sparse([0 0 1; 1 0 0; 0 1 1; 0 0 0]' .> 0), [3, 3, 1, 1], [2, 3, 1])
         block(b, 2, 1) .= reshape(1.:6., (3, 2))
         block(b, 3, 2, 1, 3) .= SMatrix{1, 3, Float64, 3}(7:9)
         block(b, 1, 3, static(3), static(1)) .= [10.; 11; 12]
@@ -75,7 +75,7 @@ end
         @test all(iszero, b_copy.data)
 
         # Direct data constructor
-        b_direct = BlockSparseMatrix{Float64}(copy(b.data), b.indices, b.indicestransposed, b.rowblocksizes, b.columnblocksizes, b.m, b.n)
+        b_direct = SparseBlockLinearSystem{Float64}(copy(b.data), b.indices, b.indicestransposed, b.rowblocksizes, b.columnblocksizes, b.m, b.n)
         @test Matrix(b_direct) == out
 
         # Bounds & dimension checks
@@ -90,7 +90,7 @@ end
         @test (@allocated test_block_alloc(b)) == 0
 
         # Block dimensions limit (> 255)
-        @test_throws ArgumentError BlockSparseMatrix{Float64}(sparse([true;;]), [300], [300])
+        @test_throws ArgumentError SparseBlockLinearSystem{Float64}(sparse([true;;]), [300], [300])
 
         # Symmetric lower-triangular BSM tests
         out2 = [0  0  0   0   0   0 ;
@@ -101,7 +101,7 @@ end
                 0  0  13  14  15  16]
         outsym = max.(out2, out2')
 
-        bs = BlockSparseMatrix{Int64}(sparse([0 0 0; 1 1 0; 0 1 1]' .> 0), [2, 3, 1], [2, 3, 1])
+        bs = SparseBlockLinearSystem{Int64}(sparse([0 0 0; 1 1 0; 0 1 1]' .> 0), [2, 3, 1], [2, 3, 1])
         block(bs, 2, 1) .= reshape(1:6, (3, 2))
         block(bs, 3, 2, 1, 3) .= SVector{3, Int64}(13:15)'
         block(bs, 2, 2, 3, 3) .= [7 8 9; 8 10 11; 9 11 12]
@@ -143,7 +143,7 @@ end
         @test Matrix(s3) == outsym
 
         # uniformscaling! on symmetric BSM with full diagonal blocks
-        bs_diag = BlockSparseMatrix{Float64}(sparse([1 0; 1 1]' .> 0), [2, 2])
+        bs_diag = SparseBlockLinearSystem{Float64}(sparse([1 0; 1 1]' .> 0), [2, 2])
         block(bs_diag, 1, 1) .= [1.0 0.0; 0.0 2.0]
         block(bs_diag, 2, 1) .= [0.5 0.0; 0.0 0.5]
         block(bs_diag, 2, 2) .= [3.0 0.0; 0.0 4.0]
@@ -151,14 +151,14 @@ end
         @test diag(Matrix(bs_diag)) == [11.0, 12.0, 13.0, 14.0]
 
         # uniformscaling! error on non-square or missing diagonal
-        bs_rect = BlockSparseMatrix{Float64}(sparse([true;;]), [2], [3])
+        bs_rect = SparseBlockLinearSystem{Float64}(sparse([true;;]), [2], [3])
         @test_throws ArgumentError uniformscaling!(bs_rect, 1.0)
-        bs_nodiag = BlockSparseMatrix{Float64}(sparse([false true; true false]), [2, 2])
+        bs_nodiag = SparseBlockLinearSystem{Float64}(sparse([false true; true false]), [2, 2])
         @test_throws ArgumentError uniformscaling!(bs_nodiag, 1.0)
     end
 
-    @testset "BlockDenseMatrix" begin
-        bdm = BlockDenseMatrix{Float64}([1, 3, 5])
+    @testset "DenseBlockLinearSystem" begin
+        bdm = DenseBlockLinearSystem{Float64}([1, 3, 5])
         @test validblock(bdm, 1, 1) == true
         @test validblock(bdm, 2, 2) == true
         @test validblock(bdm, 3, 1) == false
@@ -208,7 +208,7 @@ end
         @test all(iszero, bdm.data)
 
         mat_buf = ones(2, 3)
-        bdm_rect = BlockDenseMatrix{Float64}(mat_buf, [1, 3], [1, 4])
+        bdm_rect = DenseBlockLinearSystem{Float64}(mat_buf, [1, 3], [1, 4])
         @test size(bdm_rect) == (2, 3)
         zero!(mat_buf)
         @test all(iszero, mat_buf)

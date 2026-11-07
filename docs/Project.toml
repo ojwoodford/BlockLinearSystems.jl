@@ -1,9 +1,9 @@
 [deps]
-BlockMatrices = "a7d4e89f-9c3b-4d0e-8f5a-5b8c7d1e4f28"
+BlockLinearSystems = "a7d4e89f-9c3b-4d0e-8f5a-5b8c7d1e4f28"
 Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
 SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
 Static = "aedffcd0-7271-4cad-89d0-dc628f76c6d3"
 StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 
 [sources]
-BlockMatrices = {path = ".."}
+BlockLinearSystems = {path = "/Users/olly/.julia/dev/BlockMatrices.jl"}

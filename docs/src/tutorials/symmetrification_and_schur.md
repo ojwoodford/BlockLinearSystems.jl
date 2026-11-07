@@ -7,10 +7,10 @@ During Gauss-Newton or second-order optimization, only the block-lower triangle 
 Calling [`symmetrifysparse(bsm)`](@ref symmetrifysparse) constructs a new symmetric `SparseMatrixCSC` in a single call. In iterative optimization loops where the sparsity pattern is fixed across iterations, you can precompute the index map once using [`makesparseindices`](@ref) and scatter `bsm.data` into an existing `SparseMatrixCSC` with zero allocations:
 
 ```julia
-using BlockMatrices, SparseArrays
+using BlockLinearSystems, SparseArrays
 
 sparsity_t = sparse([true true; false true])
-bsm = BlockSparseMatrix{Float64}(sparsity_t, [2, 2], [2, 2])
+bsm = SparseBlockLinearSystem{Float64}(sparsity_t, [2, 2], [2, 2])
 
 # Precompute once during solver setup:
 idx_map = makesparseindices(bsm, true) # true = symmetrify upper & lower triangles
@@ -44,7 +44,7 @@ symmetrifyfull!(H_sub, bsm, [1])
 
 ## Choosing Between Sparse and Dense Representations
 
-For small or densely connected graphs, dense Cholesky factorization outperforms sparse factorization due to lower indexing overhead and BLAS/SIMD efficiency. [`block_sparse_nnz`](@ref) computes the number of scalar non-zeros implied by a block sparsity pattern, which a solver can use to choose between a [`BlockSparseMatrix`](@ref) and a [`BlockDenseMatrix`](@ref):
+For small or densely connected graphs, dense Cholesky factorization outperforms sparse factorization due to lower indexing overhead and BLAS/SIMD efficiency. [`block_sparse_nnz`](@ref) computes the number of scalar non-zeros implied by a block sparsity pattern, which a solver can use to choose between a [`SparseBlockLinearSystem`](@ref) and a [`DenseBlockLinearSystem`](@ref):
 
 ```julia
 blocksizes = [2, 2]

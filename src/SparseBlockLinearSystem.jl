@@ -1,7 +1,7 @@
 using StaticArrays, HybridArrays, LinearAlgebra
 import SparseArrays
 
-struct BlockSparseMatrix{T}
+struct SparseBlockLinearSystem{T}
     data::Vector{T}                                             # Storage for all the matrix data
     indices::SparseArrays.SparseMatrixCSC{Int, Int}             # Start indices for each block matrix
     indicestransposed::SparseArrays.SparseMatrixCSC{Int, Int}   # Start indices for each block matrix, stored transposed
@@ -10,7 +10,7 @@ struct BlockSparseMatrix{T}
     m::Int                                                      # Number of rows of the represented matrix
     n::Int                                                      # Number of columns of the represented matrix
 
-    function BlockSparseMatrix{T}(nnzvals, indicestransposed, rowblocksizes, colblocksizes=rowblocksizes) where T
+    function SparseBlockLinearSystem{T}(nnzvals, indicestransposed, rowblocksizes, colblocksizes=rowblocksizes) where T
         all(i -> 0 < i <= 255, rowblocksizes) || throw(ArgumentError("Row block dimensions must be between 1 and 255"))
         rbs = convert.(UInt8, rowblocksizes)
         sumrbs = Int(sum(rbs))
@@ -29,7 +29,7 @@ struct BlockSparseMatrix{T}
         return new{T}(zeros(T, nnzvals), indices, it, rbs, cbs, sumrbs, sumcbs)
     end
 
-    function BlockSparseMatrix{T}(sparsitytransposed::SparseArrays.SparseMatrixCSC{Bool, Int}, rowblocksizes, colblocksizes=rowblocksizes) where T
+    function SparseBlockLinearSystem{T}(sparsitytransposed::SparseArrays.SparseMatrixCSC{Bool, Int}, rowblocksizes, colblocksizes=rowblocksizes) where T
         size(sparsitytransposed) == (length(colblocksizes), length(rowblocksizes)) || throw(DimensionMismatch("Size of sparsitytransposed must be ($(length(colblocksizes)), $(length(rowblocksizes))), got $(size(sparsitytransposed))"))
         # Construct the block indices sparse matrix
         indicestransposed = SparseArrays.SparseMatrixCSC{Int, Int}(sparsitytransposed.m, sparsitytransposed.n, copy(sparsitytransposed.colptr), copy(sparsitytransposed.rowval), Vector{Int}(undef, length(sparsitytransposed.rowval)))
@@ -44,26 +44,26 @@ struct BlockSparseMatrix{T}
                 start += rowwidth * convert(Int, @inbounds colblocksizes[col])
             end
         end
-        # Construct the BlockSparseMatrix
-        return BlockSparseMatrix{T}(start - 1, indicestransposed, rowblocksizes, colblocksizes)
+        # Construct the SparseBlockLinearSystem
+        return SparseBlockLinearSystem{T}(start - 1, indicestransposed, rowblocksizes, colblocksizes)
     end
 
-    function BlockSparseMatrix{T}(bsm::BlockSparseMatrix{T}, m::Int, n::Int=m) where T
+    function SparseBlockLinearSystem{T}(bsm::SparseBlockLinearSystem{T}, m::Int, n::Int=m) where T
         return new{T}(bsm.data, bsm.indices, bsm.indicestransposed, bsm.rowblocksizes, bsm.columnblocksizes, m, n)
     end
 
-    function BlockSparseMatrix{T}(data::Vector{T}, indices, indicestransposed, rowblocksizes, colblocksizes, m, n) where T
+    function SparseBlockLinearSystem{T}(data::Vector{T}, indices, indicestransposed, rowblocksizes, colblocksizes, m, n) where T
         return new{T}(data, indices, indicestransposed, rowblocksizes, colblocksizes, m, n)
     end
 end
 
-copy_structure(bsm::BlockSparseMatrix{T}) where T = BlockSparseMatrix{T}(zeros(T, length(bsm.data)), bsm.indices, bsm.indicestransposed, bsm.rowblocksizes, bsm.columnblocksizes, bsm.m, bsm.n)
+copy_structure(bsm::SparseBlockLinearSystem{T}) where T = SparseBlockLinearSystem{T}(zeros(T, length(bsm.data)), bsm.indices, bsm.indicestransposed, bsm.rowblocksizes, bsm.columnblocksizes, bsm.m, bsm.n)
 
-function uniformscaling!(M::BlockSparseMatrix, k)
-    M.rowblocksizes == M.columnblocksizes || throw(ArgumentError("BlockSparseMatrix must be block-square for uniformscaling!"))
+function uniformscaling!(M::SparseBlockLinearSystem, k)
+    M.rowblocksizes == M.columnblocksizes || throw(ArgumentError("SparseBlockLinearSystem must be block-square for uniformscaling!"))
     for (i, blocksz) in enumerate(M.rowblocksizes)
         @inbounds ind = M.indicestransposed[i, i]
-        ind > 0 || throw(ArgumentError("Diagonal block ($i, $i) is missing in BlockSparseMatrix"))
+        ind > 0 || throw(ArgumentError("Diagonal block ($i, $i) is missing in SparseBlockLinearSystem"))
         bs = Int(blocksz)
         for j in ind:(bs + 1):(ind + bs^2 - 1)
             @inbounds M.data[j] += k
@@ -72,9 +72,9 @@ function uniformscaling!(M::BlockSparseMatrix, k)
     return M
 end
 
-zero!(bsm::BlockSparseMatrix) = fill!(bsm.data, zero(eltype(bsm.data)))
+zero!(bsm::SparseBlockLinearSystem) = fill!(bsm.data, zero(eltype(bsm.data)))
 
-@inline function checkblock(bsm::BlockSparseMatrix, i::Integer, j::Integer, rows::Integer, cols::Integer)
+@inline function checkblock(bsm::SparseBlockLinearSystem, i::Integer, j::Integer, rows::Integer, cols::Integer)
     (1 <= i <= length(bsm.rowblocksizes)) || throw(BoundsError(bsm, (i, j)))
     (1 <= j <= length(bsm.columnblocksizes)) || throw(BoundsError(bsm, (i, j)))
     validblock(bsm, i, j) || throw(ArgumentError("Block ($i, $j) is structurally zero"))
@@ -84,27 +84,27 @@ zero!(bsm::BlockSparseMatrix) = fill!(bsm.data, zero(eltype(bsm.data)))
     return nothing
 end
 
-@inline function block(bsm::BlockSparseMatrix, i::Integer, j::Integer, ::StaticInt{rows}, ::StaticInt{cols}) where {rows, cols}
+@inline function block(bsm::SparseBlockLinearSystem, i::Integer, j::Integer, ::StaticInt{rows}, ::StaticInt{cols}) where {rows, cols}
     @boundscheck checkblock(bsm, i, j, rows, cols)
     return @inbounds SizedMatrix{rows, cols}(view(bsm.data, SR(0, rows*cols-1) .+ bsm.indicestransposed[j, i]))
 end
 
-@inline function block(bsm::BlockSparseMatrix, i::Integer, j::Integer, rows::Integer, cols::Integer)
+@inline function block(bsm::SparseBlockLinearSystem, i::Integer, j::Integer, rows::Integer, cols::Integer)
     @boundscheck checkblock(bsm, i, j, rows, cols)
     return @inbounds reshape(view(bsm.data, SR(0, rows*cols-1) .+ bsm.indicestransposed[j, i]), (rows, cols))
 end
 
-@inline function block(bsm::BlockSparseMatrix, i::Integer, j::Integer, ::StaticInt{rows}, cols::Integer) where rows
+@inline function block(bsm::SparseBlockLinearSystem, i::Integer, j::Integer, ::StaticInt{rows}, cols::Integer) where rows
     @boundscheck checkblock(bsm, i, j, rows, cols)
     return HybridArray{Tuple{rows, StaticArrays.Dynamic()}}(block(bsm, i, j, rows, cols))
 end
 
-@inline function block(bsm::BlockSparseMatrix, i::Integer, j::Integer, rows::Integer, ::StaticInt{cols}) where cols
+@inline function block(bsm::SparseBlockLinearSystem, i::Integer, j::Integer, rows::Integer, ::StaticInt{cols}) where cols
     @boundscheck checkblock(bsm, i, j, rows, cols)
     return HybridArray{Tuple{StaticArrays.Dynamic(), cols}}(block(bsm, i, j, rows, cols))
 end
 
-@inline function block(bsm::BlockSparseMatrix, i::Integer, j::Integer)
+@inline function block(bsm::SparseBlockLinearSystem, i::Integer, j::Integer)
     @boundscheck begin
         (1 <= i <= length(bsm.rowblocksizes)) || throw(BoundsError(bsm, (i, j)))
         (1 <= j <= length(bsm.columnblocksizes)) || throw(BoundsError(bsm, (i, j)))
@@ -113,14 +113,14 @@ end
     return @inbounds block(bsm, i, j, bsm.rowblocksizes[i], bsm.columnblocksizes[j])
 end
 
-validblock(bsm::BlockSparseMatrix, i::Integer, j::Integer) =
+validblock(bsm::SparseBlockLinearSystem, i::Integer, j::Integer) =
     (1 <= i <= length(bsm.rowblocksizes)) && (1 <= j <= length(bsm.columnblocksizes)) && (@inbounds bsm.indicestransposed[j, i] != 0)
 
-Base.size(bsm::BlockSparseMatrix) = (bsm.m, bsm.n)
-Base.size(bsm::BlockSparseMatrix, dim) = dim == 1 ? bsm.m : (dim == 2 ? bsm.n : 1)
-Base.length(bsm::BlockSparseMatrix) = bsm.m * bsm.n
-Base.eltype(::BlockSparseMatrix{T}) where T = T
-SparseArrays.nnz(bsm::BlockSparseMatrix) = length(bsm.data)
+Base.size(bsm::SparseBlockLinearSystem) = (bsm.m, bsm.n)
+Base.size(bsm::SparseBlockLinearSystem, dim) = dim == 1 ? bsm.m : (dim == 2 ? bsm.n : 1)
+Base.length(bsm::SparseBlockLinearSystem) = bsm.m * bsm.n
+Base.eltype(::SparseBlockLinearSystem{T}) where T = T
+SparseArrays.nnz(bsm::SparseBlockLinearSystem) = length(bsm.data)
 
 function diagonalblockspace(indices, blocksizes)
     total = Int(0)
@@ -128,7 +128,7 @@ function diagonalblockspace(indices, blocksizes)
         ind = indices.colptr[col]
         if indices.colptr[col+1] > ind
             row = indices.rowval[ind]
-            row >= col || throw(ArgumentError("BlockSparseMatrix must be lower triangular for symmetrification"))
+            row >= col || throw(ArgumentError("SparseBlockLinearSystem must be lower triangular for symmetrification"))
             if row == col
                 bs = Int(blocksizes[row])
                 total += bs * bs
@@ -138,8 +138,8 @@ function diagonalblockspace(indices, blocksizes)
     return total
 end
 
-function makesparseindices(bsm::BlockSparseMatrix, symmetrify::Bool=false)
-    !symmetrify || bsm.rowblocksizes == bsm.columnblocksizes || throw(ArgumentError("BlockSparseMatrix must be block-square for symmetrification"))
+function makesparseindices(bsm::SparseBlockLinearSystem, symmetrify::Bool=false)
+    !symmetrify || bsm.rowblocksizes == bsm.columnblocksizes || throw(ArgumentError("SparseBlockLinearSystem must be block-square for symmetrification"))
     # Preallocate arrays
     nzvals = symmetrify ? length(bsm.data) * 2 - diagonalblockspace(bsm.indices, bsm.rowblocksizes) : length(bsm.data)
     rows = Vector{Int}(undef, nzvals)
@@ -189,12 +189,12 @@ function makesparseindices(bsm::BlockSparseMatrix, symmetrify::Bool=false)
     return SparseArrays.SparseMatrixCSC{Int, Int}(startrow[end]-1, col-1, cols, rows, indices)
 end
 
-SparseArrays.sparse(bsm::BlockSparseMatrix{T}, indices=makesparseindices(bsm)) where T = SparseArrays.SparseMatrixCSC{T, Int}(indices.m, indices.n, indices.colptr, indices.rowval, bsm.data[indices.nzval])
+SparseArrays.sparse(bsm::SparseBlockLinearSystem{T}, indices=makesparseindices(bsm)) where T = SparseArrays.SparseMatrixCSC{T, Int}(indices.m, indices.n, indices.colptr, indices.rowval, bsm.data[indices.nzval])
 
-symmetrifysparse(bsm::BlockSparseMatrix{T}) where T = SparseArrays.sparse(bsm, makesparseindices(bsm, true))
+symmetrifysparse(bsm::SparseBlockLinearSystem{T}) where T = SparseArrays.sparse(bsm, makesparseindices(bsm, true))
 
-function symmetrifyfull(bsm::BlockSparseMatrix{T}) where T
-    bsm.rowblocksizes == bsm.columnblocksizes || throw(ArgumentError("BlockSparseMatrix must be block-square for symmetrifyfull"))
+function symmetrifyfull(bsm::SparseBlockLinearSystem{T}) where T
+    bsm.rowblocksizes == bsm.columnblocksizes || throw(ArgumentError("SparseBlockLinearSystem must be block-square for symmetrifyfull"))
     # Allocate the output
     len = sum(bsm.rowblocksizes)
     output = Matrix{T}(undef, len, len)
@@ -204,8 +204,8 @@ function symmetrifyfull(bsm::BlockSparseMatrix{T}) where T
     return output
 end
 
-function symmetrifyfull!(mat::Matrix{T}, bsm::BlockSparseMatrix{T}, blocks=nothing) where T
-    bsm.rowblocksizes == bsm.columnblocksizes || throw(ArgumentError("BlockSparseMatrix must be block-square for symmetrifyfull!"))
+function symmetrifyfull!(mat::Matrix{T}, bsm::SparseBlockLinearSystem{T}, blocks=nothing) where T
+    bsm.rowblocksizes == bsm.columnblocksizes || throw(ArgumentError("SparseBlockLinearSystem must be block-square for symmetrifyfull!"))
     if blocks === nothing
         lengths = bsm.rowblocksizes
         starts = cumsum(vcat(1, bsm.rowblocksizes[1:end-1]))
@@ -239,7 +239,7 @@ function symmetrifyfull!(mat::Matrix{T}, bsm::BlockSparseMatrix{T}, blocks=nothi
     return nothing
 end
 
-function Base.Matrix(bsm::BlockSparseMatrix{T}) where T
+function Base.Matrix(bsm::SparseBlockLinearSystem{T}) where T
     # Allocate the output
     rowstarts = cumsum(bsm.rowblocksizes)
     pushfirst!(rowstarts, UInt(0))

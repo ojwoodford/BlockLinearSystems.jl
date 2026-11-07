@@ -75,6 +75,6 @@ jobs:
         shell: julia --project=docs --color=yes {0}
         run: |
           using Documenter: DocMeta, doctest
-          using BlockMatrices
-          DocMeta.setdocmeta!(BlockMatrices, :DocTestSetup, :(using BlockMatrices, SparseArrays, Static, StaticArrays); recursive=true)
+          using BlockLinearSystems
+          DocMeta.setdocmeta!(BlockLinearSystems, :DocTestSetup, :(using BlockLinearSystems, SparseArrays, Static, StaticArrays); recursive=true)
           include("docs/make.jl")

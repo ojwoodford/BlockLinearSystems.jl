@@ -1,11 +1,11 @@
 using Documenter
-using BlockMatrices
+using BlockLinearSystems
 
-DocMeta.setdocmeta!(BlockMatrices, :DocTestSetup, :(using BlockMatrices, SparseArrays, Static, StaticArrays); recursive=true)
+DocMeta.setdocmeta!(BlockLinearSystems, :DocTestSetup, :(using BlockLinearSystems, SparseArrays, Static, StaticArrays); recursive=true)
 
 makedocs(
-    sitename = "BlockMatrices.jl",
-    modules = [BlockMatrices],
+    sitename = "BlockLinearSystems.jl",
+    modules = [BlockLinearSystems],
     remotes = nothing,
     warnonly = false,
     format = Documenter.HTML(
@@ -16,15 +16,14 @@ makedocs(
         "Home" => "index.md",
         "API Reference" => "api.md",
         "Tutorials & Guide" => [
-            "Block Matrix Assembly & Indexing" => "tutorials/block_assembly.md",
+            "Block Linear System Assembly & Indexing" => "tutorials/block_assembly.md",
             "Symmetrification, CSC Scatter & Schur Systems" => "tutorials/symmetrification_and_schur.md",
         ],
     ]
 )
 
 deploydocs(
-    repo = "github.com/ojwoodford/BlockMatrices.jl.git",
+    repo = "github.com/ojwoodford/BlockLinearSystems.jl.git",
     devbranch = "main",
     push_preview = true,
 )
-

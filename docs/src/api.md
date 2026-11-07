@@ -1,10 +1,10 @@
 # API Reference
 
-## Matrix Types
+## Linear System Types
 
 ```@docs
-BlockSparseMatrix
-BlockDenseMatrix
+SparseBlockLinearSystem
+DenseBlockLinearSystem
 ```
 
 ## Block Indexing & Mutation

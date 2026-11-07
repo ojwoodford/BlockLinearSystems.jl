@@ -1,6 +1,6 @@
-name = "BlockMatrices"
+name = "BlockLinearSystems"
 uuid = "a7d4e89f-9c3b-4d0e-8f5a-5b8c7d1e4f28"
-version = "0.1.1"
+version = "0.2.0"
 authors = ["Oliver Woodford"]
 
 [deps]

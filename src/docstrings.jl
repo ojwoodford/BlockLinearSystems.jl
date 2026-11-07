@@ -1,6 +1,6 @@
 """
-    BlockSparseMatrix{T}(sparsitytransposed::SparseMatrixCSC{Bool, Int}, rowblocksizes, colblocksizes=rowblocksizes)
-    BlockSparseMatrix{T}(nnzvals, indicestransposed, rowblocksizes, colblocksizes=rowblocksizes)
+    SparseBlockLinearSystem{T}(sparsitytransposed::SparseMatrixCSC{Bool, Int}, rowblocksizes, colblocksizes=rowblocksizes)
+    SparseBlockLinearSystem{T}(nnzvals, indicestransposed, rowblocksizes, colblocksizes=rowblocksizes)
 
 Cache-friendly block-sparse matrix storing each non-zero block contiguously in column-major order within a flat `data::Vector{T}` buffer.
 
@@ -17,18 +17,18 @@ The block sparsity pattern is provided transposed (`sparsitytransposed` has size
 
 # Example
 ```julia
-using BlockMatrices, SparseArrays
+using BlockLinearSystems, SparseArrays
 
 sparsity_t = sparse([true false; true true])
-bsm = BlockSparseMatrix{Float64}(sparsity_t, [2, 3], [2, 3])
+bsm = SparseBlockLinearSystem{Float64}(sparsity_t, [2, 3], [2, 3])
 block(bsm, 1, 1) .= [1.0 2.0; 2.0 4.0]
 ```
 """
-BlockSparseMatrix
+SparseBlockLinearSystem
 
 """
-    BlockDenseMatrix{T}(rowblockoffsets, columnblockoffsets=rowblockoffsets)
-    BlockDenseMatrix{T}(data::Matrix{T}, rowblockoffsets, columnblockoffsets=rowblockoffsets)
+    DenseBlockLinearSystem{T}(rowblockoffsets, columnblockoffsets=rowblockoffsets)
+    DenseBlockLinearSystem{T}(data::Matrix{T}, rowblockoffsets, columnblockoffsets=rowblockoffsets)
 
 Block-partitioned dense matrix backed by a standard `Matrix{T}` alongside 1-based sentinel-terminated block offset vectors `rowblockoffsets` and `columnblockoffsets`.
 
@@ -39,26 +39,26 @@ Block-partitioned dense matrix backed by a standard `Matrix{T}` alongside 1-base
 
 # Example
 ```julia
-using BlockMatrices
+using BlockLinearSystems
 
-bdm = BlockDenseMatrix{Float64}([1, 3, 6]) # Two blocks of sizes 2 and 3
+bdm = DenseBlockLinearSystem{Float64}([1, 3, 6]) # Two blocks of sizes 2 and 3
 block(bdm, 2, 1) .= reshape(1.0:6.0, 3, 2)
 ```
 """
-BlockDenseMatrix
+DenseBlockLinearSystem
 
 """
     block(M, i, j)
     block(M, i, j, rows, cols)
 
-Returns a mutable view into block `(i, j)` of `M` (`BlockSparseMatrix` or `BlockDenseMatrix`).
+Returns a mutable view into block `(i, j)` of `M` (`SparseBlockLinearSystem` or `DenseBlockLinearSystem`).
 When `rows` and/or `cols` are passed as `StaticInt`, returns a stack-wrapped `SizedMatrix` or `HybridArray` view for SIMD-accelerated block operations.
 
 # Example
 ```julia
-using BlockMatrices, Static
+using BlockLinearSystems, Static
 
-bdm = BlockDenseMatrix{Float64}([1, 3, 5])
+bdm = DenseBlockLinearSystem{Float64}([1, 3, 5])
 B = block(bdm, 1, 1, static(2), static(2))
 B .= 1.0
 ```
@@ -68,13 +68,13 @@ block
 """
     validblock(M, i, j) -> Bool
 
-Returns `true` if block `(i, j)` is structurally present in `M` (always `true` for [`BlockDenseMatrix`](@ref), and `M.indicestransposed[j, i] != 0` for [`BlockSparseMatrix`](@ref)).
+Returns `true` if block `(i, j)` is structurally present in `M` (always `true` for [`DenseBlockLinearSystem`](@ref), and `M.indicestransposed[j, i] != 0` for [`SparseBlockLinearSystem`](@ref)).
 
 # Example
 ```julia
-using BlockMatrices, SparseArrays
+using BlockLinearSystems, SparseArrays
 
-bsm = BlockSparseMatrix{Float64}(sparse([true false; true true]), [2, 2], [2, 2])
+bsm = SparseBlockLinearSystem{Float64}(sparse([true false; true true]), [2, 2], [2, 2])
 validblock(bsm, 1, 2) # true
 validblock(bsm, 2, 1) # false
 ```
@@ -84,13 +84,13 @@ validblock
 """
     zero!(M)
 
-Fills all stored entries of `M` (`BlockSparseMatrix`, `BlockDenseMatrix`, or `AbstractArray`) with zero in-place.
+Fills all stored entries of `M` (`SparseBlockLinearSystem`, `DenseBlockLinearSystem`, or `AbstractArray`) with zero in-place.
 
 # Example
 ```julia
-using BlockMatrices
+using BlockLinearSystems
 
-bdm = BlockDenseMatrix{Float64}([1, 3])
+bdm = DenseBlockLinearSystem{Float64}([1, 3])
 bdm[1, 1] = 5.0
 zero!(bdm)
 ```
@@ -100,13 +100,13 @@ zero!
 """
     copy_structure(M)
 
-Creates a new [`BlockSparseMatrix`](@ref) or [`BlockDenseMatrix`](@ref) sharing the block offset and sparsity index structures of `M`, with a freshly allocated zeroed `data` buffer.
+Creates a new [`SparseBlockLinearSystem`](@ref) or [`DenseBlockLinearSystem`](@ref) sharing the block offset and sparsity index structures of `M`, with a freshly allocated zeroed `data` buffer.
 
 # Example
 ```julia
-using BlockMatrices
+using BlockLinearSystems
 
-bdm = BlockDenseMatrix{Float64}([1, 3, 5])
+bdm = DenseBlockLinearSystem{Float64}([1, 3, 5])
 bdm_copy = copy_structure(bdm)
 ```
 """
@@ -115,13 +115,13 @@ copy_structure
 """
     uniformscaling!(M, k)
 
-Adds scalar `k` to the main diagonal of square matrix `M` (`BlockSparseMatrix`, `BlockDenseMatrix`, or `AbstractMatrix`) in-place: `M[i, i] += k`.
+Adds scalar `k` to the main diagonal of square matrix `M` (`SparseBlockLinearSystem`, `DenseBlockLinearSystem`, or `AbstractMatrix`) in-place: `M[i, i] += k`.
 
 # Example
 ```julia
-using BlockMatrices
+using BlockLinearSystems
 
-bdm = BlockDenseMatrix{Float64}([1, 3, 5])
+bdm = DenseBlockLinearSystem{Float64}([1, 3, 5])
 uniformscaling!(bdm, 2.0)
 ```
 """
@@ -130,14 +130,14 @@ uniformscaling!
 """
     symmetrifyfull(M) -> Matrix{T}
 
-Constructs a full symmetric `Matrix{T}` from a lower-triangular block matrix `M` (`BlockSparseMatrix` or `BlockDenseMatrix`).
+Constructs a full symmetric `Matrix{T}` from a lower-triangular block matrix `M` (`SparseBlockLinearSystem` or `DenseBlockLinearSystem`).
 Allocates and returns a new symmetric `Matrix{T}`. See [`symmetrifyfull!`](@ref) for the in-place version.
 
 # Example
 ```julia
-using BlockMatrices
+using BlockLinearSystems
 
-bdm = BlockDenseMatrix{Float64}([1, 3, 5])
+bdm = DenseBlockLinearSystem{Float64}([1, 3, 5])
 bdm[3, 1] = 4.0
 mat = symmetrifyfull(bdm) # mat[1, 3] == 4.0, mat !== bdm.data
 ```
@@ -145,18 +145,18 @@ mat = symmetrifyfull(bdm) # mat[1, 3] == 4.0, mat !== bdm.data
 symmetrifyfull
 
 """
-    symmetrifyfull!(bdm::BlockDenseMatrix) -> Matrix{T}
-    symmetrifyfull!(mat::Matrix{T}, bsm::BlockSparseMatrix{T}, blocks=nothing)
+    symmetrifyfull!(bdm::DenseBlockLinearSystem) -> Matrix{T}
+    symmetrifyfull!(mat::Matrix{T}, bsm::SparseBlockLinearSystem{T}, blocks=nothing)
 
 Symmetrifies a lower-triangular block matrix in-place:
-- For [`BlockDenseMatrix`](@ref): mirrors the lower triangle to the upper triangle of `bdm.data` in-place and returns `bdm.data`.
-- For [`BlockSparseMatrix`](@ref): populates preallocated dense matrix `mat` in-place. If `blocks` is a vector of block indices, extracts and symmetrifies only the principal submatrix corresponding to `blocks`.
+- For [`DenseBlockLinearSystem`](@ref): mirrors the lower triangle to the upper triangle of `bdm.data` in-place and returns `bdm.data`.
+- For [`SparseBlockLinearSystem`](@ref): populates preallocated dense matrix `mat` in-place. If `blocks` is a vector of block indices, extracts and symmetrifies only the principal submatrix corresponding to `blocks`.
 
 # Example
 ```julia
-using BlockMatrices, SparseArrays
+using BlockLinearSystems, SparseArrays
 
-bsm = BlockSparseMatrix{Float64}(sparse([true true; false true]), [2, 2], [2, 2])
+bsm = SparseBlockLinearSystem{Float64}(sparse([true true; false true]), [2, 2], [2, 2])
 block(bsm, 2, 1) .= 3.0
 mat = zeros(4, 4)
 symmetrifyfull!(mat, bsm)
@@ -165,15 +165,15 @@ symmetrifyfull!(mat, bsm)
 symmetrifyfull!
 
 """
-    symmetrifysparse(bsm::BlockSparseMatrix{T}) -> SparseMatrixCSC{T, Int}
+    symmetrifysparse(bsm::SparseBlockLinearSystem{T}) -> SparseMatrixCSC{T, Int}
 
-Converts a block-lower-triangular [`BlockSparseMatrix`](@ref) into a full symmetric `SparseMatrixCSC{T, Int}` by mirroring off-diagonal blocks to the upper triangle.
+Converts a block-lower-triangular [`SparseBlockLinearSystem`](@ref) into a full symmetric `SparseMatrixCSC{T, Int}` by mirroring off-diagonal blocks to the upper triangle.
 
 # Example
 ```julia
-using BlockMatrices, SparseArrays
+using BlockLinearSystems, SparseArrays
 
-bsm = BlockSparseMatrix{Float64}(sparse([true true; false true]), [2, 2], [2, 2])
+bsm = SparseBlockLinearSystem{Float64}(sparse([true true; false true]), [2, 2], [2, 2])
 block(bsm, 2, 1) .= 5.0
 S = symmetrifysparse(bsm)
 ```
@@ -181,7 +181,7 @@ S = symmetrifysparse(bsm)
 symmetrifysparse
 
 """
-    makesparseindices(bsm::BlockSparseMatrix, symmetrify::Bool=false) -> SparseMatrixCSC{Int, Int}
+    makesparseindices(bsm::SparseBlockLinearSystem, symmetrify::Bool=false) -> SparseMatrixCSC{Int, Int}
 
 Precomputes a `SparseMatrixCSC{Int, Int}` whose `nzval` holds the 1-based indices into `bsm.data` for every scalar non-zero entry of `sparse(bsm)` (or `symmetrifysparse(bsm)` when `symmetrify=true`).
 
@@ -189,9 +189,9 @@ This enables zero-allocation copying from `bsm.data` into an existing `SparseMat
 
 # Example
 ```julia
-using BlockMatrices, SparseArrays
+using BlockLinearSystems, SparseArrays
 
-bsm = BlockSparseMatrix{Float64}(sparse([true true; false true]), [2, 2], [2, 2])
+bsm = SparseBlockLinearSystem{Float64}(sparse([true true; false true]), [2, 2], [2, 2])
 idx_csc = makesparseindices(bsm, true)
 S = sparse(bsm, idx_csc)
 ```
@@ -205,7 +205,7 @@ Computes the total number of scalar non-zeros in a block-sparse matrix given its
 
 # Example
 ```julia
-using BlockMatrices, SparseArrays
+using BlockLinearSystems, SparseArrays
 
 sparsity = sparse([true true; false true])
 block_sparse_nnz(sparsity, [2, 3]) # 2*2 + 2*3 + 3*3 = 19
@@ -220,7 +220,7 @@ Computes the 1-based starting scalar index for each block given a vector of `blo
 
 # Example
 ```julia
-using BlockMatrices
+using BlockLinearSystems
 
 computestartindices([2, 3, 4]) # [1, 3, 6]
 ```
@@ -234,7 +234,7 @@ Finds the index `k` in `A.nzval` corresponding to the diagonal entry `A[col, col
 
 # Example
 ```julia
-using BlockMatrices, SparseArrays
+using BlockLinearSystems, SparseArrays
 
 S = sparse([1, 2, 2], [1, 1, 2], [10.0, 20.0, 30.0], 2, 2)
 find_diag_inds(S) # [1, 3]
