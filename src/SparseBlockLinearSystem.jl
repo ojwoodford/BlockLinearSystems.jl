@@ -298,7 +298,7 @@ function symmetrifyfull(bsm::SparseBlockLinearSystem{T}) where T
     return output
 end
 
-function symmetrifyfull!(mat::Matrix{T}, bsm::SparseBlockLinearSystem{T}, blocks=nothing) where T
+function symmetrifyfull!(mat::DenseMatrix{T}, bsm::SparseBlockLinearSystem{T}, blocks=nothing) where T
     bsm.rowblocksizes == bsm.columnblocksizes || throw(ArgumentError("SparseBlockLinearSystem must be block-square for symmetrifyfull!"))
     if blocks === nothing
         lengths = bsm.rowblocksizes
