@@ -97,6 +97,8 @@ BlockRLE(vec::AbstractVector{<:Integer}) = BlockRLE{UInt8}(vec)
 BlockRLE(rle::BlockRLE) = rle
 BlockRLE{T}(rle::BlockRLE{T}) where T<:Integer = rle
 BlockRLE{T}(rle::BlockRLE{T2, L}) where {T<:Integer, T2<:Integer, L} = BlockRLE{T, L}(copy(rle.runlengths), convert(Vector{T}, rle.blocksizes))
+BlockRLE{T, L}(rle::BlockRLE{T, L}) where {T<:Integer, L<:Integer} = rle
+BlockRLE{T, L}(rle::BlockRLE) where {T<:Integer, L<:Integer} = BlockRLE{T, L}(convert(Vector{L}, rle.runlengths), convert(Vector{T}, rle.blocksizes))
 
 # Base.AbstractVector Interface
 Base.size(rle::BlockRLE) = (Int(rle.cumblocks[end] - 1),)
@@ -129,8 +131,8 @@ end
 
 Base.Vector(rle::BlockRLE{T}) where T = collect(rle)
 Base.Vector{T}(rle::BlockRLE) where T = convert(Vector{T}, collect(rle))
-Base.convert(::Type{Vector{T}}, rle::BlockRLE{T}) where T = collect(rle)
 Base.convert(::Type{Vector{T}}, rle::BlockRLE) where T = convert(Vector{T}, collect(rle))
+Base.convert(::Type{Vector}, rle::BlockRLE) = collect(rle)
 Base.convert(::Type{BlockRLE}, v::AbstractVector{<:Integer}) = BlockRLE(v)
 Base.convert(::Type{BlockRLE{T}}, v::AbstractVector{<:Integer}) where T = BlockRLE{T}(v)
 
@@ -206,8 +208,7 @@ end
 
 # Coercion helper ensuring BlockRLE{UInt8, Int} representation
 as_block_rle(v::BlockRLE{UInt8, Int}) = v
-as_block_rle(v::BlockRLE{UInt8}) = v
-as_block_rle(v::BlockRLE) = BlockRLE{UInt8}(v)
+as_block_rle(v::BlockRLE) = BlockRLE{UInt8, Int}(v)
 function as_block_rle(v::AbstractVector{<:Integer})
     all(i -> 0 < i <= 255, v) || throw(ArgumentError("Block dimensions must be between 1 and 255"))
     return BlockRLE(v)

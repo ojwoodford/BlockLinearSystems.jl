@@ -144,11 +144,18 @@
     # Conversions and constructors
     @test BlockRLE(rle) === rle
     @test BlockRLE{UInt8}(rle) === rle
+    @test BlockRLE{UInt8, Int}(rle) === rle
+    rle_i32 = BlockRLE{UInt8, Int32}(rle)
+    @test rle_i32 isa BlockRLE{UInt8, Int32}
+    @test BlockRLE{UInt8, Int}(rle_i32) isa BlockRLE{UInt8, Int}
     rle_int = BlockRLE{Int}(rle)
     @test rle_int isa BlockRLE{Int, Int}
     @test rle_int.blocksizes == [6, 3]
+    @test convert(Vector, rle) == collect(rle)
     @test convert(Vector{UInt8}, rle) == collect(rle)
     @test convert(Vector{Int}, rle) == Vector{Int}(collect(rle))
+    @test convert(Vector{Float64}, rle) == Vector{Float64}(collect(rle))
     @test BlockLinearSystems.as_block_rle(rle) === rle
+    @test BlockLinearSystems.as_block_rle(rle_i32) isa BlockRLE{UInt8, Int}
     @test BlockLinearSystems.as_block_rle(rle_int) isa BlockRLE{UInt8, Int}
 end
