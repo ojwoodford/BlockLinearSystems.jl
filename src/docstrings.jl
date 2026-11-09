@@ -341,3 +341,90 @@ copyto!(csc_mat, sys, scatter_map)
 ```
 """
 sparse_with_map
+
+"""
+    BlockRLE(runlengths, blocksizes)
+    BlockRLE(runs::Vector{Pair})
+    BlockRLE(vec::AbstractVector{<:Integer})
+
+Run-Length Encoded (RLE) block layout metadata capturing contiguous runs of uniform block sizes.
+Subtypes `AbstractVector{UInt8}` for transparent interop with all linear systems while providing
+\$O(1)\$ matrix dimension lookup, \$O(1)\$ run indexing, and \$O(\\log R)\$ block-to-coordinate mapping.
+
+# Fields
+- `runlengths::Vector{Int}`: Number of blocks in each run.
+- `blocksizes::Vector{UInt8}`: Block dimension in each run.
+- `cumblocks::Vector{Int}`: 1-based start block index for each run, terminated by `total_blocks + 1`.
+- `cummatrixdims::Vector{Int}`: 1-based start scalar matrix coordinate for each run, terminated by `total_dimension + 1`.
+
+# Example
+```julia
+# 100 camera poses (dim 6) followed by 50,000 landmarks (dim 3):
+rle = BlockRLE([100, 50_000], [6, 3])
+length(rle)            # 50100
+matrixdimension(rle)   # 150600
+nruns(rle)             # 2
+```
+"""
+BlockRLE
+
+"""
+    nruns(rle::BlockRLE) -> Int
+
+Returns the number of uniform block runs in `rle`.
+"""
+nruns
+
+"""
+    runlength(rle::BlockRLE, k::Integer) -> Int
+
+Returns the number of blocks in run `k`.
+"""
+runlength
+
+"""
+    runblocksize(rle::BlockRLE, k::Integer) -> UInt8
+
+Returns the block dimension for blocks in run `k`.
+"""
+runblocksize
+
+"""
+    matrixdimension(rle::BlockRLE) -> Int
+
+Returns the total scalar matrix row/column dimension represented by `rle` (equivalent to `sum(rle)`).
+"""
+matrixdimension
+
+"""
+    runblockrange(rle::BlockRLE, k::Integer) -> UnitRange{Int}
+
+Returns the 1-based range of block indices belonging to run `k`.
+"""
+runblockrange
+
+"""
+    runmatrixrange(rle::BlockRLE, k::Integer) -> UnitRange{Int}
+
+Returns the 1-based range of scalar rows/columns in the represented matrix belonging to run `k`.
+"""
+runmatrixrange
+
+"""
+    eachrun(rle::BlockRLE)
+
+Iterator yielding named tuples `(run = k, blockrange = r, blocksize = s, matrixrange = m)`
+for each uniform run in `rle`.
+"""
+eachrun
+
+"""
+    sort_blocks_hierarchical(roles::AbstractVector, dimensions::AbstractVector{<:Integer}; rev_dim::Bool=true)
+        -> (permutation::Vector{Int}, rle::BlockRLE)
+
+Sorts blocks using a two-tier hierarchy `(Role, Dimension)` to cleanly separate Schur-eliminated
+variables from retained variables while grouping identical block dimensions into contiguous RLE runs.
+
+Returns the permutation vector `permutation` and the resulting `BlockRLE` metadata.
+"""
+sort_blocks_hierarchical
