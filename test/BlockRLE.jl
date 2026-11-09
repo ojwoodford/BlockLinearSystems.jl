@@ -140,4 +140,15 @@
     block(sbls_rle, 1, 1) .= 5.0
     uniformscaling!(sbls_rle, 1.0)
     @test block(sbls_rle, 1, 1)[1, 1] == 6.0
+
+    # Conversions and constructors
+    @test BlockRLE(rle) === rle
+    @test BlockRLE{UInt8}(rle) === rle
+    rle_int = BlockRLE{Int}(rle)
+    @test rle_int isa BlockRLE{Int, Int}
+    @test rle_int.blocksizes == [6, 3]
+    @test convert(Vector{UInt8}, rle) == collect(rle)
+    @test convert(Vector{Int}, rle) == Vector{Int}(collect(rle))
+    @test BlockLinearSystems.as_block_rle(rle) === rle
+    @test BlockLinearSystems.as_block_rle(rle_int) isa BlockRLE{UInt8, Int}
 end

@@ -228,4 +228,23 @@ end
     @test_throws ArgumentError uniformscaling!(bs_rect, 1.0)
     bs_nodiag = SparseBlockLinearSystem{Float64}(TransposedPattern(sparse([false true; true false])), [2, 2])
     @test_throws ArgumentError uniformscaling!(bs_nodiag, 1.0)
+
+    # Constructors with vector block sizes and direct low-level constructors
+    sp_mat = sparse([1 0; 0 1])
+    sbls_vec_sq = SparseBlockLinearSystem{Float64}(4, sp_mat, [2, 2])
+    @test sbls_vec_sq.rowblocksizes isa BlockRLE
+    @test sbls_vec_sq.columnblocksizes isa BlockRLE
+    sbls_vec_rect = SparseBlockLinearSystem{Float64}(5, sp_mat, [2, 2], [3, 1])
+    @test sbls_vec_rect.rowblocksizes !== sbls_vec_rect.columnblocksizes
+
+    sbls_sub1 = SparseBlockLinearSystem{Float64}(bs_diag, 2)
+    @test sbls_sub1.m == 2 && sbls_sub1.n == 2
+    sbls_sub2 = SparseBlockLinearSystem{Float64}(bs_diag, 2, 4)
+    @test sbls_sub2.m == 2 && sbls_sub2.n == 4
+
+    rbs_sq = [2, 2]
+    sbls_raw_sq = SparseBlockLinearSystem{Float64}(bs_diag.data, bs_diag.indices, bs_diag.indicestransposed, rbs_sq, rbs_sq, 4, 4)
+    @test sbls_raw_sq.rowblocksizes === sbls_raw_sq.columnblocksizes
+    sbls_raw_rect = SparseBlockLinearSystem{Float64}(bs_diag.data, bs_diag.indices, bs_diag.indicestransposed, [2, 2], [3, 1], 4, 4)
+    @test sbls_raw_rect.rowblocksizes !== sbls_raw_rect.columnblocksizes
 end

@@ -93,4 +93,48 @@
     bdm_view_copy = copy_structure(bdm_view)
     @test bdm_view_copy.data isa AbstractMatrix{Float64}
     @test size(bdm_view_copy.data) == size(dense_view)
+
+    # BlockOffsets and offsets keyword constructors
+    bo = BlockOffsets([1, 3, 6])
+    co = BlockOffsets([1, 4])
+    @test_throws ArgumentError BlockOffsets([1]) |> (b -> DenseBlockLinearSystem{Float64}(b))
+    @test_throws ArgumentError DenseBlockLinearSystem{Float64}(BlockOffsets([0, 3]))
+    @test_throws ArgumentError DenseBlockLinearSystem{Float64}(bo, BlockOffsets([2, 4]))
+    @test_throws ArgumentError DenseBlockLinearSystem(zeros(5, 5), BlockOffsets([1]))
+    @test_throws ArgumentError DenseBlockLinearSystem(zeros(5, 5), BlockOffsets([0, 3]))
+    @test_throws ArgumentError DenseBlockLinearSystem(zeros(5, 3), bo, BlockOffsets([2, 4]))
+    @test_throws DimensionMismatch DenseBlockLinearSystem(zeros(4, 5), bo)
+
+    bdm_bo_sq = DenseBlockLinearSystem{Float64}(bo)
+    @test size(bdm_bo_sq) == (5, 5)
+    bdm_bo_rect = DenseBlockLinearSystem{Float64}(bo, co)
+    @test size(bdm_bo_rect) == (5, 3)
+
+    data55 = zeros(Float64, 5, 5)
+    data53 = zeros(Float64, 5, 3)
+    bdm_bo_data_sq = DenseBlockLinearSystem{Float64, typeof(data55)}(data55, bo)
+    @test size(bdm_bo_data_sq) == (5, 5)
+    bdm_bo_data_rect = DenseBlockLinearSystem{Float64, typeof(data53)}(data53, bo, co)
+    @test size(bdm_bo_data_rect) == (5, 3)
+    @test DenseBlockLinearSystem{Float64}(data55, bo) isa DenseBlockLinearSystem
+    @test DenseBlockLinearSystem(data55, bo) isa DenseBlockLinearSystem
+    @test DenseBlockLinearSystem{Float64}(data53, bo, co) isa DenseBlockLinearSystem
+    @test DenseBlockLinearSystem(data53, bo, co) isa DenseBlockLinearSystem
+
+    # Raw vector offset constructors
+    rbs_vec = [2, 3]
+    cbs_vec = [3]
+    bdm_raw_sq = DenseBlockLinearSystem{Float64, Matrix{Float64}}(data55, [1, 3, 6], [1, 3, 6], rbs_vec, rbs_vec)
+    @test size(bdm_raw_sq) == (5, 5)
+    bdm_raw_rect = DenseBlockLinearSystem{Float64, Matrix{Float64}}(data53, [1, 3, 6], [1, 4], rbs_vec, cbs_vec)
+    @test size(bdm_raw_rect) == (5, 3)
+    @test DenseBlockLinearSystem{Float64}(data55, [1, 3, 6], [1, 3, 6], rbs_vec, rbs_vec) isa DenseBlockLinearSystem
+
+    # Keyword argument constructors
+    @test size(DenseBlockLinearSystem{Float64}(; offsets=[1, 3, 6])) == (5, 5)
+    @test size(DenseBlockLinearSystem{Float64}(; offsets=[1, 3, 6], coloffsets=[1, 4])) == (5, 3)
+    @test size(DenseBlockLinearSystem{Float64}(data55; offsets=[1, 3, 6])) == (5, 5)
+    @test size(DenseBlockLinearSystem{Float64}(data53; offsets=[1, 3, 6], coloffsets=[1, 4])) == (5, 3)
+    @test size(DenseBlockLinearSystem(data55; offsets=[1, 3, 6])) == (5, 5)
+    @test size(DenseBlockLinearSystem(data53; offsets=[1, 3, 6], coloffsets=[1, 4])) == (5, 3)
 end
