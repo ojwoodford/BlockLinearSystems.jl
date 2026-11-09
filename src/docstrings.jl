@@ -28,13 +28,13 @@ SparseBlockLinearSystem
 
 """
     DenseBlockLinearSystem{T}(rowblockoffsets, columnblockoffsets=rowblockoffsets)
-    DenseBlockLinearSystem{T}(data::DenseMatrix{T}, rowblockoffsets, columnblockoffsets=rowblockoffsets)
-    DenseBlockLinearSystem(data::DenseMatrix{T}, rowblockoffsets, columnblockoffsets=rowblockoffsets)
+    DenseBlockLinearSystem{T}(data::AbstractMatrix{T}, rowblockoffsets, columnblockoffsets=rowblockoffsets)
+    DenseBlockLinearSystem(data::AbstractMatrix{T}, rowblockoffsets, columnblockoffsets=rowblockoffsets)
 
-Block-partitioned dense matrix backed by a dense matrix `data` (such as `Matrix{T}` or `FixedSizeMatrix{T}`) alongside 1-based sentinel-terminated block offset vectors `rowblockoffsets` and `columnblockoffsets`.
+Block-partitioned dense matrix backed by a matrix buffer `data` (such as `Matrix{T}`, `SubArray`, or `FixedSizeMatrix{T}`) alongside 1-based sentinel-terminated block offset vectors `rowblockoffsets` and `columnblockoffsets`.
 
 # Fields
-- `data::DenseMatrix{T}`: Underlying dense matrix of size `(rowblockoffsets[end]-1, columnblockoffsets[end]-1)`.
+- `data::AbstractMatrix{T}`: Underlying matrix buffer of size `(rowblockoffsets[end]-1, columnblockoffsets[end]-1)`.
 - `rowblockoffsets::Vector{Int}`: 1-based start row of each block row, terminated by `m + 1`.
 - `columnblockoffsets::Vector{Int}`: 1-based start column of each block column, terminated by `n + 1`.
 
@@ -146,8 +146,8 @@ mat = symmetrifyfull(bdm) # mat[1, 3] == 4.0, mat !== bdm.data
 symmetrifyfull
 
 """
-    symmetrifyfull!(bdm::DenseBlockLinearSystem) -> DenseMatrix{T}
-    symmetrifyfull!(mat::DenseMatrix{T}, bsm::SparseBlockLinearSystem{T}, blocks=nothing)
+    symmetrifyfull!(bdm::DenseBlockLinearSystem) -> AbstractMatrix{T}
+    symmetrifyfull!(mat::AbstractMatrix{T}, bsm::SparseBlockLinearSystem{T}, blocks=nothing)
 
 Symmetrifies a lower-triangular block matrix in-place:
 - For [`DenseBlockLinearSystem`](@ref): mirrors the lower triangle to the upper triangle of `bdm.data` in-place and returns `bdm.data`.
@@ -235,7 +235,7 @@ nblocks
 """
     blockdata(sys) -> Array
 
-Returns the underlying data storage buffer (a contiguous flat `Vector{T}` for [`SparseBlockLinearSystem`](@ref) or `DenseMatrix{T}` for [`DenseBlockLinearSystem`](@ref)).
+Returns the underlying data storage buffer (a contiguous flat `Vector{T}` for [`SparseBlockLinearSystem`](@ref) or `AbstractMatrix{T}` for [`DenseBlockLinearSystem`](@ref)).
 """
 blockdata
 

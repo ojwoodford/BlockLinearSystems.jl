@@ -172,10 +172,10 @@ end
         sub_mat = zeros(Int64, 4, 4)
         symmetrifyfull!(sub_mat, bs, [2, 3])
         @test sub_mat == outsym[3:6, 3:6]
-        # symmetrifyfull! with DenseMatrix target (e.g. contiguous SubArray)
+        # symmetrifyfull! with AbstractMatrix target (e.g. SubArray view)
         full_dest = zeros(Int64, 8, 8)
         dest_view = view(full_dest, 1:6, 1:6)
-        @test dest_view isa DenseMatrix
+        @test dest_view isa SubArray
         symmetrifyfull!(dest_view, bs)
         @test dest_view == outsym
         # BitVector mask for blocks
@@ -310,17 +310,19 @@ end
         zero!(mat_buf)
         @test all(iszero, mat_buf)
 
-        # DenseMatrix support (e.g. SubArray or custom DenseMatrix)
+        # AbstractMatrix support (e.g. SubArray or custom AbstractMatrix)
         parent_buf = zeros(Float64, 6, 6)
         dense_view = view(parent_buf, 1:4, 1:4)
-        @test dense_view isa DenseMatrix
+        @test dense_view isa SubArray
         bdm_view = DenseBlockLinearSystem(dense_view, [2, 2])
         @test bdm_view isa DenseBlockLinearSystem{Float64, typeof(dense_view)}
         block(bdm_view, 1, 1) .= 2.5
         @test parent_buf[1, 1] == 2.5
         @test Matrix(bdm_view) isa Matrix{Float64}
         bdm_view_copy = copy_structure(bdm_view)
-        @test bdm_view_copy.data isa typeof(dense_view)
+        @test bdm_view_copy.data isa Matrix{Float64}
+        @test size(bdm_view_copy.data) == (4, 4)
+        @test all(iszero, bdm_view_copy.data)
     end
 
     @testset "Helper Functions" begin
