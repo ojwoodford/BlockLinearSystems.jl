@@ -12,6 +12,8 @@
     S = sparse([1, 2, 2, 3, 3], [1, 1, 2, 2, 3], [10.0, 1.0, 20.0, 2.0, 30.0], 3, 3)
     dinds = BlockLinearSystems.find_diag_inds(S)
     @test S.nzval[dinds] == [10.0, 20.0, 30.0]
+    S_nodiag = sparse([2, 1], [1, 2], [1.0, 2.0], 2, 2)
+    @test length(BlockLinearSystems.find_diag_inds(S_nodiag)) == 2
 
     # inplacecumsum! (unexported helper, accessible via module)
     x = [1, 2, 3, 4]

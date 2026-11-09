@@ -165,6 +165,9 @@ end
     sub_mat = zeros(Int64, 4, 4)
     symmetrifyfull!(sub_mat, bs, [2, 3])
     @test sub_mat == outsym[3:6, 3:6]
+    sub_mat1 = zeros(Int64, 2, 2)
+    symmetrifyfull!(sub_mat1, bs, [1])
+    @test sub_mat1 == outsym[1:2, 1:2]
     # symmetrifyfull! with AbstractMatrix target (e.g. SubArray)
     full_dest = zeros(Int64, 8, 8)
     dest_view = view(full_dest, 1:6, 1:6)

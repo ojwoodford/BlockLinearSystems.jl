@@ -64,6 +64,19 @@
     @test runlength(rle_merge, 2) == 50
     @test runblocksize(rle_merge, 2) == 2
 
+    # Copy and equality with non-matching run structures
+    rle_cp = copy(rle)
+    @test rle_cp == rle
+    @test rle_cp !== rle
+    rle_a = BlockRLE([1, 1], [UInt8(2), UInt8(2)])
+    rle_b = BlockRLE([2], [UInt8(2)])
+    @test rle_a == rle_b
+    rle_c = BlockRLE([1, 1], [UInt8(2), UInt8(3)])
+    rle_d = BlockRLE([1, 1], [UInt8(3), UInt8(2)])
+    @test rle_c != rle_d
+    @test convert(BlockRLE, [2, 3]) == BlockRLE([1, 1], [2, 3])
+    @test convert(BlockRLE{UInt8}, [2, 3]) == BlockRLE([1, 1], [2, 3])
+
     # Empty BlockRLE
     rle_empty = BlockRLE(Int[], UInt8[])
     @test isempty(rle_empty)

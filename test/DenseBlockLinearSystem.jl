@@ -63,6 +63,13 @@
 
     bdm_copy = copy_structure(bdm)
     @test size(bdm_copy) == (4, 4)
+
+    # Rectangular DenseBlockLinearSystem with differing row/column blocksizes
+    bdm_rect = DenseBlockLinearSystem{Float64}([2, 3], [3, 4, 1])
+    @test size(bdm_rect) == (5, 8)
+    @test nblocks(bdm_rect) == (2, 3)
+    @test blocksizes(bdm_rect, 1) == [2, 3]
+    @test blocksizes(bdm_rect, 2) == [3, 4, 1]
     @test all(iszero, bdm_copy.data)
 
     zero!(bdm)
