@@ -25,10 +25,6 @@
     @test runblockrange(rle, 2) == 11:60
     @test runmatrixrange(rle, 1) == 1:60
     @test runmatrixrange(rle, 2) == 61:210
-    @test blockrange(rle, 1) == 1:6
-    @test blockrange(rle, 10) == 55:60
-    @test blockrange(rle, 11) == 61:63
-    @test blockrange(rle, 60) == 208:210
 
     # computestartindices
     starts = BlockLinearSystems.computestartindices(rle)

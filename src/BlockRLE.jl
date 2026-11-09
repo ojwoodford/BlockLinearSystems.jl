@@ -162,14 +162,6 @@ end
     return @inbounds rle.cummatrixdims[k]:(rle.cummatrixdims[k+1] - 1)
 end
 
-@inline function blockrange(rle::BlockRLE, i::Integer)
-    @boundscheck (1 <= i <= length(rle)) || throw(BoundsError(rle, i))
-    run_idx = searchsortedlast(rle.cumblocks, i)
-    sz = Int(@inbounds rle.blocksizes[run_idx])
-    bstart = @inbounds rle.cummatrixdims[run_idx] + (i - @inbounds rle.cumblocks[run_idx]) * sz
-    return bstart:(bstart + sz - 1)
-end
-
 function computestartindices(rle::BlockRLE)
     n = length(rle)
     startind = Vector{Int}(undef, n)

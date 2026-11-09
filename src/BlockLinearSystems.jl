@@ -8,7 +8,7 @@ export block, validblock, zero!, copy_structure, uniformscaling!
 export symmetrifyfull, symmetrifyfull!, symmetrifysparse, makesparseindices
 export sparse_with_map, copyto!
 export block_sparse_nnz
-export blocksizes, nblocks, blockdata, blockrange, eachstoredblock
+export blocksizes, nblocks, blockdata, eachstoredblock
 
 include("utils.jl")
 include("BlockRLE.jl")

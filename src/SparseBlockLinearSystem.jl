@@ -92,12 +92,19 @@ copy_structure(bsm::SparseBlockLinearSystem{T}) where T =
 
 function uniformscaling!(M::SparseBlockLinearSystem, k)
     M.rowblocksizes == M.columnblocksizes || throw(ArgumentError("SparseBlockLinearSystem must be block-square for uniformscaling!"))
-    for (i, blocksz) in enumerate(M.rowblocksizes)
-        @inbounds ind = M.indicestransposed[i, i]
-        ind > 0 || throw(ArgumentError("Diagonal block ($i, $i) is missing in SparseBlockLinearSystem"))
-        bs = Int(blocksz)
-        for j in ind:(bs + 1):(ind + bs^2 - 1)
-            @inbounds M.data[j] += k
+    rle = M.rowblocksizes
+    i = 1
+    for (len, bs_val) in zip(rle.runlengths, rle.blocksizes)
+        bs = Int(bs_val)
+        stride = bs + 1
+        span = bs * bs
+        for _ in 1:len
+            @inbounds ind = M.indicestransposed[i, i]
+            ind > 0 || throw(ArgumentError("Diagonal block ($i, $i) is missing in SparseBlockLinearSystem"))
+            for j in ind:stride:(ind + span - 1)
+                @inbounds M.data[j] += k
+            end
+            i += 1
         end
     end
     return M
@@ -172,21 +179,6 @@ nblocks(sys::Union{DenseBlockLinearSystem, SparseBlockLinearSystem}) =
 
 blockdata(sys::DenseBlockLinearSystem) = sys.data
 blockdata(sys::SparseBlockLinearSystem) = sys.data
-
-blockrange(sys::DenseBlockLinearSystem, dim::Integer, idx::Integer) =
-    dim == 1 ? (sys.rowblockoffsets[idx]:sys.rowblockoffsets[idx+1]-1) :
-    dim == 2 ? (sys.columnblockoffsets[idx]:sys.columnblockoffsets[idx+1]-1) :
-    throw(ArgumentError("Dimension out of range: must be 1 or 2"))
-
-function blockrange(sys::SparseBlockLinearSystem, dim::Integer, idx::Integer)
-    sizes = blocksizes(sys, dim)
-    (1 <= idx <= length(sizes)) || throw(BoundsError(sizes, idx))
-    start = 1
-    for k in 1:idx-1
-        start += Int(sizes[k])
-    end
-    return start:(start + Int(sizes[idx]) - 1)
-end
 
 # eachstoredblock iterator
 struct EachStoredBlockIterator{S}

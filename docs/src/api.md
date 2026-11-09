@@ -17,7 +17,6 @@ validblock
 blocksizes
 nblocks
 blockdata
-blockrange
 eachstoredblock
 zero!
 copy_structure

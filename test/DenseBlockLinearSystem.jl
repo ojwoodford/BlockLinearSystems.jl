@@ -21,8 +21,6 @@
     @test nblocks(bdm, 2) == 2
     @test nblocks(bdm) == (2, 2)
     @test blockdata(bdm) === bdm.data
-    @test blockrange(bdm, 1, 1) == 1:2
-    @test blockrange(bdm, 1, 2) == 3:4
 
     # eachstoredblock iterator
     all_blocks = [(r, c) for (r, c, B) in eachstoredblock(bdm)]

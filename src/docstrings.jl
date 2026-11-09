@@ -240,21 +240,6 @@ Returns the underlying data storage buffer (a contiguous flat `Vector{T}` for [`
 blockdata
 
 """
-    blockrange(sys, dim, idx) -> UnitRange{Int}
-
-Returns the 1-based global scalar coordinate range of block `idx` along dimension `dim` (1 for rows, 2 for columns).
-
-# Example
-```julia
-using BlockLinearSystems
-
-sys = DenseBlockLinearSystem{Float64}([2, 3])
-blockrange(sys, 1, 2) # 3:5
-```
-"""
-blockrange
-
-"""
     eachstoredblock(sys)
 
 Returns an iterator yielding `(i, j, block_view)` for every structurally non-zero block in `sys`.
