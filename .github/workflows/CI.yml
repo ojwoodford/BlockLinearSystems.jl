@@ -37,6 +37,7 @@ jobs:
       - uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
+          slug: ojwoodford/BlockLinearSystems.jl
           fail_ci_if_error: false
   docs:
     name: Documentation

@@ -40,6 +40,20 @@ sparse_with_map
 block_sparse_nnz
 ```
 
+## Run-Length Encoded Block Arrangements
+
+```@docs
+BlockRLE
+nruns
+runlength
+runblocksize
+matrixdimension
+runblockrange
+runmatrixrange
+eachrun
+sort_blocks_hierarchical
+```
+
 ## Internal Utilities
 
 ```@docs
