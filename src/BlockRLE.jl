@@ -204,10 +204,12 @@ function sort_blocks_hierarchical(roles::AbstractVector, dimensions::AbstractVec
     return perm, rle
 end
 
-# Internal coercion helper
-as_blocksizes(v::BlockRLE{UInt8}) = v
-as_blocksizes(v::BlockRLE) = BlockRLE{UInt8}(v)
-function as_blocksizes(v::AbstractVector{<:Integer})
+# Coercion helper ensuring BlockRLE{UInt8, Int} representation
+as_block_rle(v::BlockRLE{UInt8, Int}) = v
+as_block_rle(v::BlockRLE{UInt8}) = v
+as_block_rle(v::BlockRLE) = BlockRLE{UInt8}(v)
+function as_block_rle(v::AbstractVector{<:Integer})
     all(i -> 0 < i <= 255, v) || throw(ArgumentError("Block dimensions must be between 1 and 255"))
-    return v isa AbstractVector{UInt8} ? v : convert(Vector{UInt8}, v)
+    return BlockRLE(v)
 end
+const as_blocksizes = as_block_rle
