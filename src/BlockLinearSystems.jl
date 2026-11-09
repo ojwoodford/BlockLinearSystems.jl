@@ -14,6 +14,7 @@ include("utils.jl")
 include("BlockRLE.jl")
 include("DenseBlockLinearSystem.jl")
 include("SparseBlockLinearSystem.jl")
+include("schur.jl")
 include("docstrings.jl")
 
 end # module BlockLinearSystems

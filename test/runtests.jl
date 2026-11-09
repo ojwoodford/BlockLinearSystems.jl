@@ -6,4 +6,5 @@ using BlockLinearSystems, SparseArrays, StaticArrays, Static, HybridArrays, Line
     include("DenseBlockLinearSystem.jl")
     include("BlockRLE.jl")
     include("helpers.jl")
+    include("schur.jl")
 end
