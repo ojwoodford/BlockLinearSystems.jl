@@ -8,29 +8,14 @@ struct BlockOffsets
     offsets::Vector{Int}
 end
 
-struct DenseBlockLinearSystem{T}
-    data::Matrix{T}
+struct DenseBlockLinearSystem{T, M<:AbstractMatrix{T}}
+    data::M
     rowblockoffsets::Vector{Int}
     columnblockoffsets::Vector{Int}
     rowblocksizes::Vector{UInt8}
     columnblocksizes::Vector{UInt8}
 
-    function DenseBlockLinearSystem{T}(rowblocksizes::AbstractVector{<:Integer}, colblocksizes::AbstractVector{<:Integer}=rowblocksizes) where T
-        all(i -> 0 < i <= 255, rowblocksizes) || throw(ArgumentError("Row block dimensions must be between 1 and 255"))
-        all(i -> 0 < i <= 255, colblocksizes) || throw(ArgumentError("Column block dimensions must be between 1 and 255"))
-        rbs = convert(Vector{UInt8}, rowblocksizes)
-        cbs = rowblocksizes === colblocksizes ? rbs : convert(Vector{UInt8}, colblocksizes)
-        r_offsets = computestartindices(rbs)
-        push!(r_offsets, r_offsets[end] + Int(rbs[end]))
-        c_offsets = rowblocksizes === colblocksizes ? r_offsets : begin
-            o = computestartindices(cbs)
-            push!(o, o[end] + Int(cbs[end]))
-            o
-        end
-        return new{T}(zeros(T, r_offsets[end]-1, c_offsets[end]-1), r_offsets, c_offsets, rbs, cbs)
-    end
-
-    function DenseBlockLinearSystem{T}(data::Matrix{T}, rowblocksizes::AbstractVector{<:Integer}, colblocksizes::AbstractVector{<:Integer}=rowblocksizes) where T
+    function DenseBlockLinearSystem{T, M}(data::M, rowblocksizes::AbstractVector{<:Integer}, colblocksizes::AbstractVector{<:Integer}=rowblocksizes) where {T, M<:AbstractMatrix{T}}
         all(i -> 0 < i <= 255, rowblocksizes) || throw(ArgumentError("Row block dimensions must be between 1 and 255"))
         all(i -> 0 < i <= 255, colblocksizes) || throw(ArgumentError("Column block dimensions must be between 1 and 255"))
         rbs = convert(Vector{UInt8}, rowblocksizes)
@@ -43,21 +28,10 @@ struct DenseBlockLinearSystem{T}
             o
         end
         size(data) == (r_offsets[end]-1, c_offsets[end]-1) || throw(DimensionMismatch("Matrix size $(size(data)) does not match block sizes ($(r_offsets[end]-1), $(c_offsets[end]-1))"))
-        return new{T}(data, r_offsets, c_offsets, rbs, cbs)
+        return new{T, M}(data, r_offsets, c_offsets, rbs, cbs)
     end
 
-    function DenseBlockLinearSystem{T}(bo::BlockOffsets, co::BlockOffsets=bo) where T
-        r_offsets = bo.offsets
-        c_offsets = co.offsets
-        (length(r_offsets) >= 2 && length(c_offsets) >= 2) || throw(ArgumentError("Offset vectors must have at least 2 entries"))
-        r_offsets[1] == 1 || throw(ArgumentError("Row offsets must start with 1"))
-        c_offsets[1] == 1 || throw(ArgumentError("Column offsets must start with 1"))
-        rbs = convert(Vector{UInt8}, diff(r_offsets))
-        cbs = r_offsets === c_offsets ? rbs : convert(Vector{UInt8}, diff(c_offsets))
-        return new{T}(zeros(T, r_offsets[end]-1, c_offsets[end]-1), r_offsets, c_offsets, rbs, cbs)
-    end
-
-    function DenseBlockLinearSystem{T}(data::Matrix{T}, bo::BlockOffsets, co::BlockOffsets=bo) where T
+    function DenseBlockLinearSystem{T, M}(data::M, bo::BlockOffsets, co::BlockOffsets=bo) where {T, M<:AbstractMatrix{T}}
         r_offsets = bo.offsets
         c_offsets = co.offsets
         (length(r_offsets) >= 2 && length(c_offsets) >= 2) || throw(ArgumentError("Offset vectors must have at least 2 entries"))
@@ -66,22 +40,71 @@ struct DenseBlockLinearSystem{T}
         rbs = convert(Vector{UInt8}, diff(r_offsets))
         cbs = r_offsets === c_offsets ? rbs : convert(Vector{UInt8}, diff(c_offsets))
         size(data) == (r_offsets[end]-1, c_offsets[end]-1) || throw(DimensionMismatch("Matrix size $(size(data)) does not match offsets ($(r_offsets[end]-1), $(c_offsets[end]-1))"))
-        return new{T}(data, r_offsets, c_offsets, rbs, cbs)
+        return new{T, M}(data, r_offsets, c_offsets, rbs, cbs)
     end
 
-    function DenseBlockLinearSystem{T}(data::Matrix{T}, rowblockoffsets::Vector{Int}, columnblockoffsets::Vector{Int}, rbs::Vector{UInt8}, cbs::Vector{UInt8}) where T
-        return new{T}(data, rowblockoffsets, columnblockoffsets, rbs, cbs)
+    function DenseBlockLinearSystem{T, M}(data::M, rowblockoffsets::Vector{Int}, columnblockoffsets::Vector{Int}, rbs::Vector{UInt8}, cbs::Vector{UInt8}) where {T, M<:AbstractMatrix{T}}
+        return new{T, M}(data, rowblockoffsets, columnblockoffsets, rbs, cbs)
     end
 end
+
+function DenseBlockLinearSystem{T}(rowblocksizes::AbstractVector{<:Integer}, colblocksizes::AbstractVector{<:Integer}=rowblocksizes) where T
+    all(i -> 0 < i <= 255, rowblocksizes) || throw(ArgumentError("Row block dimensions must be between 1 and 255"))
+    all(i -> 0 < i <= 255, colblocksizes) || throw(ArgumentError("Column block dimensions must be between 1 and 255"))
+    rbs = convert(Vector{UInt8}, rowblocksizes)
+    cbs = rowblocksizes === colblocksizes ? rbs : convert(Vector{UInt8}, colblocksizes)
+    r_offsets = computestartindices(rbs)
+    push!(r_offsets, r_offsets[end] + Int(rbs[end]))
+    c_offsets = rowblocksizes === colblocksizes ? r_offsets : begin
+        o = computestartindices(cbs)
+        push!(o, o[end] + Int(cbs[end]))
+        o
+    end
+    data = zeros(T, r_offsets[end]-1, c_offsets[end]-1)
+    return DenseBlockLinearSystem{T, typeof(data)}(data, r_offsets, c_offsets, rbs, cbs)
+end
+
+DenseBlockLinearSystem{T}(data::M, rowblocksizes::AbstractVector{<:Integer}, colblocksizes::AbstractVector{<:Integer}=rowblocksizes) where {T, M<:AbstractMatrix{T}} =
+    DenseBlockLinearSystem{T, M}(data, rowblocksizes, colblocksizes)
+
+DenseBlockLinearSystem(data::AbstractMatrix{T}, rowblocksizes::AbstractVector{<:Integer}, colblocksizes::AbstractVector{<:Integer}=rowblocksizes) where T =
+    DenseBlockLinearSystem{T}(data, rowblocksizes, colblocksizes)
+
+function DenseBlockLinearSystem{T}(bo::BlockOffsets, co::BlockOffsets=bo) where T
+    r_offsets = bo.offsets
+    c_offsets = co.offsets
+    (length(r_offsets) >= 2 && length(c_offsets) >= 2) || throw(ArgumentError("Offset vectors must have at least 2 entries"))
+    r_offsets[1] == 1 || throw(ArgumentError("Row offsets must start with 1"))
+    c_offsets[1] == 1 || throw(ArgumentError("Column offsets must start with 1"))
+    rbs = convert(Vector{UInt8}, diff(r_offsets))
+    cbs = r_offsets === c_offsets ? rbs : convert(Vector{UInt8}, diff(c_offsets))
+    data = zeros(T, r_offsets[end]-1, c_offsets[end]-1)
+    return DenseBlockLinearSystem{T, typeof(data)}(data, r_offsets, c_offsets, rbs, cbs)
+end
+
+DenseBlockLinearSystem{T}(data::M, bo::BlockOffsets, co::BlockOffsets=bo) where {T, M<:AbstractMatrix{T}} =
+    DenseBlockLinearSystem{T, M}(data, bo, co)
+
+DenseBlockLinearSystem(data::AbstractMatrix{T}, bo::BlockOffsets, co::BlockOffsets=bo) where T =
+    DenseBlockLinearSystem{T}(data, bo, co)
+
+DenseBlockLinearSystem{T}(data::M, rowblockoffsets::Vector{Int}, columnblockoffsets::Vector{Int}, rbs::Vector{UInt8}, cbs::Vector{UInt8}) where {T, M<:AbstractMatrix{T}} =
+    DenseBlockLinearSystem{T, M}(data, rowblockoffsets, columnblockoffsets, rbs, cbs)
 
 DenseBlockLinearSystem{T}(; offsets::Vector{Int}, coloffsets::Vector{Int}=offsets) where T =
     DenseBlockLinearSystem{T}(BlockOffsets(offsets), BlockOffsets(coloffsets))
 
-DenseBlockLinearSystem{T}(data::Matrix{T}; offsets::Vector{Int}, coloffsets::Vector{Int}=offsets) where T =
+DenseBlockLinearSystem{T}(data::AbstractMatrix{T}; offsets::Vector{Int}, coloffsets::Vector{Int}=offsets) where T =
+    DenseBlockLinearSystem{T}(data, BlockOffsets(offsets), BlockOffsets(coloffsets))
+
+DenseBlockLinearSystem(data::AbstractMatrix{T}; offsets::Vector{Int}, coloffsets::Vector{Int}=offsets) where T =
     DenseBlockLinearSystem{T}(data, BlockOffsets(offsets), BlockOffsets(coloffsets))
 
 
-copy_structure(bdm::DenseBlockLinearSystem{T}) where T = DenseBlockLinearSystem{T}(zeros(T, size(bdm.data)), bdm.rowblockoffsets, bdm.columnblockoffsets, bdm.rowblocksizes, bdm.columnblocksizes)
+copy_structure(bdm::DenseBlockLinearSystem{T}) where T = begin
+    newdata = fill!(similar(bdm.data), zero(T))
+    DenseBlockLinearSystem{T, typeof(newdata)}(newdata, bdm.rowblockoffsets, bdm.columnblockoffsets, bdm.rowblocksizes, bdm.columnblocksizes)
+end
 
 uniformscaling!(bdm::DenseBlockLinearSystem, k) = uniformscaling!(bdm.data, k)
 
@@ -139,7 +162,7 @@ Base.getindex(bdm::DenseBlockLinearSystem, i::Integer, j::Integer) = getindex(bd
 Base.setindex!(bdm::DenseBlockLinearSystem, v, i::Integer, j::Integer) = setindex!(bdm.data, v, i, j)
 Base.length(bdm::DenseBlockLinearSystem) = length(bdm.data)
 Base.eltype(::DenseBlockLinearSystem{T}) where T = T
-Base.Matrix(bdm::DenseBlockLinearSystem) = copy(bdm.data)
+Base.Matrix(bdm::DenseBlockLinearSystem) = Matrix(bdm.data)
 
 function symmetrifyfull!(bdm::DenseBlockLinearSystem)
     bdm.rowblocksizes == bdm.columnblocksizes || throw(ArgumentError("Row and column block sizes must match for symmetrification"))
