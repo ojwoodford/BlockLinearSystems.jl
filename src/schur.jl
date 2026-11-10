@@ -81,6 +81,112 @@ struct SchurStructure
     chunks::Vector{Vector{UnitRange{Int}}} # chunks[group_idx][chunk_id]
 end
 
+function SchurStructure(
+    c_dims::AbstractVector{<:Integer},
+    p_dims::AbstractVector{<:Integer},
+    observations::AbstractVector{<:AbstractVector{<:Integer}};
+    nchunks::Int=1
+)
+    ncblocks = length(c_dims)
+    npblocks = length(p_dims)
+    @assert length(observations) == npblocks "Number of landmark observations must match npblocks"
+
+    c_dims_u8 = UInt8.(c_dims)
+    p_dims_u8 = UInt8.(p_dims)
+
+    nc = sum(Int, c_dims; init=0)
+
+    boffsets_c = Vector{Int}(undef, ncblocks)
+    if ncblocks > 0
+        boffsets_c[1] = 1
+        for i in 2:ncblocks
+            boffsets_c[i] = boffsets_c[i-1] + Int(c_dims[i-1])
+        end
+    end
+
+    boffsets_p = Vector{Int}(undef, npblocks)
+    if npblocks > 0
+        boffsets_p[1] = 1
+        for i in 2:npblocks
+            boffsets_p[i] = boffsets_p[i-1] + Int(p_dims[i-1])
+        end
+    end
+
+    ppoffsets = Vector{Int}(undef, npblocks)
+    if npblocks > 0
+        ppoffsets[1] = 1
+        for i in 2:npblocks
+            ppoffsets[i] = ppoffsets[i-1] + Int(p_dims[i-1])^2
+        end
+    end
+
+    cpptr = Vector{Int}(undef, npblocks + 1)
+    cpptr[1] = 1
+    for l in 1:npblocks
+        cpptr[l+1] = cpptr[l] + length(observations[l])
+    end
+    num_couplings = cpptr[end] - 1
+
+    cpblock = Vector{Int}(undef, num_couplings)
+    cpoffsets = Vector{Int}(undef, num_couplings)
+    curr_e_off = 1
+    idx = 1
+    for l in 1:npblocks
+        dp = Int(p_dims[l])
+        sorted_cams = sort(observations[l])
+        for c in sorted_cams
+            cpblock[idx] = c
+            cpoffsets[idx] = curr_e_off
+            curr_e_off += Int(c_dims[c]) * dp
+            idx += 1
+        end
+    end
+
+    max_obs_dim = 0
+    for l in 1:npblocks
+        obs_dim = sum(Int(c_dims[c]) for c in observations[l]; init=0)
+        max_obs_dim = max(max_obs_dim, obs_dim)
+    end
+
+    p_groups = UnitRange{Int}[]
+    p_sizes = Int[]
+    if npblocks > 0
+        curr_dim = Int(p_dims[1])
+        start_idx = 1
+        for l in 2:npblocks
+            d = Int(p_dims[l])
+            if d != curr_dim
+                push!(p_groups, start_idx:l-1)
+                push!(p_sizes, curr_dim)
+                curr_dim = d
+                start_idx = l
+            end
+        end
+        push!(p_groups, start_idx:npblocks)
+        push!(p_sizes, curr_dim)
+    end
+
+    chunks = Vector{Vector{UnitRange{Int}}}(undef, length(p_groups))
+    for (g_idx, grp) in enumerate(p_groups)
+        len = length(grp)
+        group_chunks = Vector{UnitRange{Int}}(undef, nchunks)
+        chunk_sz = cld(len, nchunks)
+        for k in 1:nchunks
+            first_idx = grp.start + (k - 1) * chunk_sz
+            last_idx = min(grp.stop, first_idx + chunk_sz - 1)
+            group_chunks[k] = first_idx <= last_idx ? (first_idx:last_idx) : (first_idx:first_idx-1)
+        end
+        chunks[g_idx] = group_chunks
+    end
+
+    return SchurStructure(
+        nc, ncblocks, npblocks,
+        c_dims_u8, p_dims_u8, boffsets_c, boffsets_p,
+        ppoffsets, cpptr, cpblock, cpoffsets,
+        max_obs_dim, p_groups, p_sizes, chunks
+    )
+end
+
 """
     SchurReductionWorkspace{T}
 
@@ -126,6 +232,25 @@ function SchurReductionWorkspace{T}(
         Base.Threads.Atomic{Int}(0)
     )
 end
+
+const SchurBlockStructure = SchurStructure
+
+"""
+    SchurBlockMatrix{T, BType}
+
+Block Hessian structure partitioned into retained camera block `B`,
+eliminable landmark blocks `C_data`, coupling blocks `E_data`,
+and bipartite indexing `structure::SchurStructure`.
+"""
+struct SchurBlockMatrix{T, BType}
+    B::BType                         # Matrix{T} (dense) or SparseBlockLinearSystem (sparse)
+    C_data::Vector{T}                # Contiguous storage for block-diagonal C: sum_l d_l^2
+    E_data::Vector{T}                # Contiguous storage for block-sparse E: sum_e (d_c * d_l)
+    structure::SchurStructure
+end
+
+SchurBlockMatrix(structure::SchurStructure, B::BType, C_data::Vector{T}, E_data::Vector{T}) where {T, BType} =
+    SchurBlockMatrix{T, BType}(B, C_data, E_data, structure)
 
 @inline make_svec(arr::AbstractVector{T}, off::Int, ::StaticInt{1}) where T = SVector{1, T}(arr[off])
 @inline make_svec(arr::AbstractVector{T}, off::Int, ::StaticInt{2}) where T = SVector{2, T}(arr[off], arr[off+1])
@@ -423,7 +548,10 @@ function reset_schur_sparse!(
 ) where T
     fill!(nzval, zero(T))
     @inbounds for i in eachindex(b_to_s_map)
-        nzval[b_to_s_map[i]] = B_nzval[i]
+        idx = b_to_s_map[i]
+        if idx > 0
+            nzval[idx] = B_nzval[i]
+        end
     end
     @inbounds for (i, idx) in enumerate(diag_inds)
         nzval[idx] += lambda * scaling_c[i]^2
@@ -611,4 +739,313 @@ function backsubstitute!(
         end
     end
     return nothing
+end
+
+"""
+    expand_block_perm(block_perm::AbstractVector{<:Integer}, block_sizes::AbstractVector{<:Integer}) -> Vector{Int}
+
+Expand a block-level permutation into a scalar-level permutation vector.
+"""
+function expand_block_perm(block_perm::AbstractVector{<:Integer}, block_sizes::AbstractVector{<:Integer})
+    nblocks = length(block_sizes)
+    @assert length(block_perm) == nblocks "block_perm and block_sizes must have equal length"
+    total_dim = sum(Int, block_sizes; init=0)
+    scalar_perm = Vector{Int}(undef, total_dim)
+    boffsets = Vector{Int}(undef, nblocks)
+    boffsets[1] = 1
+    for i in 2:nblocks
+        boffsets[i] = boffsets[i - 1] + Int(block_sizes[i - 1])
+    end
+    cursor = 1
+    for b in block_perm
+        bo = boffsets[b]
+        bs = Int(block_sizes[b])
+        for r in 1:bs
+            scalar_perm[cursor] = bo + r - 1
+            cursor += 1
+        end
+    end
+    return scalar_perm
+end
+
+"""
+    sort_schur_blocks(is_eliminable::AbstractVector{Bool}, block_sizes::AbstractVector{<:Integer}, observations::AbstractVector{<:AbstractVector{<:Integer}}) -> Vector{Int}
+
+Two-pass variable ordering:
+- Pass 1: Retained variables (role 0) ordered by dimension descending; eliminable variables (role 1) grouped by dimension descending.
+- Pass 2: Within each eliminable dimension group, sort landmarks by primary observing camera index c_min(l) = min_{c in obs(l)} c.
+Returns a block permutation vector mapping old block indices to new positions.
+"""
+function sort_schur_blocks(
+    is_eliminable::AbstractVector{Bool},
+    block_sizes::AbstractVector{<:Integer},
+    observations::AbstractVector{<:AbstractVector}
+)
+    nblocks = length(is_eliminable)
+    @assert length(block_sizes) == nblocks "is_eliminable and block_sizes must have equal length"
+
+    # Retained blocks (sorted by dimension descending)
+    c_indices = findall(!, is_eliminable)
+    sort!(c_indices, by = i -> -Int(block_sizes[i]))
+
+    # Eliminable blocks
+    p_indices = findall(identity, is_eliminable)
+    # Group by dimension descending, then within dimension by c_min
+    sort!(p_indices, by = function(i)
+        dp = Int(block_sizes[i])
+        obs = observations[i]
+        c_min = isempty(obs) ? typemax(Int) : minimum(obs)
+        return (-dp, c_min)
+    end)
+
+    return [c_indices; p_indices]
+end
+
+"""
+    build_schur_covisibility(structure::SchurStructure) -> NamedTuple
+
+Compute block-level and scalar-level co-visibility sparsity patterns for the reduced camera system S.
+Returns `(block_colptr, block_rowval, block_row_offsets, col_heights, S_sparse, diag_inds)`.
+"""
+function build_schur_covisibility(structure::SchurStructure)
+    ncblocks = structure.ncblocks
+    npblocks = structure.npblocks
+    c_dims = structure.c_dims
+    cpptr = structure.cpptr
+    cpblock = structure.cpblock
+    boffsets_c = structure.boffsets_c
+    nc = structure.nc
+
+    # 1. Build camera block co-visibility graph (upper triangle)
+    block_covis = spzeros(Bool, ncblocks, ncblocks)
+    for l in 1:npblocks
+        e_start = cpptr[l]
+        e_end = cpptr[l + 1] - 1
+        for idx2 in e_start:e_end
+            c2 = cpblock[idx2]
+            for idx1 in e_start:idx2
+                c1 = cpblock[idx1]
+                block_covis[c1, c2] = true
+            end
+        end
+    end
+    for c in 1:ncblocks
+        block_covis[c, c] = true
+    end
+
+    block_colptr = Vector{Int}(block_covis.colptr)
+    block_rowval = Vector{Int}(block_covis.rowval)
+    nnz_blocks = nnz(block_covis)
+
+    # 2. Compute scalar row offsets and column heights
+    col_heights = zeros(Int, ncblocks)
+    block_row_offsets = zeros(Int, nnz_blocks)
+    for c2 in 1:ncblocks
+        h = 0
+        for idx in block_colptr[c2]:(block_colptr[c2 + 1] - 1)
+            c1 = block_rowval[idx]
+            block_row_offsets[idx] = h
+            h += Int(c_dims[c1])
+        end
+        col_heights[c2] = h
+    end
+
+    # 3. Build scalar SparseMatrixCSC S pattern
+    I_list = Int[]
+    J_list = Int[]
+    for c2 in 1:ncblocks
+        for idx in block_colptr[c2]:(block_colptr[c2 + 1] - 1)
+            c1 = block_rowval[idx]
+            for c_col in 1:c_dims[c2], c_row in 1:c_dims[c1]
+                push!(I_list, boffsets_c[c1] + c_row - 1)
+                push!(J_list, boffsets_c[c2] + c_col - 1)
+            end
+        end
+    end
+    S_sparse = sparse(I_list, J_list, zeros(length(I_list)), nc, nc)
+
+    # 4. Compute diagonal indices in S_sparse.nzval
+    diag_inds = zeros(Int, nc)
+    for j in 1:nc
+        for idx in S_sparse.colptr[j]:(S_sparse.colptr[j + 1] - 1)
+            if S_sparse.rowval[idx] == j
+                diag_inds[j] = idx
+                break
+            end
+        end
+        @assert diag_inds[j] != 0 "Missing diagonal entry for camera scalar $j"
+    end
+
+    return (
+        block_colptr = block_colptr,
+        block_rowval = block_rowval,
+        block_row_offsets = block_row_offsets,
+        col_heights = col_heights,
+        S_sparse = S_sparse,
+        diag_inds = diag_inds
+    )
+end
+
+"""
+    build_b_to_s_map(B_sparse::SparseMatrixCSC, S_sparse::SparseMatrixCSC) -> Vector{Int}
+
+Build mapping vector from B_sparse.nzval to S_sparse.nzval.
+"""
+function build_b_to_s_map(B_sparse::SparseMatrixCSC, S_sparse::SparseMatrixCSC)
+    b_to_s = Int[]
+    for j in 1:B_sparse.n
+        for k in B_sparse.colptr[j]:(B_sparse.colptr[j + 1] - 1)
+            i = B_sparse.rowval[k]
+            s_k = 0
+            for idx in S_sparse.colptr[j]:(S_sparse.colptr[j + 1] - 1)
+                if S_sparse.rowval[idx] == i
+                    s_k = idx
+                    break
+                end
+            end
+            @assert s_k != 0 "B entry ($i, $j) not present in S sparsity pattern"
+            push!(b_to_s, s_k)
+        end
+    end
+    return b_to_s
+end
+
+"""
+    build_b_to_s_map(B_sys::SparseBlockLinearSystem, S_sparse::SparseMatrixCSC, boffsets_c::Vector{Int}) -> Vector{Int}
+
+Build mapping vector from B_sys.data to S_sparse.nzval for symmetric upper-triangle reduction.
+"""
+function build_b_to_s_map(B_sys::SparseBlockLinearSystem, S_sparse::SparseMatrixCSC, boffsets_c::Vector{Int})
+    b_to_s = zeros(Int, length(B_sys.data))
+    for (c, r, data_start) in zip(SparseArrays.findnz(B_sys.indicestransposed)...)
+        dr = Int(B_sys.rowblocksizes[r])
+        dc = Int(B_sys.columnblocksizes[c])
+
+        if r == c
+            for col in 1:dc
+                scol = boffsets_c[r] + col - 1
+                for row in 1:col
+                    srow = boffsets_c[r] + row - 1
+                    s_k = 0
+                    for idx in S_sparse.colptr[scol]:(S_sparse.colptr[scol + 1] - 1)
+                        if S_sparse.rowval[idx] == srow
+                            s_k = idx
+                            break
+                        end
+                    end
+                    @assert s_k != 0 "Missing diagonal entry ($srow, $scol) in S"
+                    b_to_s[data_start + (col - 1)*dr + row - 1] = s_k
+                end
+            end
+        elseif r > c
+            for col in 1:dc
+                srow = boffsets_c[c] + col - 1
+                for row in 1:dr
+                    scol = boffsets_c[r] + row - 1
+                    s_k = 0
+                    for idx in S_sparse.colptr[scol]:(S_sparse.colptr[scol + 1] - 1)
+                        if S_sparse.rowval[idx] == srow
+                            s_k = idx
+                            break
+                        end
+                    end
+                    @assert s_k != 0 "Missing entry ($srow, $scol) in S"
+                    b_to_s[data_start + (col - 1)*dr + row - 1] = s_k
+                end
+            end
+        end
+    end
+    return b_to_s
+end
+
+"""
+    fast_bAb(H::SchurBlockMatrix, dx::AbstractVector) -> Real
+
+Compute quadratic form dx' * H * dx in O(N) operations without materializing the full Hessian.
+"""
+function fast_bAb(H::SchurBlockMatrix{T}, dx::AbstractVector{T}) where T
+    structure = H.structure
+    nc = structure.nc
+    dx_c = view(dx, 1:nc)
+    dx_p = view(dx, nc+1:length(dx))
+    
+    # 1. dx_c' * B * dx_c
+    total = zero(T)
+    if H.B isa Matrix{T}
+        B = H.B
+        @inbounds for j in 1:nc
+            val = zero(T)
+            for i in 1:j
+                b_val = B[i, j]
+                if i == j
+                    val += b_val * dx_c[i]
+                else
+                    val += b_val * dx_c[i]
+                    total += b_val * dx_c[j] * dx_c[i]
+                end
+            end
+            total += dx_c[j] * val
+        end
+    elseif H.B isa SparseBlockLinearSystem{T}
+        B_sys = H.B
+        boffsets = B_sys.offsets.offsets
+        for (i, j, blk) in eachstoredblock(B_sys)
+            r_start = boffsets[i]
+            c_start = boffsets[j]
+            dr = B_sys.rowblocksizes[i]
+            dc = B_sys.columnblocksizes[j]
+            for c in 1:dc, r in 1:dr
+                val = blk[r, c] * dx_c[c_start + c - 1] * dx_c[r_start + r - 1]
+                total += (i == j ? val : 2 * val)
+            end
+        end
+    end
+
+    # 2. 2 * dx_c' * E * dx_p
+    cpptr = structure.cpptr
+    cpblock = structure.cpblock
+    cpoffsets = structure.cpoffsets
+    boffsets_c = structure.boffsets_c
+    boffsets_p = structure.boffsets_p
+    p_dims = structure.p_dims
+    c_dims = structure.c_dims
+
+    for l in 1:structure.npblocks
+        dp = Int(p_dims[l])
+        p_off = boffsets_p[l]
+        e_start = cpptr[l]
+        e_end = cpptr[l + 1] - 1
+        for e in e_start:e_end
+            c = cpblock[e]
+            dc = Int(c_dims[c])
+            co = boffsets_c[c]
+            eo = cpoffsets[e]
+            for col in 1:dp
+                dx_p_val = dx_p[p_off + col - 1]
+                for row in 1:dc
+                    e_val = H.E_data[eo + (row - 1)*dp + col - 1]
+                    dx_c_val = dx_c[co + row - 1]
+                    total += 2 * e_val * dx_c_val * dx_p_val
+                end
+            end
+        end
+    end
+
+    # 3. dx_p' * C * dx_p
+    ppoffsets = structure.ppoffsets
+    for l in 1:structure.npblocks
+        dp = Int(p_dims[l])
+        p_off = boffsets_p[l]
+        po = ppoffsets[l]
+        for col in 1:dp
+            dx_p_col = dx_p[p_off + col - 1]
+            for row in 1:dp
+                c_val = H.C_data[po + (col - 1)*dp + row - 1]
+                dx_p_row = dx_p[p_off + row - 1]
+                total += c_val * dx_p_col * dx_p_row
+            end
+        end
+    end
+
+    return total
 end

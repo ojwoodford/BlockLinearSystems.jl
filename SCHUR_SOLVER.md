@@ -939,11 +939,11 @@ Called inside `optimvars` in `NLLSModel.jl` **before memory allocation**:
 - [ ] Implement structure refresh when fixed variable sets change.
 
 ### Phase 3: Pure-Data Reduction Core (`BlockLinearSystems.jl`)
-- [ ] Implement `inv_sym_block` with scale-invariant rank detection for $D_p \in \{1, 2, 3\}$.
-- [ ] Implement `reduce_schur_dense_group!` operating on pure arrays.
-- [ ] Implement `reduce_schur_sparse_group!` with the monotone merge-walk and strided CSC column addressing.
-- [ ] Implement `reduce_schur_dense!` and `reduce_schur_sparse!` drivers with `merge_dense_S!` and `merge_sparse_S!`.
-- [ ] Implement pure-data `backsubstitute!`.
+- [x] Implement `inv_sym_block` with scale-invariant rank detection for $D_p \in \{1, 2, 3\}$.
+- [x] Implement `reduce_schur_dense_group!` operating on pure arrays.
+- [x] Implement `reduce_schur_sparse_group!` with the monotone merge-walk and strided CSC column addressing.
+- [x] Implement `reduce_schur_dense!` and `reduce_schur_sparse!` drivers with `merge_dense_S!` and `merge_sparse_S!`.
+- [x] Implement pure-data `backsubstitute!`.
 - [ ] **Benchmark**: Profile per-chunk buffers against owner-computes (camera-major $E$) on Ladybug dataset.
 
 ### Phase 4: Solvers & LM Integration (`ext/SecondOrderOptimizationExt.jl`)

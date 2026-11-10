@@ -453,4 +453,61 @@ using Test, LinearAlgebra, SparseArrays, StaticArrays, Static, BlockLinearSystem
         b_p, scaling_p, lambda, 1:8, static(3)
     )
     @test allocs_sparse_kernel == 0
+
+    # --------------------------------------------------------------------------
+    # 9. Two-Pass Ordering & Permutation Expansion Tests
+    # --------------------------------------------------------------------------
+    # Test expand_block_perm
+    b_perm = [2, 1, 3]
+    b_sizes = [3, 2, 4]
+    s_perm = expand_block_perm(b_perm, b_sizes)
+    @test s_perm == [4, 5, 1, 2, 3, 6, 7, 8, 9]
+
+    # Test sort_schur_blocks
+    is_elim = Bool[false, true, false, true, true]
+    sizes = [6, 3, 3, 1, 3]
+    obs = [[], [2, 1], [], [1], [3, 2]]
+    # Retained: 1 (dim 6), 3 (dim 3) -> ordered [1, 3]
+    # Eliminable: 2 (dim 3, c_min 1), 5 (dim 3, c_min 2), 4 (dim 1, c_min 1)
+    # Dim 3: 2 has c_min 1, 5 has c_min 2 -> [2, 5]
+    # Dim 1: 4 has c_min 1 -> [4]
+    # Total perm: [1, 3, 2, 5, 4]
+    schur_perm = sort_schur_blocks(is_elim, sizes, obs)
+    @test schur_perm == [1, 3, 2, 5, 4]
+
+    # --------------------------------------------------------------------------
+    # 10. Symbolic Co-Visibility & B-to-S Map Generator Tests
+    # --------------------------------------------------------------------------
+    covis = build_schur_covisibility(structure_K1)
+    @test covis.block_colptr == block_colptr
+    @test covis.block_rowval == block_rowval
+    @test covis.block_row_offsets == block_row_offsets
+    @test covis.col_heights == col_heights
+    @test covis.diag_inds == diag_inds
+    @test nnz(covis.S_sparse) == nnz_S
+
+    b_map = build_b_to_s_map(B_sparse, covis.S_sparse)
+    @test b_map == b_to_s_map
+
+    # --------------------------------------------------------------------------
+    # 11. SchurBlockMatrix & fast_bAb Equivalence Test
+    # --------------------------------------------------------------------------
+    H_dense_block = SchurBlockMatrix(B, C_data, E_data, structure_K1)
+    # Undamped H_full
+    H_full_undamped = copy(H_full)
+    for i in 1:nc
+        H_full_undamped[i, i] -= lambda * scaling_c[i]^2
+    end
+    for l in 1:npblocks
+        dp = Int(p_dims[l])
+        p_off = boffsets_p[l]
+        for i in 1:dp
+            H_full_undamped[nc + p_off + i - 1, nc + p_off + i - 1] -= lambda * scaling_p[p_off + i - 1]^2
+        end
+    end
+
+    dx_test = randn(nc + np)
+    quad_exact = dot(dx_test, H_full_undamped * dx_test)
+    quad_fast = fast_bAb(H_dense_block, dx_test)
+    @test isapprox(quad_fast, quad_exact; atol=1e-10)
 end
