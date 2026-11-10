@@ -1,9 +1,9 @@
 module SecondOrderOptimizationExt
 
 using SecondOrderOptimization
-import SecondOrderOptimization: AbstractLinearSystem, solve!, dampen!, copy_structure, sharex, getA, getb, getx, zero!, fast_bAb, SolveStatus, Success, NotPositiveDefinite, Indefinite, makelinearsystem
+import SecondOrderOptimization: AbstractLinearSystem, solve!, dampen!, copy_structure, sharex, getA, getb, getx, zero!, fast_bAb, SolveStatus, Success, NotPositiveDefinite, Indefinite, makelinearsystem, max_diag, updatescaling!, AnyMarquardtData, quadratic_model_reduction
 using BlockLinearSystems
-import BlockLinearSystems: SchurBlockMatrix, SchurStructure, SchurBlockStructure, SchurReductionWorkspace, reset_schur_dense!, reset_schur_sparse!, reduce_schur_dense!, reduce_schur_sparse!, backsubstitute!, build_schur_covisibility, build_b_to_s_map
+import BlockLinearSystems: SchurBlockMatrix, SchurStructure, SchurBlockStructure, SchurReductionWorkspace, reset_schur_dense!, reset_schur_sparse!, reduce_schur_dense!, reduce_schur_sparse!, backsubstitute!, build_schur_covisibility, build_b_to_s_map, update_marquardt_scaling!
 using LinearAlgebra, SparseArrays, Static
 
 """
@@ -159,21 +159,174 @@ function SecondOrderOptimization.dampen!(ls::Union{DenseSchurLinearSystem{T}, Sp
     return ls
 end
 
+function SecondOrderOptimization.max_diag(H::SchurBlockMatrix{T}) where T
+    m = zero(T)
+    if H.B isa Matrix
+        for i in 1:H.structure.nc
+            m = max(m, abs(H.B[i, i]))
+        end
+    elseif H.B isa SparseBlockLinearSystem
+        for b in 1:H.structure.ncblocks
+            ptr = H.B.indices[b, b]
+            if ptr > 0
+                db = Int(H.structure.c_dims[b])
+                for k in 1:db
+                    m = max(m, abs(H.B.data[ptr + (k - 1) * (db + 1)]))
+                end
+            end
+        end
+    end
+    for l in 1:H.structure.npblocks
+        po = H.structure.ppoffsets[l]
+        dp = Int(H.structure.p_dims[l])
+        for k in 1:dp
+            m = max(m, abs(H.C_data[po + (k - 1) * (dp + 1)]))
+        end
+    end
+    return m
+end
+
+SecondOrderOptimization.max_diag(ls::Union{DenseSchurLinearSystem, SparseSchurLinearSystem}) = SecondOrderOptimization.max_diag(ls.H)
+
+function SecondOrderOptimization.updatescaling!(lmd::AnyMarquardtData, ls::DenseSchurLinearSystem{T}) where T
+    if lmd.lambda == 0
+        lmd.lambda = 1e-6
+    end
+    B = ls.H.B
+    C_data = ls.H.C_data
+    struct_info = ls.H.structure
+    nc = struct_info.nc
+    m = zero(T)
+
+    for i in 1:nc
+        @inbounds d = lmd.scaling[i] = max(lmd.scaling[i], abs(B[i, i]))
+        m = max(m, d)
+    end
+    for l in 1:struct_info.npblocks
+        po = struct_info.ppoffsets[l]
+        p_off = struct_info.boffsets_p[l]
+        dp = Int(struct_info.p_dims[l])
+        for i in 1:dp
+            c_ii = C_data[po + (i - 1)*(dp + 1)]
+            @inbounds d = lmd.scaling[nc + p_off + i - 1] = max(lmd.scaling[nc + p_off + i - 1], abs(c_ii))
+            m = max(m, d)
+        end
+    end
+    lmd.scaling .= max.(lmd.scaling, max(m * 1e-8, 1e-12))
+end
+
+function SecondOrderOptimization.updatescaling!(lmd::AnyMarquardtData, ls::SparseSchurLinearSystem{T}) where T
+    if lmd.lambda == 0
+        lmd.lambda = 1e-6
+    end
+    B_sys = ls.H.B
+    C_data = ls.H.C_data
+    struct_info = ls.H.structure
+    nc = struct_info.nc
+    m = zero(T)
+
+    for b in 1:struct_info.ncblocks
+        ptr = B_sys.indices[b, b]
+        db = Int(struct_info.c_dims[b])
+        bo = struct_info.boffsets_c[b]
+        if ptr > 0
+            for i in 1:db
+                b_ii = B_sys.data[ptr + (i - 1)*(db + 1)]
+                @inbounds d = lmd.scaling[bo + i - 1] = max(lmd.scaling[bo + i - 1], abs(b_ii))
+                m = max(m, d)
+            end
+        end
+    end
+    for l in 1:struct_info.npblocks
+        po = struct_info.ppoffsets[l]
+        p_off = struct_info.boffsets_p[l]
+        dp = Int(struct_info.p_dims[l])
+        for i in 1:dp
+            c_ii = C_data[po + (i - 1)*(dp + 1)]
+            @inbounds d = lmd.scaling[nc + p_off + i - 1] = max(lmd.scaling[nc + p_off + i - 1], abs(c_ii))
+            m = max(m, d)
+        end
+    end
+    lmd.scaling .= max.(lmd.scaling, max(m * 1e-8, 1e-12))
+end
+
+function BlockLinearSystems.update_marquardt_scaling!(ls::DenseSchurLinearSystem{T}) where T
+    B = ls.H.B
+    C_data = ls.H.C_data
+    struct_info = ls.H.structure
+    nc = struct_info.nc
+
+    med_diag = zero(T)
+    for i in 1:nc
+        med_diag = max(med_diag, abs(B[i, i]))
+    end
+    eps_scale = 1e-12 * med_diag
+
+    for i in 1:nc
+        ls.scaling[i] = sqrt(max(abs(B[i, i]), eps_scale))
+    end
+    for l in 1:struct_info.npblocks
+        po = struct_info.ppoffsets[l]
+        p_off = struct_info.boffsets_p[l]
+        dp = Int(struct_info.p_dims[l])
+        for i in 1:dp
+            c_ii = C_data[po + (i - 1)*(dp + 1)]
+            ls.scaling[nc + p_off + i - 1] = sqrt(max(abs(c_ii), eps_scale))
+        end
+    end
+end
+
+function BlockLinearSystems.update_marquardt_scaling!(ls::SparseSchurLinearSystem{T}) where T
+    B_sys = ls.H.B
+    C_data = ls.H.C_data
+    struct_info = ls.H.structure
+    nc = struct_info.nc
+
+    med_diag = zero(T)
+    for b in 1:struct_info.ncblocks
+        ptr = B_sys.indices[b, b]
+        if ptr > 0
+            db = Int(struct_info.c_dims[b])
+            for i in 1:db
+                med_diag = max(med_diag, abs(B_sys.data[ptr + (i - 1)*(db + 1)]))
+            end
+        end
+    end
+    eps_scale = 1e-12 * med_diag
+
+    for b in 1:struct_info.ncblocks
+        ptr = B_sys.indices[b, b]
+        db = Int(struct_info.c_dims[b])
+        bo = struct_info.boffsets_c[b]
+        if ptr > 0
+            for i in 1:db
+                b_ii = B_sys.data[ptr + (i - 1)*(db + 1)]
+                ls.scaling[bo + i - 1] = sqrt(max(abs(b_ii), eps_scale))
+            end
+        end
+    end
+    for l in 1:struct_info.npblocks
+        po = struct_info.ppoffsets[l]
+        p_off = struct_info.boffsets_p[l]
+        dp = Int(struct_info.p_dims[l])
+        for i in 1:dp
+            c_ii = C_data[po + (i - 1)*(dp + 1)]
+            ls.scaling[nc + p_off + i - 1] = sqrt(max(abs(c_ii), eps_scale))
+        end
+    end
+end
+
 function SecondOrderOptimization.zero!(ls::DenseSchurLinearSystem)
     fill!(ls.b, zero(eltype(ls.b)))
     fill!(ls.x, zero(eltype(ls.x)))
-    fill!(ls.H.B, zero(eltype(ls.b)))
-    fill!(ls.H.C_data, zero(eltype(ls.b)))
-    fill!(ls.H.E_data, zero(eltype(ls.b)))
+    BlockLinearSystems.zero!(ls.H)
     return ls
 end
 
 function SecondOrderOptimization.zero!(ls::SparseSchurLinearSystem)
     fill!(ls.b, zero(eltype(ls.b)))
     fill!(ls.x, zero(eltype(ls.x)))
-    zero!(ls.H.B)
-    fill!(ls.H.C_data, zero(eltype(ls.b)))
-    fill!(ls.H.E_data, zero(eltype(ls.b)))
+    BlockLinearSystems.zero!(ls.H)
     return ls
 end
 
@@ -229,6 +382,26 @@ function SecondOrderOptimization.solve!(ls::SparseSchurLinearSystem, solver_opt:
     return Success
 end
 SecondOrderOptimization.solve!(ls::SparseSchurLinearSystem, s::Symbol) = SecondOrderOptimization.solve!(ls, static(s))
+
+function SecondOrderOptimization.quadratic_model_reduction(ls::DenseSchurLinearSystem, dx)
+    total = dot(dx, ls.b)
+    if ls.lambda > 0
+        @inbounds for i in eachindex(dx)
+            total += ls.lambda * (ls.scaling[i] * dx[i])^2
+        end
+    end
+    return 0.5 * total
+end
+
+function SecondOrderOptimization.quadratic_model_reduction(ls::SparseSchurLinearSystem, dx)
+    total = dot(dx, ls.b)
+    if ls.lambda > 0
+        @inbounds for i in eachindex(dx)
+            total += ls.lambda * (ls.scaling[i] * dx[i])^2
+        end
+    end
+    return 0.5 * total
+end
 
 function SecondOrderOptimization.copy_structure(ls::DenseSchurLinearSystem{T}) where T
     nc = ls.H.structure.nc
