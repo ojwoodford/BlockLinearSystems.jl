@@ -252,6 +252,17 @@ end
 SchurBlockMatrix(structure::SchurStructure, B::BType, C_data::Vector{T}, E_data::Vector{T}) where {T, BType} =
     SchurBlockMatrix{T, BType}(B, C_data, E_data, structure)
 
+function zero!(H::SchurBlockMatrix)
+    if H.B isa Matrix
+        fill!(H.B, zero(eltype(H.B)))
+    else
+        zero!(H.B)
+    end
+    fill!(H.C_data, zero(eltype(H.C_data)))
+    fill!(H.E_data, zero(eltype(H.E_data)))
+    return H
+end
+
 @inline make_svec(arr::AbstractVector{T}, off::Int, ::StaticInt{1}) where T = SVector{1, T}(arr[off])
 @inline make_svec(arr::AbstractVector{T}, off::Int, ::StaticInt{2}) where T = SVector{2, T}(arr[off], arr[off+1])
 @inline make_svec(arr::AbstractVector{T}, off::Int, ::StaticInt{3}) where T = SVector{3, T}(arr[off], arr[off+1], arr[off+2])
@@ -877,6 +888,7 @@ function build_schur_covisibility(structure::SchurStructure)
     end
 
     return (
+        block_covis = block_covis,
         block_colptr = block_colptr,
         block_rowval = block_rowval,
         block_row_offsets = block_row_offsets,
