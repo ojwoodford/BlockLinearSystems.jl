@@ -7,4 +7,5 @@ using BlockLinearSystems, SparseArrays, StaticArrays, Static, HybridArrays, Line
     include("BlockRLE.jl")
     include("helpers.jl")
     include("schur.jl")
+    include("zero.jl")
 end

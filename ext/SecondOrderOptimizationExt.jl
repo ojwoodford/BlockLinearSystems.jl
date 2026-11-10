@@ -321,14 +321,12 @@ end
 
 function SecondOrderOptimization.zero!(ls::DenseSchurLinearSystem)
     fill!(ls.b, zero(eltype(ls.b)))
-    fill!(ls.x, zero(eltype(ls.x)))
     BlockLinearSystems.zero!(ls.H)
     return ls
 end
 
 function SecondOrderOptimization.zero!(ls::SparseSchurLinearSystem)
     fill!(ls.b, zero(eltype(ls.b)))
-    fill!(ls.x, zero(eltype(ls.x)))
     BlockLinearSystems.zero!(ls.H)
     return ls
 end
