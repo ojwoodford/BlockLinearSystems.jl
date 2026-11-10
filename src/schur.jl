@@ -1000,7 +1000,7 @@ function fast_bAb(H::SchurBlockMatrix{T}, dx::AbstractVector{T}) where T
         end
     elseif H.B isa SparseBlockLinearSystem{T}
         B_sys = H.B
-        boffsets = B_sys.offsets.offsets
+        boffsets = structure.boffsets_c
         for (i, j, blk) in eachstoredblock(B_sys)
             r_start = boffsets[i]
             c_start = boffsets[j]
