@@ -1221,10 +1221,13 @@ function fast_bAb(H::SchurBlockMatrix{T}, dx::AbstractVector) where T
         end
     end
 
-    # 2. 2 * dx_c' * E * dx_p and 3. dx_p' * C * dx_p, per group of eliminated blocks of uniform dimension
+    # 2. 2 * dx_c' * E * dx_p and 3. dx_p' * C * dx_p, per group of eliminated blocks of uniform dimension.
+    # (`z`, a typed zero, is captured by the closure rather than the type `R`: Julia 1.10 widens a captured
+    # type to `DataType`, which made the result type inferred as `Any` and boxed it on every call.)
+    z = zero(R)
     for (g_idx, p_range) in enumerate(structure.p_groups)
         total += dispatch_dim(structure.p_sizes[g_idx]) do s_dp
-            fast_bAb_eliminated(H, dx_c, dx_p, p_range, s_dp, R)
+            fast_bAb_eliminated(H, dx_c, dx_p, p_range, s_dp, z)
         end
     end
 
@@ -1232,10 +1235,10 @@ function fast_bAb(H::SchurBlockMatrix{T}, dx::AbstractVector) where T
 end
 
 # E and C contributions of the eliminated blocks in `p_range`, all of dimension `s_dp` (static up to D_STATIC)
-function fast_bAb_eliminated(H::SchurBlockMatrix{T}, dx_c, dx_p, p_range::UnitRange{Int}, s_dp::StaticInt, ::Type{R}) where {T, R}
+function fast_bAb_eliminated(H::SchurBlockMatrix{T}, dx_c, dx_p, p_range::UnitRange{Int}, s_dp::StaticInt, z::R) where {T, R}
     structure = H.structure
     D = dimval(s_dp)
-    part = zero(R)
+    part = z
     @inbounds for l in p_range
         p_off = structure.boffsets_p[l]
         xp = make_svec(dx_p, p_off, s_dp)
@@ -1254,9 +1257,9 @@ function fast_bAb_eliminated(H::SchurBlockMatrix{T}, dx_c, dx_p, p_range::UnitRa
 end
 
 # Blocks above D_STATIC dimensions: the same computation with run-time loops
-function fast_bAb_eliminated(H::SchurBlockMatrix{T}, dx_c, dx_p, p_range::UnitRange{Int}, dp::Int, ::Type{R}) where {T, R}
+function fast_bAb_eliminated(H::SchurBlockMatrix{T}, dx_c, dx_p, p_range::UnitRange{Int}, dp::Int, z::R) where {T, R}
     structure = H.structure
-    part = zero(R)
+    part = z
     @inbounds for l in p_range
         p_off = structure.boffsets_p[l]
         po = structure.ppoffsets[l]

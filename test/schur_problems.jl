@@ -374,9 +374,11 @@ end
             H = kind === :dense ? dense_schur_matrix(p) : sparse_schur_matrix(p)
             @test BlockLinearSystems.fast_bAb(H, dx) ≈ expected rtol = 1e-12
             BlockLinearSystems.fast_bAb(H, dx)
-            # No allocation that scales with the problem. (Julia 1.10 allocates a ~100 byte closure for the
-            # per-group static-dimension dispatch; newer versions allocate nothing.)
-            kind === :sparse && @test (@allocated BlockLinearSystems.fast_bAb(H, dx)) <= 256
+            # Type stable (a captured `Type` was once widened to DataType on Julia 1.10, which made the
+            # result `Any` and boxed it on every call) and allocation free, for both kinds of B
+            @test @inferred(BlockLinearSystems.fast_bAb(H, dx)) isa Float64
+            @test @inferred(BlockLinearSystems.fast_bAb(H, Float32.(dx))) isa Float64
+            @test (@allocated BlockLinearSystems.fast_bAb(H, dx)) == 0
         end
     end
 end
