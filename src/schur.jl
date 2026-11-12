@@ -330,21 +330,48 @@ trial_workspace(ws::SchurReductionWorkspace{T}) where T = SchurReductionWorkspac
 const SchurBlockStructure = SchurStructure
 
 """
-    SchurBlockMatrix{T, BType}
+    SchurBlockMatrix(structure, B, C_data, E_data; pattern=nothing)
 
 Block Hessian structure partitioned into retained block `B`,
 eliminable blocks `C_data`, coupling blocks `E_data`,
 and bipartite indexing `structure::SchurStructure`.
+
+`pattern` optionally carries the result of [`build_schur_pattern`](@ref) for this structure, so that
+code which receives only the matrix can build a reduced system without recomputing it. `nothing` (the
+default) means "build it when needed". The pattern must come from
+`build_schur_pattern(structure; extra_blocks=retained_block_pairs(B))`, or from a superset of those
+pairs; only its size is checked (`size(pattern.S_sparse, 1) == structure.nc`, else `ArgumentError`).
+
+The pattern is shared between every system built from `H`, including its [`copy_structure`](@ref)
+copies, so treat it as read-only structure: in particular, copy `pattern.S_sparse` before using it as
+value storage. Callers may attach extra entries to the named tuple (for example
+`merge(pattern, (S_factor = fac,))`); this package ignores entries it does not know.
+
+The positional form `SchurBlockMatrix(B, C_data, E_data, structure)` (field order) is also accepted.
 """
 struct SchurBlockMatrix{T, BType}
     B::BType                         # Matrix{T} (dense) or SparseBlockLinearSystem (sparse)
     C_data::Vector{T}                # Contiguous storage for block-diagonal C: sum_l d_l^2
     E_data::Vector{T}                # Contiguous storage for block-sparse E: sum_e (d_c * d_l)
     structure::SchurStructure
+    # Deliberately abstractly typed, and not a type parameter: a third parameter would make the field
+    # declarations of downstream code abstract and its hot paths type-unstable. This is read only when a
+    # linear system is constructed (a function barrier); assembly, reduction and fast_bAb never touch it.
+    pattern::Union{Nothing, NamedTuple}
 end
 
-SchurBlockMatrix(structure::SchurStructure, B::BType, C_data::Vector{T}, E_data::Vector{T}) where {T, BType} =
-    SchurBlockMatrix{T, BType}(B, C_data, E_data, structure)
+function SchurBlockMatrix(structure::SchurStructure, B::BType, C_data::Vector{T}, E_data::Vector{T};
+                          pattern::Union{Nothing, NamedTuple}=nothing) where {T, BType}
+    if pattern !== nothing && size(pattern.S_sparse, 1) != structure.nc
+        throw(ArgumentError("pattern.S_sparse has size $(size(pattern.S_sparse, 1)), expected structure.nc = $(structure.nc)"))
+    end
+    return SchurBlockMatrix{T, BType}(B, C_data, E_data, structure, pattern)
+end
+
+SchurBlockMatrix{T, BType}(B, C_data, E_data, structure) where {T, BType} =
+    SchurBlockMatrix{T, BType}(B, C_data, E_data, structure, nothing)
+SchurBlockMatrix(B::BType, C_data::Vector{T}, E_data::Vector{T}, structure::SchurStructure) where {T, BType} =
+    SchurBlockMatrix{T, BType}(B, C_data, E_data, structure, nothing)
 
 function zero!(H::SchurBlockMatrix)
     if H.B isa Matrix
@@ -361,11 +388,12 @@ end
     copy_structure(H::SchurBlockMatrix)
 
 Return a new `SchurBlockMatrix` with the same structure but freshly allocated, zeroed storage for
-`B`, `C_data` and `E_data`. Nothing is shared with `H` except the immutable `SchurStructure`.
+`B`, `C_data` and `E_data`. Nothing is shared with `H` except the immutable `SchurStructure` and the
+(read-only) `pattern`.
 """
 function copy_structure(H::SchurBlockMatrix{T}) where T
     B = H.B isa AbstractMatrix ? zeros(T, size(H.B)) : copy_structure(H.B)
-    return SchurBlockMatrix(H.structure, B, zeros(T, length(H.C_data)), zeros(T, length(H.E_data)))
+    return SchurBlockMatrix(H.structure, B, zeros(T, length(H.C_data)), zeros(T, length(H.E_data)); pattern=H.pattern)
 end
 
 # Block dimensions up to D_STATIC use statically sized (register) arithmetic, dispatched on StaticInt;
