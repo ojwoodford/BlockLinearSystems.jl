@@ -1,4 +1,4 @@
-using BlockLinearSystems, SparseArrays, StaticArrays, Static, HybridArrays, LinearAlgebra, Test, Aqua, JET
+using Random, BlockLinearSystems, SparseArrays, StaticArrays, Static, HybridArrays, LinearAlgebra, Test, Aqua, JET
 
 @testset "BlockLinearSystems.jl" begin
     include("aqua.jl")
@@ -7,5 +7,6 @@ using BlockLinearSystems, SparseArrays, StaticArrays, Static, HybridArrays, Line
     include("BlockRLE.jl")
     include("helpers.jl")
     include("schur.jl")
+    include("schur_ext.jl")
     include("zero.jl")
 end
