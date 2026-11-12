@@ -305,6 +305,13 @@ function SecondOrderOptimization.solve!(ls::DenseSchurLinearSystem, solver_opt::
 end
 SecondOrderOptimization.solve!(ls::DenseSchurLinearSystem, s::Symbol) = SecondOrderOptimization.solve!(ls, static(s))
 
+# `ldiv!(x, ::CHOLMOD.Factor, b)` only exists from Julia 1.12; earlier versions need the allocating `\\`.
+@static if VERSION >= v"1.12"
+    cholmod_ldiv!(x, F::SparseArrays.CHOLMOD.Factor, b) = ldiv!(x, F, b)
+else
+    cholmod_ldiv!(x, F::SparseArrays.CHOLMOD.Factor, b) = copyto!(x, F \ b)
+end
+
 function SecondOrderOptimization.solve!(ls::SparseSchurLinearSystem, solver_opt::Any=static(:auto))
     B_nzval = if ls.H.B isa SparseBlockLinearSystem
         ls.H.B.data
@@ -347,7 +354,7 @@ function SecondOrderOptimization.solve!(ls::SparseSchurLinearSystem, solver_opt:
                 return Indefinite
             end
         else
-            ldiv!(ls.x_c, ls.S_factor, ls.g_S)
+            cholmod_ldiv!(ls.x_c, ls.S_factor, ls.g_S)
         end
     end
 
