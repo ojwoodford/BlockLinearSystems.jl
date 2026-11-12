@@ -413,3 +413,13 @@ variables from retained variables while grouping identical block dimensions into
 Returns the permutation vector `permutation` and the resulting `BlockRLE` metadata.
 """
 sort_blocks_hierarchical
+
+"""
+    blockrange(first, len) -> AbstractUnitRange
+
+Index range of a block of `len` entries starting at index `first`. A `StaticInt` `len` gives a statically
+sized range; any other integer `len` gives a plain `UnitRange{Int}`, so views built with it are type stable
+and allocation free even when the size is only known at run time. Integer sizes of any type (including
+the `UInt8` sizes stored by `BlockRLE`) are widened to `Int` before use.
+"""
+blockrange

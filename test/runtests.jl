@@ -5,6 +5,7 @@ using Random, BlockLinearSystems, SparseArrays, StaticArrays, Static, HybridArra
     include("SparseBlockLinearSystem.jl")
     include("DenseBlockLinearSystem.jl")
     include("BlockRLE.jl")
+    include("typestability.jl")
     include("helpers.jl")
     include("schur.jl")
     include("schur_ext.jl")

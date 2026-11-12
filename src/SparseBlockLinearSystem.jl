@@ -129,7 +129,8 @@ end
 
 @inline function block(bsm::SparseBlockLinearSystem, i::Integer, j::Integer, rows::Integer, cols::Integer)
     @boundscheck checkblock(bsm, i, j, rows, cols)
-    return @inbounds reshape(view(bsm.data, SR(0, rows*cols-1) .+ bsm.indicestransposed[j, i]), (rows, cols))
+    r, c = Int(rows), Int(cols)
+    return @inbounds reshape(view(bsm.data, blockrange(bsm.indicestransposed[j, i], r * c)), (r, c))
 end
 
 @inline function block(bsm::SparseBlockLinearSystem, i::Integer, j::Integer, ::StaticInt{rows}, cols::Integer) where rows

@@ -2,6 +2,12 @@ using Static, StaticArrays, SparseArrays, LinearAlgebra
 
 SR(first, last) = StaticArrays.SUnitRange(dynamic(first), dynamic(last))
 
+# Range of `len` indices starting at `first`. A static length gives a statically sized range (its type
+# carries the length); a run-time length must give a plain `UnitRange`, since an `SUnitRange` with a
+# run-time length would create a new type on every call (type-unstable, allocating).
+blockrange(first, len::StaticInt) = SR(0, len - static(1)) .+ first
+blockrange(first, len::Integer) = dynamic(first):(dynamic(first) + Int(len) - 1)
+
 zero!(aa::AbstractArray) = fill!(aa, zero(eltype(aa)))
 
 """

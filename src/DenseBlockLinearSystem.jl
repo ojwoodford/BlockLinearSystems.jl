@@ -133,7 +133,7 @@ end
 
 @inline function block(bdm::DenseBlockLinearSystem, i::Integer, j::Integer, rows::Integer, cols::Integer)
     @boundscheck checkblock(bdm, i, j, rows, cols)
-    return @inbounds view(bdm.data, SR(0, rows-1) .+ bdm.rowblockoffsets[i], SR(0, cols-1) .+ bdm.columnblockoffsets[j])
+    return @inbounds view(bdm.data, blockrange(bdm.rowblockoffsets[i], rows), blockrange(bdm.columnblockoffsets[j], cols))
 end
 
 @inline function block(bdm::DenseBlockLinearSystem, i::Integer, j::Integer, ::StaticInt{rows}, cols::Integer) where rows
