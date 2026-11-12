@@ -109,6 +109,11 @@ reduce_schur_sparse!(S, g, b_c, b_p, scaling_p, lambda, st, C_data, E_data,
                      pattern.block_colptr, pattern.block_rowval, pattern.block_row_offsets, pattern.col_heights, ws)
 ```
 
+If the pattern is already known when the [`SchurBlockMatrix`](@ref) is built, attach it with
+`Hs = SchurBlockMatrix(st, B, C_data, E_data; pattern=pattern)`. Code that receives only `Hs` can then
+read `Hs.pattern` instead of rebuilding it (`nothing` means "build it when needed"). The pattern is shared
+by `copy_structure` copies, so treat it as read-only: copy `pattern.S_sparse` before using it as storage.
+
 ## How the reduction is parallelised
 
 The reduction runs in two phases. Phase 1 factors every eliminated block (in parallel over chunks of
@@ -121,7 +126,7 @@ and there is enough work (`BlockLinearSystems.SCHUR_THREAD_MIN_WORK`); threading
 
 Optimizers that linearize at a trial point keep the current system for retries.
 [`copy_structure`](@ref)`(::SchurBlockMatrix)` allocates new zeroed `B`, `C_data` and `E_data` sharing only
-the immutable structure, and [`trial_workspace`](@ref) gives a workspace with its own caches.
+the immutable structure (and the read-only `pattern`, if any), and [`trial_workspace`](@ref) gives a workspace with its own caches.
 
 ## Using it with SecondOrderOptimization.jl
 

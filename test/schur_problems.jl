@@ -478,3 +478,45 @@ end
         end
     end
 end
+
+# Measured inside functions: @allocated at a testset's top level counts spurious boxing on Julia 1.10
+allocs_fast_bAb(H, dx) = @allocated BlockLinearSystems.fast_bAb(H, dx)
+allocs_zero!(H) = @allocated zero!(H)
+
+@testset "SchurBlockMatrix carries an optional pattern (A1)" begin
+    for make in (dense_schur_matrix, sparse_schur_matrix)
+        H0 = make(standard_problem())
+        st = H0.structure
+        @test H0.pattern === nothing
+        extra = H0.B isa Matrix ? () : retained_block_pairs(H0.B)
+        pat = build_schur_pattern(st; extra_blocks=extra)
+        H = SchurBlockMatrix(st, H0.B, H0.C_data, H0.E_data; pattern=pat)
+        @test H.pattern === pat
+        @test H.B === H0.B
+        # positional (field-order) forms still work and carry no pattern
+        @test SchurBlockMatrix(H0.B, H0.C_data, H0.E_data, st).pattern === nothing
+        @test SchurBlockMatrix{Float64, typeof(H0.B)}(H0.B, H0.C_data, H0.E_data, st).pattern === nothing
+        # extra entries on the named tuple are accepted
+        @test SchurBlockMatrix(st, H0.B, H0.C_data, H0.E_data; pattern=merge(pat, (S_factor = 1,))).pattern.S_factor == 1
+
+        # copy shares the pattern, nothing mutable
+        Tc = copy_structure(H)
+        @test Tc.pattern === H.pattern
+        @test Tc.C_data !== H.C_data && Tc.E_data !== H.E_data && Tc.B !== H.B
+
+        # wrong size
+        bad = (S_sparse = spzeros(st.nc + 1, st.nc + 1),)
+        @test_throws ArgumentError SchurBlockMatrix(st, H0.B, H0.C_data, H0.E_data; pattern=bad)
+
+        # concrete types and allocation-free hot paths with a pattern attached
+        @test isconcretetype(typeof(H))
+        @test isconcretetype(fieldtype(typeof(H), :B))
+        @test isconcretetype(fieldtype(typeof(H), :C_data)) && isconcretetype(fieldtype(typeof(H), :E_data))
+        dx = randn(st.nc + sum(st.p_dims))
+        allocs_fast_bAb(H, dx); allocs_zero!(H)   # compile
+        @test allocs_fast_bAb(H, dx) == 0
+        @test allocs_zero!(H) == 0
+        zero!(H)
+        @test all(iszero, H.C_data) && all(iszero, H.E_data)
+    end
+end
