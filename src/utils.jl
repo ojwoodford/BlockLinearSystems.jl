@@ -53,6 +53,22 @@ function computestartindices(blocksizes)
     return startind
 end
 
+# Offsets vector (length nblocks + 1, starting at 1) of a block layout; valid for an empty layout too
+function blockoffsets(sizes)
+    offsets = computestartindices(sizes)
+    push!(offsets, isempty(offsets) ? 1 : offsets[end] + Int(sizes[end]))
+    return offsets
+end
+
+# Block sizes from start offsets, with a descriptive error for unsorted / empty / oversized blocks
+function blocksizes_from_offsets(offsets::AbstractVector{<:Integer}, what::AbstractString="Block")
+    @inbounds for i in 1:length(offsets)-1
+        d = offsets[i+1] - offsets[i]
+        1 <= d <= 255 || throw(ArgumentError("$what offsets must be strictly increasing with block sizes between 1 and 255, but block $i spans offsets $(offsets[i]) to $(offsets[i+1]) (size $d)"))
+    end
+    return BlockRLE(diff(offsets))
+end
+
 function block_sparse_nnz(sparsity, blocksizes)
     # Compute the number of non-zeros in a block sparse matrix
     nnz = 0

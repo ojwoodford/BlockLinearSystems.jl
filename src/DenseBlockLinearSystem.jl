@@ -17,13 +17,8 @@ struct DenseBlockLinearSystem{T, M<:AbstractMatrix{T}}
 
     function DenseBlockLinearSystem{T, M}(data::M, rowblocksizes::BlockRLE{UInt8, Int}, colblocksizes::BlockRLE{UInt8, Int}=rowblocksizes) where {T, M<:AbstractMatrix{T}}
         # Block sizes are already validated (1-255) by the BlockRLE constructor
-        r_offsets = computestartindices(rowblocksizes)
-        push!(r_offsets, r_offsets[end] + Int(rowblocksizes[end]))
-        c_offsets = rowblocksizes === colblocksizes ? r_offsets : begin
-            o = computestartindices(colblocksizes)
-            push!(o, o[end] + Int(colblocksizes[end]))
-            o
-        end
+        r_offsets = blockoffsets(rowblocksizes)
+        c_offsets = rowblocksizes === colblocksizes ? r_offsets : blockoffsets(colblocksizes)
         size(data) == (r_offsets[end]-1, c_offsets[end]-1) || throw(DimensionMismatch("Matrix size $(size(data)) does not match block sizes ($(r_offsets[end]-1), $(c_offsets[end]-1))"))
         return new{T, M}(data, r_offsets, c_offsets, rowblocksizes, colblocksizes)
     end
@@ -45,8 +40,8 @@ function DenseBlockLinearSystem{T, M}(data::M, bo::BlockOffsets, co::BlockOffset
     (length(r_offsets) >= 2 && length(c_offsets) >= 2) || throw(ArgumentError("Offset vectors must have at least 2 entries"))
     r_offsets[1] == 1 || throw(ArgumentError("Row offsets must start with 1"))
     c_offsets[1] == 1 || throw(ArgumentError("Column offsets must start with 1"))
-    rbs = BlockRLE(convert(Vector{UInt8}, diff(r_offsets)))
-    cbs = r_offsets === c_offsets ? rbs : BlockRLE(convert(Vector{UInt8}, diff(c_offsets)))
+    rbs = blocksizes_from_offsets(r_offsets, "Row")
+    cbs = r_offsets === c_offsets ? rbs : blocksizes_from_offsets(c_offsets, "Column")
     size(data) == (r_offsets[end]-1, c_offsets[end]-1) || throw(DimensionMismatch("Matrix size $(size(data)) does not match offsets ($(r_offsets[end]-1), $(c_offsets[end]-1))"))
     return DenseBlockLinearSystem{T, M}(data, r_offsets, c_offsets, rbs, cbs)
 end
@@ -60,13 +55,8 @@ end
 function DenseBlockLinearSystem{T}(rowblocksizes::AbstractVector{<:Integer}, colblocksizes::AbstractVector{<:Integer}=rowblocksizes) where T
     rbs = as_block_rle(rowblocksizes)
     cbs = rowblocksizes === colblocksizes ? rbs : as_block_rle(colblocksizes)
-    r_offsets = computestartindices(rbs)
-    push!(r_offsets, r_offsets[end] + Int(rbs[end]))
-    c_offsets = rowblocksizes === colblocksizes ? r_offsets : begin
-        o = computestartindices(cbs)
-        push!(o, o[end] + Int(cbs[end]))
-        o
-    end
+    r_offsets = blockoffsets(rbs)
+    c_offsets = rowblocksizes === colblocksizes ? r_offsets : blockoffsets(cbs)
     data = zeros(T, r_offsets[end]-1, c_offsets[end]-1)
     return DenseBlockLinearSystem{T, typeof(data)}(data, r_offsets, c_offsets, rbs, cbs)
 end
@@ -83,8 +73,8 @@ function DenseBlockLinearSystem{T}(bo::BlockOffsets, co::BlockOffsets=bo) where 
     (length(r_offsets) >= 2 && length(c_offsets) >= 2) || throw(ArgumentError("Offset vectors must have at least 2 entries"))
     r_offsets[1] == 1 || throw(ArgumentError("Row offsets must start with 1"))
     c_offsets[1] == 1 || throw(ArgumentError("Column offsets must start with 1"))
-    rbs = BlockRLE(convert(Vector{UInt8}, diff(r_offsets)))
-    cbs = r_offsets === c_offsets ? rbs : BlockRLE(convert(Vector{UInt8}, diff(c_offsets)))
+    rbs = blocksizes_from_offsets(r_offsets, "Row")
+    cbs = r_offsets === c_offsets ? rbs : blocksizes_from_offsets(c_offsets, "Column")
     data = zeros(T, r_offsets[end]-1, c_offsets[end]-1)
     return DenseBlockLinearSystem{T, typeof(data)}(data, r_offsets, c_offsets, rbs, cbs)
 end

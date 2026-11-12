@@ -152,3 +152,19 @@ end
         @test sys2.data == A        # symmetrifyfull does not modify its argument
     end
 end
+
+@testset "Clear errors at the edges (M8)" begin
+    # Empty layouts are valid and give an empty system
+    empty_dense = DenseBlockLinearSystem{Float64}(Int[])
+    @test size(empty_dense) == (0, 0)
+    @test nblocks(empty_dense) == (0, 0)
+    @test size(SparseBlockLinearSystem{Float64}(Tuple{Int, Int}[], Int[])) == (0, 0)
+    # Unsorted, repeated and oversized offsets give an ArgumentError (not an InexactError)
+    @test_throws ArgumentError DenseBlockLinearSystem{Float64}(BlockOffsets([1, 3, 2]))
+    @test_throws ArgumentError DenseBlockLinearSystem{Float64}(BlockOffsets([1, 3, 3]))
+    @test_throws ArgumentError DenseBlockLinearSystem{Float64}(BlockOffsets([1, 400]))
+    @test_throws ArgumentError DenseBlockLinearSystem{Float64}(BlockOffsets([1, 3, 7]), BlockOffsets([1, 2, 2]))
+    @test_throws ArgumentError DenseBlockLinearSystem(zeros(5, 5), BlockOffsets([1, 4, 3, 6]))
+    err = try DenseBlockLinearSystem{Float64}(BlockOffsets([1, 3, 2])); nothing catch e; e end
+    @test occursin("strictly increasing", sprint(showerror, err))
+end
