@@ -2,9 +2,9 @@ using Test, LinearAlgebra, SparseArrays, StaticArrays, Static, BlockLinearSystem
 
 @testset "Schur-Complement Linear Solver: Pure-Data Kernels & Equivalence" begin
     # --------------------------------------------------------------------------
-    # 1. Setup Synthetic BA Problem with Heterogeneous Cameras & Mixed Landmarks
+    # 1. Setup synthetic bipartite problem with retained blocks of several sizes and eliminated blocks of mixed sizes
     # --------------------------------------------------------------------------
-    c_dims = UInt8[6, 3, 6, 9]       # 4 cameras: e.g. 6-DoF pose, 3-DoF intrinsics, 6-DoF, 9-DoF
+    c_dims = UInt8[6, 3, 6, 9]       # 4 retained blocks of dimension 6, 3, 6 and 9
     ncblocks = length(c_dims)
     nc = Int(sum(c_dims))             # 24 scalars
 
@@ -14,7 +14,7 @@ using Test, LinearAlgebra, SparseArrays, StaticArrays, Static, BlockLinearSystem
         boffsets_c[i] = boffsets_c[i-1] + Int(c_dims[i-1])
     end
 
-    # 10 landmarks: 8 of dimension 3, 2 of dimension 1
+    # 10 eliminated blocks: 8 of dimension 3, 2 of dimension 1
     p_dims = UInt8[3, 3, 3, 3, 3, 3, 3, 3, 1, 1]
     npblocks = length(p_dims)
     np = Int(sum(p_dims))             # 26 scalars
@@ -33,9 +33,9 @@ using Test, LinearAlgebra, SparseArrays, StaticArrays, Static, BlockLinearSystem
     end
     total_c_data = ppoffsets[end] + Int(p_dims[end])^2 - 1
 
-    # Coupling graph: each landmark is observed by 2-4 cameras
-    # Ensure camera indices are strictly sorted ascending per landmark!
-    observations = [
+    # Coupling graph: each eliminated block is coupled to 2-4 retained blocks
+    # Ensure retained block indices are strictly sorted ascending per eliminated block!
+    couplings = [
         [1, 2],          # l=1
         [1, 3],          # l=2
         [2, 3, 4],       # l=3
@@ -51,7 +51,7 @@ using Test, LinearAlgebra, SparseArrays, StaticArrays, Static, BlockLinearSystem
     cpptr = Vector{Int}(undef, npblocks + 1)
     cpptr[1] = 1
     for l in 1:npblocks
-        cpptr[l+1] = cpptr[l] + length(observations[l])
+        cpptr[l+1] = cpptr[l] + length(couplings[l])
     end
     num_couplings = cpptr[end] - 1
 
@@ -61,7 +61,7 @@ using Test, LinearAlgebra, SparseArrays, StaticArrays, Static, BlockLinearSystem
     idx = 1
     for l in 1:npblocks
         dp = Int(p_dims[l])
-        for c in observations[l]
+        for c in couplings[l]
             cpblock[idx] = c
             cpoffsets[idx] = curr_e_off
             curr_e_off += Int(c_dims[c]) * dp
@@ -70,8 +70,8 @@ using Test, LinearAlgebra, SparseArrays, StaticArrays, Static, BlockLinearSystem
     end
     total_e_data = curr_e_off - 1
 
-    # Max observation dimension across landmarks
-    max_obs_dim = maximum(sum(Int(c_dims[c]) for c in observations[l]) for l in 1:npblocks)
+    # Max coupled dimension across eliminated blocks
+    max_coupled_dim = maximum(sum(Int(c_dims[c]) for c in couplings[l]) for l in 1:npblocks)
 
     # Groups: 3D points (1:8), 1D depths (9:10)
     p_groups = [1:8, 9:10]
@@ -88,20 +88,20 @@ using Test, LinearAlgebra, SparseArrays, StaticArrays, Static, BlockLinearSystem
         nc, ncblocks, npblocks,
         c_dims, p_dims, boffsets_c, boffsets_p,
         ppoffsets, cpptr, cpblock, cpoffsets,
-        max_obs_dim, p_groups, p_sizes, chunks_K1
+        max_coupled_dim, p_groups, p_sizes, chunks_K1
     )
 
     structure_K4 = BlockLinearSystems.SchurStructure(
         nc, ncblocks, npblocks,
         c_dims, p_dims, boffsets_c, boffsets_p,
         ppoffsets, cpptr, cpblock, cpoffsets,
-        max_obs_dim, p_groups, p_sizes, chunks_K4
+        max_coupled_dim, p_groups, p_sizes, chunks_K4
     )
 
     # --------------------------------------------------------------------------
     # 2. Populate Numerical Data (B, C, E, gradients, damping)
     # --------------------------------------------------------------------------
-    # Camera Hessian B: block-structured matching block_covis (SPD)
+    # Retained Hessian B: block-structured matching block_pattern (SPD)
     B = zeros(nc, nc)
     for c in 1:ncblocks
         dc = Int(c_dims[c])
@@ -109,7 +109,7 @@ using Test, LinearAlgebra, SparseArrays, StaticArrays, Static, BlockLinearSystem
         Xc = randn(dc, dc)
         B[scol:scol+dc-1, scol:scol+dc-1] = Xc' * Xc + 20.0 * I
     end
-    # Add some off-diagonal camera-camera priors between cameras observing common points
+    # Add some off-diagonal retained-retained couplings
     for c2 in 1:ncblocks, c1 in 1:c2-1
         if (c1, c2) in [(1, 2), (2, 3), (3, 4)]
             dc1 = Int(c_dims[c1])
@@ -122,7 +122,7 @@ using Test, LinearAlgebra, SparseArrays, StaticArrays, Static, BlockLinearSystem
         end
     end
 
-    # Landmark Hessian C (block-diagonal, SPD)
+    # Eliminated Hessian C (block-diagonal, SPD)
     C_data = zeros(total_c_data)
     for l in 1:npblocks
         dp = Int(p_dims[l])
@@ -209,13 +209,13 @@ using Test, LinearAlgebra, SparseArrays, StaticArrays, Static, BlockLinearSystem
         structure_K1, C_data, E_data, ws_K1
     )
     @test success == true
-    @test ws_K1.failed_landmark[] == 0
+    @test ws_K1.failed_block[] == 0
 
     # S_dense is upper-triangular: symmetrize to solve directly
     S_sym = Symmetric(S_dense, :U)
     dx_c_dense = S_sym \ g_S_dense
 
-    # Verify reduced camera step matches ground truth
+    # Verify reduced step matches ground truth
     @test norm(dx_c_dense - dx_full_c) / norm(dx_full_c) < 1e-12
 
     # Back-substitute eliminable variables
@@ -245,7 +245,7 @@ using Test, LinearAlgebra, SparseArrays, StaticArrays, Static, BlockLinearSystem
         structure_K4, C_data, E_data, ws_K4
     )
     @test success_K4 == true
-    @test ws_K4.failed_landmark[] == 0
+    @test ws_K4.failed_block[] == 0
 
     # S and g_S must match K=1 to floating-point tolerance
     @test norm(triu(S_dense_K4) - triu(S_dense)) / norm(triu(S_dense)) < 1e-14
@@ -260,29 +260,29 @@ using Test, LinearAlgebra, SparseArrays, StaticArrays, Static, BlockLinearSystem
     @test norm([dx_c_K4; dx_p_K4] - dx_full) / norm(dx_full) < 1e-12
 
     # --------------------------------------------------------------------------
-    # 6. Sparse Co-Visibility Graph & Sparse Schur Reduction Test
+    # 6. Sparse Reduced-System Pattern & Sparse Schur Reduction Test
     # --------------------------------------------------------------------------
-    # Build camera block co-visibility graph (symmetric, upper triangle)
-    block_covis = spzeros(Bool, ncblocks, ncblocks)
+    # Build the retained-block pattern of the reduced system (symmetric, upper triangle)
+    block_pattern = spzeros(Bool, ncblocks, ncblocks)
     for l in 1:npblocks
-        cams = observations[l]
+        cams = couplings[l]
         for idx2 in 1:length(cams)
             c2 = cams[idx2]
             for idx1 in 1:idx2
                 c1 = cams[idx1]
-                block_covis[c1, c2] = true
+                block_pattern[c1, c2] = true
             end
         end
     end
     # Ensure block diagonal is present
     for c in 1:ncblocks
-        block_covis[c, c] = true
+        block_pattern[c, c] = true
     end
 
     # CSC block-level indexing
-    block_colptr = block_covis.colptr
-    block_rowval = block_covis.rowval
-    nnz_blocks = nnz(block_covis)
+    block_colptr = block_pattern.colptr
+    block_rowval = block_pattern.rowval
+    nnz_blocks = nnz(block_pattern)
 
     # Compute row offsets and total scalar column heights for S
     col_heights = zeros(Int, ncblocks)
@@ -358,7 +358,7 @@ using Test, LinearAlgebra, SparseArrays, StaticArrays, Static, BlockLinearSystem
         ws_sparse_K1
     )
     @test success_sparse == true
-    @test ws_sparse_K1.failed_landmark[] == 0
+    @test ws_sparse_K1.failed_block[] == 0
 
     # Verify sparse S matches dense S on all upper-triangular nonzeros
     S_sparse_dense = Matrix(S_sparse)
@@ -390,15 +390,15 @@ using Test, LinearAlgebra, SparseArrays, StaticArrays, Static, BlockLinearSystem
         ws_sparse_K4
     )
     @test success_sparse_K4 == true
-    @test ws_sparse_K4.failed_landmark[] == 0
+    @test ws_sparse_K4.failed_block[] == 0
     # Chunks are summed in a different order than for K=1, so compare to rounding error
     @test norm(S_sparse_K4.nzval - S_sparse.nzval) < 1e-13 * norm(S_sparse.nzval)
     @test norm(g_S_sparse_K4 - g_S_sparse) < 1e-13 * norm(g_S_sparse)
 
     # --------------------------------------------------------------------------
-    # 7. Exact Rank-Deficient Degenerate Landmark Test
+    # 7. Exact Rank-Deficient Degenerate Eliminated Block Test
     # --------------------------------------------------------------------------
-    # Create rank-deficient block for landmark 1: outer product of 1D vector (rank 1 at lambda = 0)
+    # Create rank-deficient block for eliminated block 1: outer product of 1D vector (rank 1 at lambda = 0)
     C_data_degen = copy(C_data)
     v_rank1 = randn(3)
     C_rank1 = v_rank1 * v_rank1' # rank 1 in 3x3 => det = 0
@@ -412,39 +412,39 @@ using Test, LinearAlgebra, SparseArrays, StaticArrays, Static, BlockLinearSystem
     g_S_degen = zeros(nc)
     BlockLinearSystems.reset_schur_dense!(S_degen, B, scaling_c, 0.0, ws_degen)
 
-    # Reduction with lambda = 0 must fail on landmark 1
+    # Reduction with lambda = 0 must fail on eliminated block 1
     success_degen = BlockLinearSystems.reduce_schur_dense!(
         S_degen, g_S_degen, b_c, b_p, scaling_p, 0.0,
         structure_K1, C_data_degen, E_data, ws_degen
     )
     @test success_degen == false
-    @test ws_degen.failed_landmark[] == 1
+    @test ws_degen.failed_block[] == 1
 
     # --------------------------------------------------------------------------
     # 8. Zero-Allocation Unit Tests on Inner Group Kernels
     # --------------------------------------------------------------------------
-    # Phase 1 (landmark factorization) and phase 2 (column accumulation) kernels
-    call_phase1() = BlockLinearSystems.factor_landmarks_group!(
-        ws_K1.C_inv_data, ws_K1.z_data, ws_K1.W_data, ws_K1.W_scratch[1], ws_K1.failed_landmark,
+    # Phase 1 (eliminated block factorization) and phase 2 (column accumulation) kernels
+    call_phase1() = BlockLinearSystems.factor_eliminated_group!(
+        ws_K1.C_inv_data, ws_K1.z_data, ws_K1.W_data, ws_K1.W_scratch[1], ws_K1.failed_block,
         structure_K1, C_data, E_data, b_p, scaling_p, lambda, 1:8, static(3))
     call_phase1()
     @test (@allocated call_phase1()) == 0
 
     call_dense_cols() = BlockLinearSystems.accumulate_dense_columns!(
         S_dense, g_S_dense, structure_K1, E_data, ws_K1.W_data, ws_K1.z_data,
-        ws_K1.cam_ptr, ws_K1.cam_entry, ws_K1.entry_landmark, 1:ncblocks)
+        ws_K1.retained_ptr, ws_K1.retained_entry, ws_K1.entry_eliminated, 1:ncblocks)
     call_dense_cols()
     @test (@allocated call_dense_cols()) == 0
 
-    call_phase1_sparse() = BlockLinearSystems.factor_landmarks_group!(
-        ws_sparse_K1.C_inv_data, ws_sparse_K1.z_data, ws_sparse_K1.W_data, ws_sparse_K1.W_scratch[1], ws_sparse_K1.failed_landmark,
+    call_phase1_sparse() = BlockLinearSystems.factor_eliminated_group!(
+        ws_sparse_K1.C_inv_data, ws_sparse_K1.z_data, ws_sparse_K1.W_data, ws_sparse_K1.W_scratch[1], ws_sparse_K1.failed_block,
         structure_K1, C_data, E_data, b_p, scaling_p, lambda, 1:8, static(3))
     call_phase1_sparse()
     @test (@allocated call_phase1_sparse()) == 0
 
     call_sparse_cols() = BlockLinearSystems.accumulate_sparse_columns!(
         S_sparse.nzval, g_S_sparse, structure_K1, E_data, ws_sparse_K1.W_data, ws_sparse_K1.z_data,
-        ws_sparse_K1.cam_ptr, ws_sparse_K1.cam_entry, ws_sparse_K1.entry_landmark,
+        ws_sparse_K1.retained_ptr, ws_sparse_K1.retained_entry, ws_sparse_K1.entry_eliminated,
         S_sparse.colptr, block_colptr, block_rowval, block_row_offsets, col_heights, 1:ncblocks)
     call_sparse_cols()
     @test (@allocated call_sparse_cols()) == 0
@@ -471,17 +471,17 @@ using Test, LinearAlgebra, SparseArrays, StaticArrays, Static, BlockLinearSystem
     @test schur_perm == [1, 3, 2, 5, 4]
 
     # --------------------------------------------------------------------------
-    # 10. Symbolic Co-Visibility & B-to-S Map Generator Tests
+    # 10. Symbolic Pattern & B-to-S Map Generator Tests
     # --------------------------------------------------------------------------
-    covis = build_schur_covisibility(structure_K1)
-    @test covis.block_colptr == block_colptr
-    @test covis.block_rowval == block_rowval
-    @test covis.block_row_offsets == block_row_offsets
-    @test covis.col_heights == col_heights
-    @test covis.diag_inds == diag_inds
-    @test nnz(covis.S_sparse) == nnz_S
+    pattern = build_schur_pattern(structure_K1)
+    @test pattern.block_colptr == block_colptr
+    @test pattern.block_rowval == block_rowval
+    @test pattern.block_row_offsets == block_row_offsets
+    @test pattern.col_heights == col_heights
+    @test pattern.diag_inds == diag_inds
+    @test nnz(pattern.S_sparse) == nnz_S
 
-    b_map = build_b_to_s_map(B_sparse, covis.S_sparse)
+    b_map = build_b_to_s_map(B_sparse, pattern.S_sparse)
     @test b_map == b_to_s_map
 
     # --------------------------------------------------------------------------

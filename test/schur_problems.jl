@@ -15,11 +15,11 @@ struct SchurTestProblem
     b::Vector{Float64}
     c_dims::Vector{Int}
     p_dims::Vector{Int}
-    observations::Vector{Vector{Int}}
+    couplings::Vector{Vector{Int}}
     cc_pairs::Vector{Tuple{Int, Int}}   # retained-retained block couplings (r > c), beyond the diagonal
 end
 
-function SchurTestProblem(rng, c_dims, p_dims, observations; cc_pairs=Tuple{Int, Int}[])
+function SchurTestProblem(rng, c_dims, p_dims, couplings; cc_pairs=Tuple{Int, Int}[])
     nc, np = sum(c_dims), sum(p_dims)
     n = nc + np
     coff = cumsum([1; c_dims[1:end-1]])
@@ -34,7 +34,7 @@ function SchurTestProblem(rng, c_dims, p_dims, observations; cc_pairs=Tuple{Int,
     for (l, d) in enumerate(p_dims)
         fillblock!(poff[l], d, poff[l], d)
     end
-    for (l, cams) in enumerate(observations), c in cams
+    for (l, cams) in enumerate(couplings), c in cams
         fillblock!(coff[c], c_dims[c], poff[l], p_dims[l])
     end
     for (r, c) in cc_pairs
@@ -46,13 +46,13 @@ function SchurTestProblem(rng, c_dims, p_dims, observations; cc_pairs=Tuple{Int,
     for i in 1:n
         H[i, i] = sum(abs, view(H, i, :)) - abs(H[i, i]) + 0.5 + rand(rng)
     end
-    return SchurTestProblem(H, randn(rng, n), c_dims, p_dims, observations, cc_pairs)
+    return SchurTestProblem(H, randn(rng, n), c_dims, p_dims, couplings, cc_pairs)
 end
 
 nc(p::SchurTestProblem) = sum(p.c_dims)
 
 function schur_structure(p::SchurTestProblem; nchunks=1)
-    return SchurStructure(p.c_dims, p.p_dims, p.observations; nchunks)
+    return SchurStructure(p.c_dims, p.p_dims, p.couplings; nchunks)
 end
 
 function fill_cp!(p::SchurTestProblem, structure::SchurStructure, C_data, E_data)
@@ -86,11 +86,11 @@ end
 
 function sparse_schur_matrix(p::SchurTestProblem; nchunks=1)
     structure = schur_structure(p; nchunks)
-    covis = build_schur_covisibility(structure)
+    pattern = build_schur_pattern(structure)
     coords = Tuple{Int, Int}[]
-    cb = covis.block_colptr
+    cb = pattern.block_colptr
     for c in 1:structure.ncblocks, k in cb[c]:cb[c+1]-1
-        r = covis.block_rowval[k]       # r <= c in the upper-triangle covisibility
+        r = pattern.block_rowval[k]       # r <= c in the upper-triangle pattern
         push!(coords, (c, r))           # store lower-triangle block (row = c, col = r)
     end
     append!(coords, p.cc_pairs)
@@ -116,23 +116,23 @@ function standard_problem(seed=1; cc_pairs=Tuple{Int, Int}[])
     rng = Random.Xoshiro(seed)
     c_dims = [6, 6, 6, 6]
     p_dims = [3, 3, 3, 3, 3, 3, 3, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1]
-    # Cameras 1-2 and 3-4 observe landmarks together; 2-3 are linked through a few landmarks
-    observations = [
+    # Retained blocks 1-2 and 3-4 are coupled to eliminated blocks together; 2-3 are linked through a few eliminated blocks
+    couplings = [
         [1, 2], [1, 2], [1, 2, 3], [2, 3], [3, 4], [3, 4], [1, 4],
         [1, 2], [2, 3], [3, 4], [1, 2, 3, 4], [4],
         [1], [2], [3], [4], [1, 2], [3, 4], [2, 3], [1, 4],
     ]
-    return SchurTestProblem(rng, c_dims, p_dims, observations; cc_pairs)
+    return SchurTestProblem(rng, c_dims, p_dims, couplings; cc_pairs)
 end
 
-# Two groups of cameras ({1, 2} and {3, 4}) that share no landmark with each other, coupled only by
+# Two groups of retained blocks ({1, 2} and {3, 4}) that share no eliminated block with each other, coupled only by
 # direct retained-retained blocks (odometry / loop-closure style), which have no eliminated variable.
 function coupled_groups_problem(seed=3)
     rng = Random.Xoshiro(seed)
     c_dims = [6, 6, 6, 6]
     p_dims = [3, 3, 3, 3, 2, 2, 1, 1]
-    observations = [[1, 2], [1, 2], [3, 4], [3, 4], [1], [4], [2, 1], [3, 4]]
-    return SchurTestProblem(rng, c_dims, p_dims, observations; cc_pairs=[(3, 1), (4, 2), (2, 1)])
+    couplings = [[1, 2], [1, 2], [3, 4], [3, 4], [1], [4], [2, 1], [3, 4]]
+    return SchurTestProblem(rng, c_dims, p_dims, couplings; cc_pairs=[(3, 1), (4, 2), (2, 1)])
 end
 
 # Eliminated blocks of every size class: tiny closed forms (1-3), the generic static tier (4..D_STATIC)
@@ -142,8 +142,8 @@ function mixed_dims_problem(seed=11)
     c_dims = [6, 3, 9, 6]
     p_dims = [12, 12, 9, 9, 8, 8, 5, 5, 4, 4, 3, 3, 2, 2, 1, 1]
     cams = 1:4
-    observations = [sort(unique([rand(rng, cams) for _ in 1:3])) for _ in p_dims]
-    return SchurTestProblem(rng, c_dims, p_dims, observations)
+    couplings = [sort(unique([rand(rng, cams) for _ in 1:3])) for _ in p_dims]
+    return SchurTestProblem(rng, c_dims, p_dims, couplings)
 end
 
 
@@ -169,11 +169,11 @@ function schur_solve(H::SchurBlockMatrix{T}, b, scaling, lambda; nchunks=1) wher
         reset_schur_dense!(S, H.B, sc_c, lambda, ws)
         reduce_schur_dense!(S, g, b_c, b_p, sc_p, lambda, st, H.C_data, H.E_data, ws) || return (zeros(T, n), false)
     else
-        covis = build_schur_covisibility(st, T; extra_blocks=retained_block_pairs(H.B))
-        S = covis.S_sparse
-        reset_schur_sparse!(S.nzval, H.B.data, build_b_to_s_map(H.B, covis, st.boffsets_c), covis.diag_inds, sc_c, lambda, ws)
+        pattern = build_schur_pattern(st, T; extra_blocks=retained_block_pairs(H.B))
+        S = pattern.S_sparse
+        reset_schur_sparse!(S.nzval, H.B.data, build_b_to_s_map(H.B, pattern, st.boffsets_c), pattern.diag_inds, sc_c, lambda, ws)
         reduce_schur_sparse!(S, g, b_c, b_p, sc_p, lambda, st, H.C_data, H.E_data,
-                             covis.block_colptr, covis.block_rowval, covis.block_row_offsets, covis.col_heights, ws) || return (zeros(T, n), false)
+                             pattern.block_colptr, pattern.block_rowval, pattern.block_row_offsets, pattern.col_heights, ws) || return (zeros(T, n), false)
     end
     x = zeros(T, n)
     x_c = T.(cholesky(Symmetric(S, :U)) \ g)   # CHOLMOD may return Float64 for Float32 input
@@ -204,6 +204,63 @@ end
     end
 end
 
+# A gauge-deficient problem: every coupling constrains only the *difference* x_retained[1:3] - x_eliminated, so
+# translating all retained and eliminated blocks together changes nothing and H is singular along that direction.
+# Dimensions 4:6 of the retained blocks only have a tiny prior, which makes H ill conditioned (and rank deficient without it).
+function gauge_problem(seed=21; prior=1e-8)
+    rng = Random.Xoshiro(seed)
+    c_dims = [6, 6, 6, 6]
+    p_dims = [3, 3, 3, 3, 3, 3]
+    couplings = [[1, 2], [1, 2, 3], [2, 3, 4], [3, 4], [1, 4], [1, 2, 3, 4]]
+    nc, np = sum(c_dims), sum(p_dims)
+    H = zeros(nc + np, nc + np)
+    for (l, cams) in enumerate(couplings), c in cams
+        w = 0.5 + rand(rng)
+        ci = 6 * (c - 1) .+ (1:3)           # translation dimensions of the retained block
+        li = nc + 3 * (l - 1) .+ (1:3)       # dimensions of the eliminated block
+        H[ci, ci] .+= w * I(3); H[li, li] .+= w * I(3)
+        H[ci, li] .-= w * I(3); H[li, ci] .-= w * I(3)
+    end
+    for c in 1:4
+        ci = 6 * (c - 1) .+ (4:6)
+        H[ci, ci] .+= prior * I(3)
+    end
+    return SchurTestProblem(H, randn(rng, nc + np), c_dims, p_dims, couplings, Tuple{Int, Int}[])
+end
+
+@testset "Schur solve on a gauge-deficient, ill-conditioned problem: relative residual (T1)" begin
+    p = gauge_problem()
+    n = length(p.b)
+    @test cond(p.H) > 1e7                        # ill conditioned: a forward-error check would be meaningless
+    ev = eigvals(Symmetric(p.H))
+    @test ev[1] > -1e-12 && ev[1] < 1e-12        # exactly singular along the gauge direction
+    for make in (dense_schur_matrix, sparse_schur_matrix), lambda in (1e-6, 1e-3, 0.1)
+        scaling = ones(n)
+        x, ok = schur_solve(make(p), p.b, scaling, lambda)
+        @test ok
+        Hd = p.H + lambda * Diagonal(scaling)
+        # backward-stable solve: the residual relative to the data does not grow with the condition number
+        rel_res = norm(Hd * x - p.b) / (opnorm(Hd) * norm(x) + norm(p.b))
+        @test rel_res <= 1e-13
+    end
+end
+
+@testset "Well-conditioned test problems (T1)" begin
+    for p in (standard_problem(), coupled_groups_problem(), mixed_dims_problem())
+        @test cond(p.H) <= 1e4
+        n = length(p.b)
+        nc_ = nc(p)
+        for make in (dense_schur_matrix, sparse_schur_matrix), lambda in (0.0, 0.3)
+            x, ok = schur_solve(make(p), p.b, ones(n), lambda)
+            x_ref = reference_solve(p, lambda, ones(n))
+            @test ok
+            # both the retained and the eliminated parts match
+            @test norm(x[1:nc_] - x_ref[1:nc_]) <= 1e-10 * norm(x_ref[1:nc_])
+            @test norm(x[nc_+1:end] - x_ref[nc_+1:end]) <= 1e-10 * norm(x_ref[nc_+1:end])
+        end
+    end
+end
+
 @testset "copy_structure(::SchurBlockMatrix) shares nothing mutable (B1)" begin
     for make in (dense_schur_matrix, sparse_schur_matrix)
         H = make(standard_problem())
@@ -219,7 +276,7 @@ end
     end
     ws = SchurReductionWorkspace{Float64}(schur_structure(standard_problem()), 2)
     tw = trial_workspace(ws)
-    @test tw.C_inv_data !== ws.C_inv_data && tw.z_data !== ws.z_data && tw.failed_landmark !== ws.failed_landmark
+    @test tw.C_inv_data !== ws.C_inv_data && tw.z_data !== ws.z_data && tw.failed_block !== ws.failed_block
 end
 
 @testset "Singular eliminated blocks are reported, kernels do not allocate (B11, M5)" begin
@@ -236,7 +293,7 @@ end
         S = copy(H.B)
         reset_schur_dense!(S, H.B, ones(12), 0.0, ws)
         @test !reduce_schur_dense!(S, zeros(12), q.b[1:12], q.b[13:end], ones(2dp), 0.0, H.structure, H.C_data, H.E_data, ws)
-        @test ws.failed_landmark[] == 2
+        @test ws.failed_block[] == 2
         _, ok2 = schur_solve(H, q.b, ones(length(q.b)), 1.0)
         @test ok2
     end
@@ -251,10 +308,10 @@ end
             S = zeros(12, 12)
             run1 = () -> reduce_schur_dense!(S, g, view(q.b, 1:12), view(q.b, 13:n), ones(n - 12), 0.3, st, H.C_data, H.E_data, ws)
         else
-            covis = build_schur_covisibility(st; extra_blocks=retained_block_pairs(H.B))
-            S = covis.S_sparse
+            pattern = build_schur_pattern(st; extra_blocks=retained_block_pairs(H.B))
+            S = pattern.S_sparse
             run1 = () -> reduce_schur_sparse!(S, g, view(q.b, 1:12), view(q.b, 13:n), ones(n - 12), 0.3, st, H.C_data, H.E_data,
-                covis.block_colptr, covis.block_rowval, covis.block_row_offsets, covis.col_heights, ws)
+                pattern.block_colptr, pattern.block_rowval, pattern.block_row_offsets, pattern.col_heights, ws)
         end
         @test run1()
         bp, onesp = collect(view(q.b, 13:n)), ones(n - 12)
@@ -269,11 +326,11 @@ end
         ws = SchurReductionWorkspace{Float64}(st, K)
         @test length(ws.col_chunks) == K
         @test reduce(vcat, collect.(ws.col_chunks)) == collect(1:st.ncblocks)
-        # the retained-block-major index covers every coupling exactly once, in ascending landmark order
-        @test sort(ws.cam_entry) == collect(1:length(st.cpblock))
+        # the retained-block-major index covers every coupling exactly once, in ascending eliminated block order
+        @test sort(ws.retained_entry) == collect(1:length(st.cpblock))
         for c in 1:st.ncblocks
-            es = ws.cam_entry[ws.cam_ptr[c]:ws.cam_ptr[c+1]-1]
-            @test all(st.cpblock[es] .== c) && issorted(ws.entry_landmark[es])
+            es = ws.retained_entry[ws.retained_ptr[c]:ws.retained_ptr[c+1]-1]
+            @test all(st.cpblock[es] .== c) && issorted(ws.entry_eliminated[es])
         end
     end
     # Forcing the threaded paths gives the same result
@@ -317,7 +374,11 @@ end
             H = kind === :dense ? dense_schur_matrix(p) : sparse_schur_matrix(p)
             @test BlockLinearSystems.fast_bAb(H, dx) ≈ expected rtol = 1e-12
             BlockLinearSystems.fast_bAb(H, dx)
-            kind === :sparse && @test (@allocated BlockLinearSystems.fast_bAb(H, dx)) == 0
+            # Type stable (a captured `Type` was once widened to DataType on Julia 1.10, which made the
+            # result `Any` and boxed it on every call) and allocation free, for both kinds of B
+            @test @inferred(BlockLinearSystems.fast_bAb(H, dx)) isa Float64
+            @test @inferred(BlockLinearSystems.fast_bAb(H, Float32.(dx))) isa Float64
+            @test (@allocated BlockLinearSystems.fast_bAb(H, dx)) == 0
         end
     end
 end
@@ -333,24 +394,24 @@ end
     @test_throws ArgumentError SchurStructure([6, 300], [3, 3], [[1, 2], [2]])    # retained block over 255
     @test_throws ArgumentError SchurStructure([6, 6], [3, 3], [[1, 2], [3]])      # retained block out of range
     @test_throws ArgumentError SchurStructure([6, 6], [3, 3], [[1, 0], [2]])
-    @test_throws ArgumentError SchurStructure([6, 6], [3, 3], [[1, 2, 1], [2]])   # duplicate observation
+    @test_throws ArgumentError SchurStructure([6, 6], [3, 3], [[1, 2, 1], [2]])   # duplicate coupling
     @test_throws ArgumentError SchurStructure([6, 6], [3, 3], [[1, 2], [2]]; nchunks=0)
-    # The same retained block may of course observe different landmarks
+    # The same retained block may of course be coupled to different eliminated blocks
     @test SchurStructure([6, 6], [3, 3], [[1], [1]]).npblocks == 2
 end
 
 @testset "build_b_to_s_map: block-level and scalar-level searches agree (M6)" begin
     for p in (standard_problem(), coupled_groups_problem())
         H = sparse_schur_matrix(p)
-        covis = build_schur_covisibility(H.structure; extra_blocks=retained_block_pairs(H.B))
+        pattern = build_schur_pattern(H.structure; extra_blocks=retained_block_pairs(H.B))
         boffsets = H.structure.boffsets_c
-        m_scalar = build_b_to_s_map(H.B, covis.S_sparse, boffsets)
-        m_block = build_b_to_s_map(H.B, covis, boffsets)
+        m_scalar = build_b_to_s_map(H.B, pattern.S_sparse, boffsets)
+        m_block = build_b_to_s_map(H.B, pattern, boffsets)
         @test m_block == m_scalar
         # Mapped entries are unique and land on upper-triangle slots
         mapped = filter(>(0), m_block)
         @test allunique(mapped)
-        S = covis.S_sparse
+        S = pattern.S_sparse
         rows = rowvals(S)
         cols = [j for j in 1:size(S, 2) for _ in nzrange(S, j)]
         @test all(rows[k] <= cols[k] for k in mapped)
@@ -358,7 +419,7 @@ end
     # Missing block gives an assertion rather than a wrong slot
     p = coupled_groups_problem()
     H = sparse_schur_matrix(p)
-    plain = build_schur_covisibility(H.structure)
+    plain = build_schur_pattern(H.structure)
     @test_throws AssertionError build_b_to_s_map(H.B, plain, H.structure.boffsets_c)
 end
 
@@ -368,36 +429,52 @@ end
     structure = schur_structure(p)
 
     # Pattern: the extra pairs get slots, in either order, and nothing else changes
-    plain = build_schur_covisibility(structure)
-    withextra = build_schur_covisibility(structure; extra_blocks=[(3, 1), (2, 4)])
-    @test !plain.block_covis[1, 3] && !plain.block_covis[2, 4]
-    @test withextra.block_covis[1, 3] && withextra.block_covis[2, 4]
-    @test nnz(withextra.block_covis) == nnz(plain.block_covis) + 2
-    @test_throws ArgumentError build_schur_covisibility(structure; extra_blocks=[(1, 5)])
+    plain = build_schur_pattern(structure)
+    withextra = build_schur_pattern(structure; extra_blocks=[(3, 1), (2, 4)])
+    @test !plain.block_pattern[1, 3] && !plain.block_pattern[2, 4]
+    @test withextra.block_pattern[1, 3] && withextra.block_pattern[2, 4]
+    @test nnz(withextra.block_pattern) == nnz(plain.block_pattern) + 2
+    @test_throws ArgumentError build_schur_pattern(structure; extra_blocks=[(1, 5)])
 
     # The sparse system fails to build a slot for B's coupling without the extra pairs ...
     H = sparse_schur_matrix(p)
     @test Set(retained_block_pairs(H.B)) ⊇ Set([(3, 1), (4, 2)])
     @test_throws AssertionError build_b_to_s_map(H.B, plain.S_sparse, structure.boffsets_c)
     # ... and builds one with them
-    covis = build_schur_covisibility(structure; extra_blocks=retained_block_pairs(H.B))
-    b_to_s = build_b_to_s_map(H.B, covis.S_sparse, structure.boffsets_c)
+    pattern = build_schur_pattern(structure; extra_blocks=retained_block_pairs(H.B))
+    b_to_s = build_b_to_s_map(H.B, pattern.S_sparse, structure.boffsets_c)
     # every upper-triangle entry of the diagonal blocks (21 each) and all 36 entries of each off-diagonal block
     @test count(>(0), b_to_s) == 4 * 21 + 36 * length(retained_block_pairs(H.B))
 
 end
 
-@testset "build_schur_covisibility scales to many observations (B8) and can be reused" begin
-    # Many cameras, each landmark seen by a window of consecutive cameras
-    ncam, nlm = 3000, 6000
-    obs = [collect(c:min(c + 3, ncam)) for c in (min.(1 .+ (0:nlm-1) .* ncam .÷ nlm, ncam))]
-    structure = SchurStructure(fill(6, ncam), fill(3, nlm), obs)
-    build_schur_covisibility(structure)   # compile
-    t = @elapsed covis = build_schur_covisibility(structure)
+@testset "build_schur_pattern scales to many couplings (B8) and can be reused" begin
+    # Many retained blocks, each eliminated block coupled to a window of consecutive retained blocks
+    nret, nelim = 3000, 6000
+    coupled = [collect(c:min(c + 3, nret)) for c in (min.(1 .+ (0:nelim-1) .* nret .÷ nelim, nret))]
+    structure = SchurStructure(fill(6, nret), fill(3, nelim), coupled)
+    build_schur_pattern(structure)   # compile
+    t = @elapsed pattern = build_schur_pattern(structure)
     @test t < 5
-    @test nnz(covis.block_covis) == length(covis.block_rowval)
+    @test nnz(pattern.block_pattern) == length(pattern.block_rowval)
     # Upper triangle with the diagonal; the sliding window gives bandwidth 3
-    @test all(covis.block_rowval[k] <= c for c in 1:ncam for k in covis.block_colptr[c]:covis.block_colptr[c+1]-1)
-    @test nnz(covis.block_covis) <= ncam * 4
+    @test all(pattern.block_rowval[k] <= c for c in 1:nret for k in pattern.block_colptr[c]:pattern.block_colptr[c+1]-1)
+    @test nnz(pattern.block_pattern) <= nret * 4
 
+end
+
+@testset "fast_bAb: any element type, and eliminated blocks of every size class (M13)" begin
+    for p in (standard_problem(), mixed_dims_problem())
+        n = length(p.b)
+        dx = randn(Random.Xoshiro(8), n)
+        expected = dot(dx, p.H * dx)
+        for make in (dense_schur_matrix, sparse_schur_matrix)
+            H = make(p)
+            @test fast_bAb(H, dx) ≈ expected rtol = 1e-12
+            @test fast_bAb(H, view(dx, 1:n)) ≈ expected rtol = 1e-12          # AbstractVector
+            @test fast_bAb(H, Float32.(dx)) ≈ dot(Float32.(dx), p.H * Float32.(dx)) rtol = 1e-4
+            @test fast_bAb(H, Float32.(dx)) isa Float64                      # promoted element type
+            @test fast_bAb(H, ComplexF64.(dx)) ≈ expected rtol = 1e-12       # (real part of a real-quadratic form)
+        end
+    end
 end

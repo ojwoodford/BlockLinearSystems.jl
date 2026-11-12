@@ -31,7 +31,7 @@ copyto!(H_csc, bsm, scatter_map)
 
 ## Extracting Principal Submatrices
 
-In bipartite problems such as Bundle Adjustment, variables partition into camera blocks $C$ and landmark blocks $L$. [`symmetrifyfull!`](@ref) accepts an optional `blocks` index vector (or boolean mask) to extract and symmetrify only a selected subset of blocks into a preallocated dense matrix:
+In bipartite problems, variables partition into retained blocks $R$ and eliminated blocks $E$. [`symmetrifyfull!`](@ref) accepts an optional `blocks` index vector (or boolean mask) to extract and symmetrify only a selected subset of blocks into a preallocated dense matrix:
 
 ```julia
 # Extract only block 1 into a 2x2 dense matrix:
@@ -51,4 +51,4 @@ blocksizes = [2, 2]
 nnz_lower = block_sparse_nnz(sparsity, blocksizes) # 2*2 + 2*2 + 2*2 = 12
 ```
 
-For eliminating the landmark blocks rather than extracting the camera blocks, see the [Schur reduction tutorial](schur_reduction.md).
+For eliminating blocks rather than extracting a submatrix, see the [Schur reduction tutorial](schur_reduction.md).

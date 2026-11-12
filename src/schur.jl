@@ -88,15 +88,15 @@ struct SchurStructure
     npblocks::Int                    # Number of eliminable blocks
     c_dims::Vector{UInt8}            # Dimension of each retained block
     p_dims::Vector{UInt8}            # Dimension of each eliminable block
-    boffsets_c::Vector{Int}          # Scalar start index of each camera block in x_c
+    boffsets_c::Vector{Int}          # Scalar start index of each retained block in x_c
     boffsets_p::Vector{Int}          # Scalar start index of each point block in x_p
     ppoffsets::Vector{Int}           # Start offset in flat C_data for each C_l block
-    cpptr::Vector{Int}               # Landmark-major CSR pointer for coupling entries
-    cpblock::Vector{Int}             # Retained camera block index for each coupling entry (sorted ascending per landmark!)
+    cpptr::Vector{Int}               # Eliminated-block-major CSR pointer for coupling entries
+    cpblock::Vector{Int}             # Retained block index for each coupling entry (sorted ascending per eliminated block!)
     cpoffsets::Vector{Int}           # Start offset in flat E_data for each coupling block
-    max_obs_dim::Int                 # Maximum sum_{c in obs(l)} d_c across all landmarks
-    p_groups::Vector{UnitRange{Int}} # Groups of landmarks by uniform dimension
-    p_sizes::Vector{Int}             # Static landmark dimension for each group
+    max_coupled_dim::Int                 # Maximum over eliminated blocks l of sum_{c coupled to l} d_c
+    p_groups::Vector{UnitRange{Int}} # Groups of eliminated blocks by uniform dimension
+    p_sizes::Vector{Int}             # Dimension of the eliminated blocks in each group
     chunks::Vector{Vector{UnitRange{Int}}} # chunks[group_idx][chunk_id]
 end
 
@@ -106,12 +106,12 @@ const MAX_ELIMINATED_DIM = 255
 function SchurStructure(
     c_dims::AbstractVector{<:Integer},
     p_dims::AbstractVector{<:Integer},
-    observations::AbstractVector{<:AbstractVector{<:Integer}};
+    couplings::AbstractVector{<:AbstractVector{<:Integer}};
     nchunks::Int=1
 )
     ncblocks = length(c_dims)
     npblocks = length(p_dims)
-    length(observations) == npblocks || throw(DimensionMismatch("Number of landmark observations ($(length(observations))) must match the number of eliminated blocks ($npblocks)"))
+    length(couplings) == npblocks || throw(DimensionMismatch("Number of coupling lists ($(length(couplings))) must match the number of eliminated blocks ($npblocks)"))
     nchunks >= 1 || throw(ArgumentError("nchunks must be at least 1, got $nchunks"))
 
     # Validate inputs here, rather than failing (or silently going wrong) deep inside the reduction
@@ -121,11 +121,11 @@ function SchurStructure(
     for (l, d) in enumerate(p_dims)
         1 <= d <= MAX_ELIMINATED_DIM || throw(ArgumentError("Eliminated block $l has dimension $d; supported dimensions are 1 to $MAX_ELIMINATED_DIM"))
     end
-    seen = zeros(Int, ncblocks)   # seen[c] == l once landmark l has been observed by retained block c
-    for (l, obs) in enumerate(observations)
+    seen = zeros(Int, ncblocks)   # seen[c] == l once eliminated block l has been coupled to retained block c
+    for (l, obs) in enumerate(couplings)
         for c in obs
             1 <= c <= ncblocks || throw(ArgumentError("Eliminated block $l references retained block $c, but there are only $ncblocks retained blocks"))
-            seen[c] == l && throw(ArgumentError("Retained block $c is listed more than once in the observations of eliminated block $l"))
+            seen[c] == l && throw(ArgumentError("Retained block $c is listed more than once in the couplings of eliminated block $l"))
             seen[c] = l
         end
     end
@@ -162,7 +162,7 @@ function SchurStructure(
     cpptr = Vector{Int}(undef, npblocks + 1)
     cpptr[1] = 1
     for l in 1:npblocks
-        cpptr[l+1] = cpptr[l] + length(observations[l])
+        cpptr[l+1] = cpptr[l] + length(couplings[l])
     end
     num_couplings = cpptr[end] - 1
 
@@ -172,8 +172,8 @@ function SchurStructure(
     idx = 1
     for l in 1:npblocks
         dp = Int(p_dims[l])
-        sorted_cams = sort(observations[l])
-        for c in sorted_cams
+        sorted_retained = sort(couplings[l])
+        for c in sorted_retained
             cpblock[idx] = c
             cpoffsets[idx] = curr_e_off
             curr_e_off += Int(c_dims[c]) * dp
@@ -181,10 +181,10 @@ function SchurStructure(
         end
     end
 
-    max_obs_dim = 0
+    max_coupled_dim = 0
     for l in 1:npblocks
-        obs_dim = sum(Int(c_dims[c]) for c in observations[l]; init=0)
-        max_obs_dim = max(max_obs_dim, obs_dim)
+        obs_dim = sum(Int(c_dims[c]) for c in couplings[l]; init=0)
+        max_coupled_dim = max(max_coupled_dim, obs_dim)
     end
 
     p_groups = UnitRange{Int}[]
@@ -222,7 +222,7 @@ function SchurStructure(
         nc, ncblocks, npblocks,
         c_dims_u8, p_dims_u8, boffsets_c, boffsets_p,
         ppoffsets, cpptr, cpblock, cpoffsets,
-        max_obs_dim, p_groups, p_sizes, chunks
+        max_coupled_dim, p_groups, p_sizes, chunks
     )
 end
 
@@ -242,17 +242,17 @@ struct SchurReductionWorkspace{T}
     W_data::Vector{T}                     # W_cl = C_l^-1 E_cl' for every coupling, same layout as E_data
     C_inv_data::Vector{T}                 # Cached C_l(lambda)^-1: length sum_l d_l^2
     z_data::Vector{T}                     # Cached z_l = C_inv * g_p,l: length sum_l d_l
-    cam_ptr::Vector{Int}                  # Retained-block-major CSR pointer into cam_entry
-    cam_entry::Vector{Int}                # Coupling entries (indices into cpblock) of each retained block, ascending
-    entry_landmark::Vector{Int}           # Eliminated block of each coupling entry
+    retained_ptr::Vector{Int}                  # Retained-block-major CSR pointer into retained_entry
+    retained_entry::Vector{Int}                # Coupling entries (indices into cpblock) of each retained block, ascending
+    entry_eliminated::Vector{Int}           # Eliminated block of each coupling entry
     col_chunks::Vector{UnitRange{Int}}    # Disjoint ranges of retained blocks, one per phase-2 chunk
-    failed_landmark::Base.Threads.Atomic{Int}
+    failed_block::Base.Threads.Atomic{Int}
 end
 
 "Split the retained blocks `1:n` into `K` contiguous ranges of roughly equal work (couplings plus the diagonal)."
-function partition_columns(cam_ptr::Vector{Int}, K::Int)
-    n = length(cam_ptr) - 1
-    total = cam_ptr[end] - cam_ptr[1] + n
+function partition_columns(retained_ptr::Vector{Int}, K::Int)
+    n = length(retained_ptr) - 1
+    total = retained_ptr[end] - retained_ptr[1] + n
     ranges = UnitRange{Int}[]
     start = 1
     for k in 1:K
@@ -261,7 +261,7 @@ function partition_columns(cam_ptr::Vector{Int}, K::Int)
             stop = n
         else
             target = (total * k) / K
-            while stop < n && (cam_ptr[stop + 2] - cam_ptr[1] + (stop + 1)) <= target
+            while stop < n && (retained_ptr[stop + 2] - retained_ptr[1] + (stop + 1)) <= target
                 stop += 1
             end
         end
@@ -294,24 +294,24 @@ function SchurReductionWorkspace{T}(
     W_data = Vector{T}(undef, total_e)
 
     # Retained-block-major index of the couplings
-    entry_landmark = Vector{Int}(undef, ncoup)
+    entry_eliminated = Vector{Int}(undef, ncoup)
     counts = zeros(Int, structure.ncblocks + 1)
     for l in 1:structure.npblocks, e in structure.cpptr[l]:(structure.cpptr[l + 1] - 1)
-        entry_landmark[e] = l
+        entry_eliminated[e] = l
         counts[structure.cpblock[e] + 1] += 1
     end
-    cam_ptr = cumsum(vcat(1, counts[2:end]))
-    cam_entry = Vector{Int}(undef, ncoup)
-    fill_pos = copy(cam_ptr)
-    for e in 1:ncoup   # ascending e means ascending landmark within each retained block
+    retained_ptr = cumsum(vcat(1, counts[2:end]))
+    retained_entry = Vector{Int}(undef, ncoup)
+    fill_pos = copy(retained_ptr)
+    for e in 1:ncoup   # ascending e means ascending eliminated block within each retained block
         c = structure.cpblock[e]
-        cam_entry[fill_pos[c]] = e
+        retained_entry[fill_pos[c]] = e
         fill_pos[c] += 1
     end
 
     return SchurReductionWorkspace{T}(
         W_scratch, W_data, C_inv_data, z_data,
-        cam_ptr, cam_entry, entry_landmark, partition_columns(cam_ptr, max(nchunks, 1)),
+        retained_ptr, retained_entry, entry_eliminated, partition_columns(retained_ptr, max(nchunks, 1)),
         Base.Threads.Atomic{Int}(0)
     )
 end
@@ -324,7 +324,7 @@ the scratch (`W_data`, `W_scratch`) is only live within one solve and is shared.
 """
 trial_workspace(ws::SchurReductionWorkspace{T}) where T = SchurReductionWorkspace{T}(
     ws.W_scratch, ws.W_data, similar(ws.C_inv_data), similar(ws.z_data),
-    ws.cam_ptr, ws.cam_entry, ws.entry_landmark, ws.col_chunks, Base.Threads.Atomic{Int}(0)
+    ws.retained_ptr, ws.retained_entry, ws.entry_eliminated, ws.col_chunks, Base.Threads.Atomic{Int}(0)
 )
 
 const SchurBlockStructure = SchurStructure
@@ -332,8 +332,8 @@ const SchurBlockStructure = SchurStructure
 """
     SchurBlockMatrix{T, BType}
 
-Block Hessian structure partitioned into retained camera block `B`,
-eliminable landmark blocks `C_data`, coupling blocks `E_data`,
+Block Hessian structure partitioned into retained block `B`,
+eliminable blocks `C_data`, coupling blocks `E_data`,
 and bipartite indexing `structure::SchurStructure`.
 """
 struct SchurBlockMatrix{T, BType}
@@ -436,17 +436,17 @@ end
 end
 
 """
-    factor_landmark!(C_inv_data, z_data, W_data, scratch, structure, C_data, E_data, b_p, scaling_p, lambda, l, s_dp)
+    factor_eliminated!(C_inv_data, z_data, W_data, scratch, structure, C_data, E_data, b_p, scaling_p, lambda, l, s_dp)
 
 Phase 1 for eliminated block `l`: invert `C_l + lambda * diag(scaling)`, cache `C_inv` and
-`z_l = C_inv * g_p,l`, and store `W_cl = C_inv * E_cl'` for every observing retained block in `W_data`.
+`z_l = C_inv * g_p,l`, and store `W_cl = C_inv * E_cl'` for every coupled retained block in `W_data`.
 Returns `false` if the damped block is numerically singular or not positive definite.
 
 `s_dp` is a `StaticInt` for blocks of up to `D_STATIC` dimensions (register arithmetic), otherwise the
 `Int` dimension, which uses a LAPACK Cholesky on the `scratch` matrix (O(d^3) per eliminated block plus
 O(d^2) per coupling row; no allocation).
 """
-@inline function factor_landmark!(
+@inline function factor_eliminated!(
     C_inv_data::Vector{T}, z_data::Vector{T}, W_data::Vector{T}, ::Matrix{T},
     structure::SchurStructure, C_data::Vector{T}, E_data::Vector{T},
     b_p::AbstractVector{T}, scaling_p::AbstractVector{T}, lambda::T, l::Int, s_dp::StaticInt{Dp}
@@ -479,7 +479,7 @@ O(d^2) per coupling row; no allocation).
     return true
 end
 
-@inline function factor_landmark!(
+@inline function factor_eliminated!(
     C_inv_data::Vector{T}, z_data::Vector{T}, W_data::Vector{T}, scratch::Matrix{T},
     structure::SchurStructure, C_data::Vector{T}, E_data::Vector{T},
     b_p::AbstractVector{T}, scaling_p::AbstractVector{T}, lambda::T, l::Int, dp::Int
@@ -537,26 +537,26 @@ end
 end
 
 """
-    factor_landmarks_group!(ws..., p_chunk, s_dp) -> Bool
+    factor_eliminated_group!(ws..., p_chunk, s_dp) -> Bool
 
 Phase 1 over a chunk of eliminated blocks of uniform dimension. On failure the lowest failing
-eliminated block index is recorded in `failed_landmark`.
+eliminated block index is recorded in `failed_block`.
 """
-function factor_landmarks_group!(
+function factor_eliminated_group!(
     C_inv_data::Vector{T}, z_data::Vector{T}, W_data::Vector{T}, scratch::Matrix{T},
-    failed_landmark::Base.Threads.Atomic{Int},
+    failed_block::Base.Threads.Atomic{Int},
     structure::SchurStructure, C_data::Vector{T}, E_data::Vector{T},
     b_p::AbstractVector{T}, scaling_p::AbstractVector{T}, lambda::T,
     p_chunk::UnitRange{Int}, s_dp::Union{StaticInt, Int}
 ) where T
     @inbounds for l in p_chunk
-        failed_landmark[] != 0 && return false
-        if !factor_landmark!(C_inv_data, z_data, W_data, scratch, structure, C_data, E_data, b_p, scaling_p, lambda, l, s_dp)
-            old = failed_landmark[]
+        failed_block[] != 0 && return false
+        if !factor_eliminated!(C_inv_data, z_data, W_data, scratch, structure, C_data, E_data, b_p, scaling_p, lambda, l, s_dp)
+            old = failed_block[]
             while (old == 0 || l < old)
-                old_val = Threads.atomic_cas!(failed_landmark, old, l)
+                old_val = Threads.atomic_cas!(failed_block, old, l)
                 old_val == old && break
-                old = failed_landmark[]
+                old = failed_block[]
             end
             return false
         end
@@ -565,7 +565,7 @@ function factor_landmarks_group!(
 end
 
 # Contribution of coupling entry e2 (eliminated block l, retained block c2) to g_S and to the column
-# block c2 of S: g_S[c2] -= E_l,c2 z_l and S[c1, c2] -= W_l,c1' E_l,c2 for every c1 <= c2 observing l.
+# block c2 of S: g_S[c2] -= E_l,c2 z_l and S[c1, c2] -= W_l,c1' E_l,c2 for every c1 <= c2 coupled to l.
 @inline function accumulate_entry_dense!(
     S::Matrix{T}, g_S::Vector{T}, structure::SchurStructure, E_data::Vector{T}, W_data::Vector{T}, z_data::Vector{T},
     e2::Int, l::Int, s_dp::Union{StaticInt, Int}
@@ -596,19 +596,19 @@ end
 end
 
 """
-    accumulate_dense_columns!(S, g_S, structure, E_data, W_data, z_data, cam_ptr, cam_entry, entry_landmark, c_range)
+    accumulate_dense_columns!(S, g_S, structure, E_data, W_data, z_data, retained_ptr, retained_entry, entry_eliminated, c_range)
 
 Phase 2 for the retained blocks in `c_range`: write all contributions to their columns of the dense upper
 triangle of `S` and to `g_S` directly. Chunks with disjoint `c_range` never write the same entry.
 """
 function accumulate_dense_columns!(
     S::Matrix{T}, g_S::Vector{T}, structure::SchurStructure, E_data::Vector{T}, W_data::Vector{T}, z_data::Vector{T},
-    cam_ptr::Vector{Int}, cam_entry::Vector{Int}, entry_landmark::Vector{Int}, c_range::UnitRange{Int}
+    retained_ptr::Vector{Int}, retained_entry::Vector{Int}, entry_eliminated::Vector{Int}, c_range::UnitRange{Int}
 ) where T
     @inbounds for c2 in c_range
-        for k in cam_ptr[c2]:(cam_ptr[c2 + 1] - 1)
-            e2 = cam_entry[k]
-            l = entry_landmark[e2]
+        for k in retained_ptr[c2]:(retained_ptr[c2 + 1] - 1)
+            e2 = retained_entry[k]
+            l = entry_eliminated[e2]
             dispatch_dim(Int(structure.p_dims[l])) do s_dp
                 accumulate_entry_dense!(S, g_S, structure, E_data, W_data, z_data, e2, l, s_dp)
             end
@@ -658,21 +658,21 @@ end
 end
 
 """
-    accumulate_sparse_columns!(nzval, g_S, structure, E_data, W_data, z_data, cam_ptr, cam_entry, entry_landmark,
+    accumulate_sparse_columns!(nzval, g_S, structure, E_data, W_data, z_data, retained_ptr, retained_entry, entry_eliminated,
                                S_colptr, block_colptr, block_rowval, block_row_offsets, col_heights, c_range)
 
 Sparse counterpart of [`accumulate_dense_columns!`](@ref), writing into `S.nzval`.
 """
 function accumulate_sparse_columns!(
     nzval::Vector{T}, g_S::Vector{T}, structure::SchurStructure, E_data::Vector{T}, W_data::Vector{T}, z_data::Vector{T},
-    cam_ptr::Vector{Int}, cam_entry::Vector{Int}, entry_landmark::Vector{Int},
+    retained_ptr::Vector{Int}, retained_entry::Vector{Int}, entry_eliminated::Vector{Int},
     S_colptr::Vector{Ti}, block_colptr::Vector{Ti}, block_rowval::Vector{Ti},
     block_row_offsets::Vector{Int}, col_heights::Vector{Int}, c_range::UnitRange{Int}
 ) where {T, Ti}
     @inbounds for c2 in c_range
-        for k in cam_ptr[c2]:(cam_ptr[c2 + 1] - 1)
-            e2 = cam_entry[k]
-            l = entry_landmark[e2]
+        for k in retained_ptr[c2]:(retained_ptr[c2 + 1] - 1)
+            e2 = retained_entry[k]
+            l = entry_eliminated[e2]
             dispatch_dim(Int(structure.p_dims[l])) do s_dp
                 accumulate_entry_sparse!(nzval, g_S, structure, E_data, W_data, z_data, S_colptr, block_colptr, block_rowval,
                                          block_row_offsets, col_heights, e2, l, s_dp)
@@ -695,7 +695,7 @@ function reset_schur_dense!(
     @inbounds for (i, sc) in enumerate(scaling_c)
         S[i, i] += lambda * sc
     end
-    ws.failed_landmark[] = 0
+    ws.failed_block[] = 0
     return nothing
 end
 
@@ -719,12 +719,12 @@ function reset_schur_sparse!(
     @inbounds for (i, idx) in enumerate(diag_inds)
         nzval[idx] += lambda * scaling_c[i]
     end
-    ws.failed_landmark[] = 0
+    ws.failed_block[] = 0
     return nothing
 end
 
 # Phase 1 for all groups of eliminated blocks; false if any block failed
-function factor_all_landmarks!(
+function factor_all_eliminated!(
     structure::SchurStructure, C_data::Vector{T}, E_data::Vector{T}, b_p::AbstractVector{T},
     scaling_p::AbstractVector{T}, lambda::T, ws::SchurReductionWorkspace{T}
 ) where T
@@ -733,11 +733,11 @@ function factor_all_landmarks!(
         threaded = use_threads(length(chunks), length(structure.cpblock))
         dispatch_dim(structure.p_sizes[g_idx]) do s_dp
             foreach_index(length(chunks), threaded) do k
-                factor_landmarks_group!(ws.C_inv_data, ws.z_data, ws.W_data, ws.W_scratch[k], ws.failed_landmark,
+                factor_eliminated_group!(ws.C_inv_data, ws.z_data, ws.W_data, ws.W_scratch[k], ws.failed_block,
                                         structure, C_data, E_data, b_p, scaling_p, lambda, chunks[k], s_dp)
             end
         end
-        ws.failed_landmark[] != 0 && return false
+        ws.failed_block[] != 0 && return false
     end
     return true
 end
@@ -752,11 +752,11 @@ function reduce_schur_dense!(
     scaling_p::AbstractVector{T}, lambda::T, structure::SchurStructure,
     C_data::Vector{T}, E_data::Vector{T}, ws::SchurReductionWorkspace{T}
 ) where T
-    factor_all_landmarks!(structure, C_data, E_data, b_p, scaling_p, lambda, ws) || return false
+    factor_all_eliminated!(structure, C_data, E_data, b_p, scaling_p, lambda, ws) || return false
     copyto!(g_S, b_c)
     nk = length(ws.col_chunks)
     foreach_index(nk, use_threads(nk, length(structure.cpblock))) do k
-        accumulate_dense_columns!(S, g_S, structure, E_data, ws.W_data, ws.z_data, ws.cam_ptr, ws.cam_entry, ws.entry_landmark, ws.col_chunks[k])
+        accumulate_dense_columns!(S, g_S, structure, E_data, ws.W_data, ws.z_data, ws.retained_ptr, ws.retained_entry, ws.entry_eliminated, ws.col_chunks[k])
     end
     return true
 end
@@ -775,11 +775,11 @@ function reduce_schur_sparse!(
     block_row_offsets::Vector{Int}, col_heights::Vector{Int},
     ws::SchurReductionWorkspace{T}
 ) where {T, Ti}
-    factor_all_landmarks!(structure, C_data, E_data, b_p, scaling_p, lambda, ws) || return false
+    factor_all_eliminated!(structure, C_data, E_data, b_p, scaling_p, lambda, ws) || return false
     copyto!(g_S, b_c)
     nk = length(ws.col_chunks)
     foreach_index(nk, use_threads(nk, length(structure.cpblock))) do k
-        accumulate_sparse_columns!(S.nzval, g_S, structure, E_data, ws.W_data, ws.z_data, ws.cam_ptr, ws.cam_entry, ws.entry_landmark,
+        accumulate_sparse_columns!(S.nzval, g_S, structure, E_data, ws.W_data, ws.z_data, ws.retained_ptr, ws.retained_entry, ws.entry_eliminated,
                                    S.colptr, block_colptr, block_rowval, block_row_offsets, col_heights, ws.col_chunks[k])
     end
     return true
@@ -828,7 +828,7 @@ function backsubstitute_group!(
     @inbounds for l in p_chunk
         p_off = boffsets_p[l]
 
-        # t = sum over observing retained blocks of E_cl' * x_c,c
+        # t = sum over the retained blocks coupled to l of E_cl' * x_c,c
         t = zero(SVector{Dp, T})
         for e in cpptr[l]:(cpptr[l + 1] - 1)
             c = cpblock[e]
@@ -911,17 +911,17 @@ function expand_block_perm(block_perm::AbstractVector{<:Integer}, block_sizes::A
 end
 
 """
-    sort_schur_blocks(is_eliminable::AbstractVector{Bool}, block_sizes::AbstractVector{<:Integer}, observations::AbstractVector{<:AbstractVector{<:Integer}}) -> Vector{Int}
+    sort_schur_blocks(is_eliminable::AbstractVector{Bool}, block_sizes::AbstractVector{<:Integer}, couplings::AbstractVector{<:AbstractVector{<:Integer}}) -> Vector{Int}
 
 Two-pass variable ordering:
 - Pass 1: Retained variables (role 0) ordered by dimension descending; eliminable variables (role 1) grouped by dimension descending.
-- Pass 2: Within each eliminable dimension group, sort landmarks by primary observing camera index c_min(l) = min_{c in obs(l)} c.
+- Pass 2: Within each eliminable dimension group, sort eliminable blocks by their first coupled retained block index c_min(l) = min_{c coupled to l} c.
 Returns a block permutation vector mapping old block indices to new positions.
 """
 function sort_schur_blocks(
     is_eliminable::AbstractVector{Bool},
     block_sizes::AbstractVector{<:Integer},
-    observations::AbstractVector{<:AbstractVector}
+    couplings::AbstractVector{<:AbstractVector}
 )
     nblocks = length(is_eliminable)
     @assert length(block_sizes) == nblocks "is_eliminable and block_sizes must have equal length"
@@ -935,8 +935,8 @@ function sort_schur_blocks(
     # Group by dimension descending, then within dimension by c_min
     sort!(p_indices, by = function(i)
         dp = Int(block_sizes[i])
-        obs = observations[i]
-        c_min = isempty(obs) ? typemax(Int) : minimum(obs)
+        coupled = couplings[i]
+        c_min = isempty(coupled) ? typemax(Int) : minimum(coupled)
         return (-dp, c_min)
     end)
 
@@ -944,19 +944,19 @@ function sort_schur_blocks(
 end
 
 """
-    build_schur_covisibility(structure::SchurStructure, [T=Float64]; extra_blocks=()) -> NamedTuple
+    build_schur_pattern(structure::SchurStructure, [T=Float64]; extra_blocks=()) -> NamedTuple
 
-Compute block-level and scalar-level co-visibility sparsity patterns for the reduced camera system S.
-Returns `(block_covis, block_colptr, block_rowval, block_row_offsets, col_heights, S_sparse, diag_inds)`;
+Compute block-level and scalar-level sparsity patterns of the reduced system S, where two retained blocks are linked if they are coupled to a common eliminated block.
+Returns `(block_pattern, block_colptr, block_rowval, block_row_offsets, col_heights, S_sparse, diag_inds)`;
 `S_sparse` is a zero-valued `SparseMatrixCSC{T}`.
 
 The pattern contains every pair of retained blocks that share an eliminated block, plus the diagonal.
-Retained-retained couplings that do not go through an eliminated block (e.g. odometry factors or loop
-closures between poses with no common landmark) have no such slot, so list them in `extra_blocks`, an
+Retained-retained couplings that do not go through an eliminated block (direct couplings between
+retained blocks that share no eliminated block) have no such slot, so list them in `extra_blocks`, an
 iterable of `(i, j)` retained block index pairs (in either order; `i == j` is allowed and ignored).
 Use [`retained_block_pairs`](@ref) to obtain them from the block pattern of `B`.
 """
-function build_schur_covisibility(structure::SchurStructure, ::Type{T}=Float64; extra_blocks=()) where T
+function build_schur_pattern(structure::SchurStructure, ::Type{T}=Float64; extra_blocks=()) where T
     ncblocks = structure.ncblocks
     npblocks = structure.npblocks
     c_dims = structure.c_dims
@@ -965,7 +965,7 @@ function build_schur_covisibility(structure::SchurStructure, ::Type{T}=Float64; 
     boffsets_c = structure.boffsets_c
     nc = structure.nc
 
-    # 1. Build camera block co-visibility graph (upper triangle). Collect (I, J) pairs and build the
+    # 1. Build the block pattern of the reduced system (upper triangle). Collect (I, J) pairs and build the
     # sparse matrix once: inserting entries one at a time into a SparseMatrixCSC is O(nnz^2).
     I_cov = Int[]
     J_cov = Int[]
@@ -989,11 +989,11 @@ function build_schur_covisibility(structure::SchurStructure, ::Type{T}=Float64; 
         push!(I_cov, c)
         push!(J_cov, c)
     end
-    block_covis = sparse(I_cov, J_cov, true, ncblocks, ncblocks, |)
+    block_pattern = sparse(I_cov, J_cov, true, ncblocks, ncblocks, |)
 
-    block_colptr = Vector{Int}(block_covis.colptr)
-    block_rowval = Vector{Int}(block_covis.rowval)
-    nnz_blocks = nnz(block_covis)
+    block_colptr = Vector{Int}(block_pattern.colptr)
+    block_rowval = Vector{Int}(block_pattern.rowval)
+    nnz_blocks = nnz(block_pattern)
 
     # 2. Compute scalar row offsets and column heights
     col_heights = zeros(Int, ncblocks)
@@ -1031,11 +1031,11 @@ function build_schur_covisibility(structure::SchurStructure, ::Type{T}=Float64; 
                 break
             end
         end
-        @assert diag_inds[j] != 0 "Missing diagonal entry for camera scalar $j"
+        @assert diag_inds[j] != 0 "Missing diagonal entry for retained scalar $j"
     end
 
     return (
-        block_covis = block_covis,
+        block_pattern = block_pattern,
         block_colptr = block_colptr,
         block_rowval = block_rowval,
         block_row_offsets = block_row_offsets,
@@ -1049,7 +1049,7 @@ end
     retained_block_pairs(B::SparseBlockLinearSystem) -> Vector{Tuple{Int, Int}}
 
 Off-diagonal stored blocks of `B` as `(row_block, col_block)` pairs. Pass them as `extra_blocks` to
-[`build_schur_covisibility`](@ref) so the reduced system has a slot for every coupling in `B`.
+[`build_schur_pattern`](@ref) so the reduced system has a slot for every coupling in `B`.
 """
 function retained_block_pairs(B::SparseBlockLinearSystem)
     cols, rows, _ = SparseArrays.findnz(B.indicestransposed)
@@ -1120,26 +1120,26 @@ function build_b_to_s_map(B_sys::SparseBlockLinearSystem, S_sparse::SparseMatrix
 end
 
 """
-    build_b_to_s_map(B_sys::SparseBlockLinearSystem, covis, boffsets_c::Vector{Int}) -> Vector{Int}
+    build_b_to_s_map(B_sys::SparseBlockLinearSystem, pattern, boffsets_c::Vector{Int}) -> Vector{Int}
 
-As above, but using the block-level pattern in `covis` (the result of [`build_schur_covisibility`](@ref)):
+As above, but using the block-level pattern in `pattern` (the result of [`build_schur_pattern`](@ref)):
 one block-level search per stored block, then the scalar position follows from `block_row_offsets` and
 `col_heights` with integer arithmetic.
 """
-function build_b_to_s_map(B_sys::SparseBlockLinearSystem, covis::NamedTuple, boffsets_c::Vector{Int})
-    S_colptr = covis.S_sparse.colptr
+function build_b_to_s_map(B_sys::SparseBlockLinearSystem, pattern::NamedTuple, boffsets_c::Vector{Int})
+    S_colptr = pattern.S_sparse.colptr
     b_to_s = zeros(Int, length(B_sys.data))
     for (c, r, data_start) in zip(SparseArrays.findnz(B_sys.indicestransposed)...)
         r >= c || continue   # only lower-triangle blocks are stored in B
         dr = Int(B_sys.rowblocksizes[r])
         dc = Int(B_sys.columnblocksizes[c])
         # Block (c, r) of the upper-triangle pattern: block column r, block row c
-        rng = covis.block_colptr[r]:(covis.block_colptr[r + 1] - 1)
-        k = searchsortedfirst(view(covis.block_rowval, rng), c)
-        (k <= length(rng) && covis.block_rowval[rng[k]] == c) || throw(AssertionError("Block ($c, $r) of B is not present in the pattern of S"))
-        row_offset = covis.block_row_offsets[rng[k]]
+        rng = pattern.block_colptr[r]:(pattern.block_colptr[r + 1] - 1)
+        k = searchsortedfirst(view(pattern.block_rowval, rng), c)
+        (k <= length(rng) && pattern.block_rowval[rng[k]] == c) || throw(AssertionError("Block ($c, $r) of B is not present in the pattern of S"))
+        row_offset = pattern.block_row_offsets[rng[k]]
         base = S_colptr[boffsets_c[r]] + row_offset
-        stride = covis.col_heights[r]
+        stride = pattern.col_heights[r]
         if r == c
             for col in 1:dc, row in 1:col
                 b_to_s[data_start + (col - 1)*dr + row - 1] = base + (col - 1) * stride + row - 1
@@ -1157,15 +1157,23 @@ end
     fast_bAb(H::SchurBlockMatrix, dx::AbstractVector) -> Real
 
 Compute quadratic form dx' * H * dx in O(N) operations without materializing the full Hessian.
+`dx` may have any element type; the result has the promoted type.
+
+The retained part (`B`) is walked block by block. The eliminated part (`C` and the couplings `E`) is where
+nearly all the work is, and is processed per group of eliminated blocks of uniform dimension with that
+dimension known statically (3.4x faster than per-block run-time sizes on a bundle-adjustment-like
+benchmark with 200 retained and 20000 eliminated blocks). Specialising the retained part by run of retained block sizes was measured too: it saved nothing
+measurable (that part takes ~0.01 ms) and cost 0.2-2 s of extra compilation, so it is not done.
 """
-function fast_bAb(H::SchurBlockMatrix{T}, dx::AbstractVector{T}) where T
+function fast_bAb(H::SchurBlockMatrix{T}, dx::AbstractVector) where T
+    R = promote_type(T, eltype(dx))
     structure = H.structure
     nc = structure.nc
     dx_c = view(dx, 1:nc)
     dx_p = view(dx, nc+1:length(dx))
     
     # 1. dx_c' * B * dx_c
-    total = zero(T)
+    total = zero(R)
     if H.B isa Matrix{T}
         B = H.B
         @inbounds for j in 1:nc
@@ -1213,51 +1221,67 @@ function fast_bAb(H::SchurBlockMatrix{T}, dx::AbstractVector{T}) where T
         end
     end
 
-    # 2. 2 * dx_c' * E * dx_p
-    cpptr = structure.cpptr
-    cpblock = structure.cpblock
-    cpoffsets = structure.cpoffsets
-    boffsets_c = structure.boffsets_c
-    boffsets_p = structure.boffsets_p
-    p_dims = structure.p_dims
-    c_dims = structure.c_dims
-
-    for l in 1:structure.npblocks
-        dp = Int(p_dims[l])
-        p_off = boffsets_p[l]
-        e_start = cpptr[l]
-        e_end = cpptr[l + 1] - 1
-        for e in e_start:e_end
-            c = cpblock[e]
-            dc = Int(c_dims[c])
-            co = boffsets_c[c]
-            eo = cpoffsets[e]
-            for col in 1:dp
-                dx_p_val = dx_p[p_off + col - 1]
-                for row in 1:dc
-                    e_val = H.E_data[eo + (row - 1)*dp + col - 1]
-                    dx_c_val = dx_c[co + row - 1]
-                    total += 2 * e_val * dx_c_val * dx_p_val
-                end
-            end
-        end
-    end
-
-    # 3. dx_p' * C * dx_p
-    ppoffsets = structure.ppoffsets
-    for l in 1:structure.npblocks
-        dp = Int(p_dims[l])
-        p_off = boffsets_p[l]
-        po = ppoffsets[l]
-        for col in 1:dp
-            dx_p_col = dx_p[p_off + col - 1]
-            for row in 1:dp
-                c_val = H.C_data[po + (col - 1)*dp + row - 1]
-                dx_p_row = dx_p[p_off + row - 1]
-                total += c_val * dx_p_col * dx_p_row
-            end
+    # 2. 2 * dx_c' * E * dx_p and 3. dx_p' * C * dx_p, per group of eliminated blocks of uniform dimension.
+    # (`z`, a typed zero, is captured by the closure rather than the type `R`: Julia 1.10 widens a captured
+    # type to `DataType`, which made the result type inferred as `Any` and boxed it on every call.)
+    z = zero(R)
+    for (g_idx, p_range) in enumerate(structure.p_groups)
+        total += dispatch_dim(structure.p_sizes[g_idx]) do s_dp
+            fast_bAb_eliminated(H, dx_c, dx_p, p_range, s_dp, z)
         end
     end
 
     return total
+end
+
+# E and C contributions of the eliminated blocks in `p_range`, all of dimension `s_dp` (static up to D_STATIC)
+function fast_bAb_eliminated(H::SchurBlockMatrix{T}, dx_c, dx_p, p_range::UnitRange{Int}, s_dp::StaticInt, z::R) where {T, R}
+    structure = H.structure
+    D = dimval(s_dp)
+    part = z
+    @inbounds for l in p_range
+        p_off = structure.boffsets_p[l]
+        xp = make_svec(dx_p, p_off, s_dp)
+        part += dot(xp, make_smat(H.C_data, structure.ppoffsets[l], s_dp) * xp)
+        for e in structure.cpptr[l]:(structure.cpptr[l + 1] - 1)
+            c = structure.cpblock[e]
+            dc = Int(structure.c_dims[c])
+            co = structure.boffsets_c[c]
+            eo = structure.cpoffsets[e]
+            for r in 1:dc
+                part += 2 * dx_c[co + r - 1] * dot(make_svec(H.E_data, eo + (r - 1) * D, s_dp), xp)
+            end
+        end
+    end
+    return part
+end
+
+# Blocks above D_STATIC dimensions: the same computation with run-time loops
+function fast_bAb_eliminated(H::SchurBlockMatrix{T}, dx_c, dx_p, p_range::UnitRange{Int}, dp::Int, z::R) where {T, R}
+    structure = H.structure
+    part = z
+    @inbounds for l in p_range
+        p_off = structure.boffsets_p[l]
+        po = structure.ppoffsets[l]
+        for col in 1:dp
+            xcol = dx_p[p_off + col - 1]
+            for row in 1:dp
+                part += H.C_data[po + (col - 1) * dp + row - 1] * xcol * dx_p[p_off + row - 1]
+            end
+        end
+        for e in structure.cpptr[l]:(structure.cpptr[l + 1] - 1)
+            c = structure.cpblock[e]
+            dc = Int(structure.c_dims[c])
+            co = structure.boffsets_c[c]
+            eo = structure.cpoffsets[e]
+            for r in 1:dc
+                acc = zero(R)
+                for i in 1:dp
+                    acc += H.E_data[eo + (r - 1) * dp + i - 1] * dx_p[p_off + i - 1]
+                end
+                part += 2 * dx_c[co + r - 1] * acc
+            end
+        end
+    end
+    return part
 end

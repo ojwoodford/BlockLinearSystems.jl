@@ -344,7 +344,7 @@ Subtypes `AbstractVector{Int}` (storing the sizes compactly, normally as `UInt8`
 
 # Example
 ```julia
-# 100 camera poses (dim 6) followed by 50,000 landmarks (dim 3):
+# 100 blocks of dimension 6 followed by 50,000 blocks of dimension 3:
 rle = BlockRLE([100, 50_000], [6, 3])
 length(rle)            # 50100
 matrixdimension(rle)   # 150600
