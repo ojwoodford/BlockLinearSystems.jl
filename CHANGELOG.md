@@ -34,7 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Static Dimensions & View Helpers**:
   - Supported `Val(R), Val(C)` in addition to `StaticInt(R), StaticInt(C)` in `block(sys, i, j, Val(R), Val(C))` for zero-allocation `SizedMatrix` and `HybridArray` views.
 - **Accessors**:
-  - Added exported accessors: `blocksizes(sys, [dim])`, `nblocks(sys, [dim])`, `blockdata(sys)`, `blockrange(sys, dim, idx)`, and `eachstoredblock(sys)` iterator.
+  - Added exported accessors: `blocksizes(sys, [dim])`, `nblocks(sys, [dim])`, `blockdata(sys)`, and `eachstoredblock(sys)` iterator. (Earlier versions of this entry listed a `blockrange(sys, dim, idx)` accessor that never existed; run ranges are available as `runblockrange(rle, k)`.)
 - **Principal Submatrix Extraction**:
   - `symmetrifyfull!(mat, bsm, blocks)` supports both integer vectors and boolean masks (`BitVector`, `AbstractVector{Bool}`) for Schur complement systems.
 - **Benchmarks & Documentation**:
