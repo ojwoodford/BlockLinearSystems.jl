@@ -16,8 +16,7 @@ struct DenseBlockLinearSystem{T, M<:AbstractMatrix{T}}
     columnblocksizes::BlockRLE{UInt8, Int}
 
     function DenseBlockLinearSystem{T, M}(data::M, rowblocksizes::BlockRLE{UInt8, Int}, colblocksizes::BlockRLE{UInt8, Int}=rowblocksizes) where {T, M<:AbstractMatrix{T}}
-        all(i -> 0 < i <= 255, rowblocksizes) || throw(ArgumentError("Row block dimensions must be between 1 and 255"))
-        all(i -> 0 < i <= 255, colblocksizes) || throw(ArgumentError("Column block dimensions must be between 1 and 255"))
+        # Block sizes are already validated (1-255) by the BlockRLE constructor
         r_offsets = computestartindices(rowblocksizes)
         push!(r_offsets, r_offsets[end] + Int(rowblocksizes[end]))
         c_offsets = rowblocksizes === colblocksizes ? r_offsets : begin

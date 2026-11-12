@@ -21,8 +21,7 @@ struct SparseBlockLinearSystem{T}
     n::Int                                                      # Number of columns of the represented matrix
 
     function SparseBlockLinearSystem{T}(nnzvals::Integer, indicestransposed::SparseArrays.SparseMatrixCSC{Int, Int}, rowblocksizes::BlockRLE{UInt8, Int}, colblocksizes::BlockRLE{UInt8, Int}=rowblocksizes) where T
-        all(i -> 0 < i <= 255, rowblocksizes) || throw(ArgumentError("Row block dimensions must be between 1 and 255"))
-        all(i -> 0 < i <= 255, colblocksizes) || throw(ArgumentError("Column block dimensions must be between 1 and 255"))
+        # Block sizes are already validated (1-255) by the BlockRLE constructor
         sumrbs = Int(sum(rowblocksizes))
         sumcbs = rowblocksizes === colblocksizes ? sumrbs : Int(sum(colblocksizes))
         size(indicestransposed) == (length(colblocksizes), length(rowblocksizes)) || throw(DimensionMismatch("Size of indicestransposed must be ($(length(colblocksizes)), $(length(rowblocksizes))), got $(size(indicestransposed))"))
