@@ -1036,16 +1036,33 @@ function fast_bAb(H::SchurBlockMatrix{T}, dx::AbstractVector{T}) where T
             total += dx_c[j] * val
         end
     elseif H.B isa SparseBlockLinearSystem{T}
+        # Walk the stored block pattern directly (column i of indicestransposed lists the stored
+        # column-blocks j of block row i); each block is column-major at data[ptr:ptr+dr*dc-1].
         B_sys = H.B
         boffsets = structure.boffsets_c
-        for (i, j, blk) in eachstoredblock(B_sys)
+        data = B_sys.data
+        colptr = B_sys.indicestransposed.colptr
+        rowval = B_sys.indicestransposed.rowval
+        nzval = B_sys.indicestransposed.nzval
+        @inbounds for i in 1:length(B_sys.rowblocksizes)
             r_start = boffsets[i]
-            c_start = boffsets[j]
             dr = B_sys.rowblocksizes[i]
-            dc = B_sys.columnblocksizes[j]
-            for c in 1:dc, r in 1:dr
-                val = blk[r, c] * dx_c[c_start + c - 1] * dx_c[r_start + r - 1]
-                total += (i == j ? val : 2 * val)
+            for k in colptr[i]:(colptr[i + 1] - 1)
+                j = rowval[k]
+                ptr = nzval[k]
+                c_start = boffsets[j]
+                dc = B_sys.columnblocksizes[j]
+                blk_total = zero(T)
+                for c in 1:dc
+                    dxc = dx_c[c_start + c - 1]
+                    col_ptr = ptr + (c - 1) * dr - 1
+                    col_total = zero(T)
+                    for r in 1:dr
+                        col_total += data[col_ptr + r] * dx_c[r_start + r - 1]
+                    end
+                    blk_total += col_total * dxc
+                end
+                total += (i == j ? blk_total : 2 * blk_total)
             end
         end
     end

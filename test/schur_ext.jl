@@ -301,3 +301,18 @@ end
         end
     end
 end
+
+@testset "fast_bAb equals the full quadratic form (B6)" begin
+    for p in (standard_problem(), coupled_groups_problem())
+        n = length(p.b)
+        dx = randn(Random.Xoshiro(5), n)
+        expected = dot(dx, p.H * dx)
+        for kind in (:dense, :sparse)
+            H = kind === :dense ? dense_schur_matrix(p) : sparse_schur_matrix(p)
+            @test BlockLinearSystems.fast_bAb(H, dx) ≈ expected rtol = 1e-12
+            @test SecondOrderOptimization.fast_bAb(H, dx) ≈ expected rtol = 1e-12
+            BlockLinearSystems.fast_bAb(H, dx)
+            kind === :sparse && @test (@allocated BlockLinearSystems.fast_bAb(H, dx)) == 0
+        end
+    end
+end
