@@ -81,6 +81,9 @@ struct SchurStructure
     chunks::Vector{Vector{UnitRange{Int}}} # chunks[group_idx][chunk_id]
 end
 
+# Largest supported dimension of an eliminated block
+const MAX_ELIMINATED_DIM = 3
+
 function SchurStructure(
     c_dims::AbstractVector{<:Integer},
     p_dims::AbstractVector{<:Integer},
@@ -89,7 +92,24 @@ function SchurStructure(
 )
     ncblocks = length(c_dims)
     npblocks = length(p_dims)
-    @assert length(observations) == npblocks "Number of landmark observations must match npblocks"
+    length(observations) == npblocks || throw(DimensionMismatch("Number of landmark observations ($(length(observations))) must match the number of eliminated blocks ($npblocks)"))
+    nchunks >= 1 || throw(ArgumentError("nchunks must be at least 1, got $nchunks"))
+
+    # Validate inputs here, rather than failing (or silently going wrong) deep inside the reduction
+    for (i, d) in enumerate(c_dims)
+        1 <= d <= 255 || throw(ArgumentError("Retained block $i has dimension $d; dimensions must be between 1 and 255"))
+    end
+    for (l, d) in enumerate(p_dims)
+        1 <= d <= MAX_ELIMINATED_DIM || throw(ArgumentError("Eliminated block $l has dimension $d; supported dimensions are 1 to $MAX_ELIMINATED_DIM"))
+    end
+    seen = zeros(Int, ncblocks)   # seen[c] == l once landmark l has been observed by retained block c
+    for (l, obs) in enumerate(observations)
+        for c in obs
+            1 <= c <= ncblocks || throw(ArgumentError("Eliminated block $l references retained block $c, but there are only $ncblocks retained blocks"))
+            seen[c] == l && throw(ArgumentError("Retained block $c is listed more than once in the observations of eliminated block $l"))
+            seen[c] = l
+        end
+    end
 
     c_dims_u8 = UInt8.(c_dims)
     p_dims_u8 = UInt8.(p_dims)

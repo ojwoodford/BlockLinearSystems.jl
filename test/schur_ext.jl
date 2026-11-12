@@ -396,3 +396,19 @@ end
         @test norm(ls.x - x_ref) <= 1e-10 * norm(x_ref)
     end
 end
+
+@testset "SchurStructure validates its inputs (B13)" begin
+    ok = SchurStructure([6, 6], [3, 3], [[1, 2], [2]])
+    @test ok.npblocks == 2
+    @test_throws DimensionMismatch SchurStructure([6, 6], [3, 3], [[1, 2]])
+    @test_throws ArgumentError SchurStructure([6, 6], [3, 4], [[1, 2], [2]])      # eliminated block too large
+    @test_throws ArgumentError SchurStructure([6, 6], [3, 0], [[1, 2], [2]])      # empty eliminated block
+    @test_throws ArgumentError SchurStructure([6, 0], [3, 3], [[1, 2], [2]])      # empty retained block
+    @test_throws ArgumentError SchurStructure([6, 300], [3, 3], [[1, 2], [2]])    # retained block over 255
+    @test_throws ArgumentError SchurStructure([6, 6], [3, 3], [[1, 2], [3]])      # retained block out of range
+    @test_throws ArgumentError SchurStructure([6, 6], [3, 3], [[1, 0], [2]])
+    @test_throws ArgumentError SchurStructure([6, 6], [3, 3], [[1, 2, 1], [2]])   # duplicate observation
+    @test_throws ArgumentError SchurStructure([6, 6], [3, 3], [[1, 2], [2]]; nchunks=0)
+    # The same retained block may of course observe different landmarks
+    @test SchurStructure([6, 6], [3, 3], [[1], [1]]).npblocks == 2
+end
