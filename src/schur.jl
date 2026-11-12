@@ -4,11 +4,11 @@ using Static, StaticArrays, SparseArrays, LinearAlgebra
     inv_sym_block(H::SMatrix{P, P, T}, lambda::T, scale::SVector{P, T}) where {P, T}
 
 Invert a symmetric positive semi-definite block `H` with diagonal Levenberg-Marquardt damping
-`H + lambda * diag(scale)^2` in registers.
+`H + lambda * diag(scale)` (`scale` is the damping diagonal itself, e.g. `|diag(H)|` for Marquardt scaling) in registers.
 Returns `(invH, success)` where `success` is false if the block is numerically rank-deficient.
 """
 @inline function inv_sym_block(H::SMatrix{1, 1, T, 1}, lambda::T, scale::SVector{1, T}) where T
-    h11 = H[1, 1] + lambda * scale[1]^2
+    h11 = H[1, 1] + lambda * scale[1]
     if h11 <= eps(T) * abs(H[1, 1]) || !isfinite(h11)
         return (invH = zeros(SMatrix{1, 1, T, 1}), success = false)
     end
@@ -16,8 +16,8 @@ Returns `(invH, success)` where `success` is false if the block is numerically r
 end
 
 @inline function inv_sym_block(H::SMatrix{2, 2, T, 4}, lambda::T, scale::SVector{2, T}) where T
-    H11 = H[1, 1] + lambda * scale[1]^2
-    H22 = H[2, 2] + lambda * scale[2]^2
+    H11 = H[1, 1] + lambda * scale[1]
+    H22 = H[2, 2] + lambda * scale[2]
     H12 = H[1, 2]
 
     det = H11 * H22 - H12 * H12
@@ -30,9 +30,9 @@ end
 end
 
 @inline function inv_sym_block(H::SMatrix{3, 3, T, 9}, lambda::T, scale::SVector{3, T}) where T
-    H11 = H[1, 1] + lambda * scale[1]^2
-    H22 = H[2, 2] + lambda * scale[2]^2
-    H33 = H[3, 3] + lambda * scale[3]^2
+    H11 = H[1, 1] + lambda * scale[1]
+    H22 = H[2, 2] + lambda * scale[2]
+    H33 = H[3, 3] + lambda * scale[3]
     H12 = H[1, 2]; H13 = H[1, 3]; H23 = H[2, 3]
 
     c11 = H22 * H33 - H23 * H23
@@ -273,8 +273,6 @@ function copy_structure(H::SchurBlockMatrix{T}) where T
     B = H.B isa AbstractMatrix ? zeros(T, size(H.B)) : copy_structure(H.B)
     return SchurBlockMatrix(H.structure, B, zeros(T, length(H.C_data)), zeros(T, length(H.E_data)))
 end
-
-function update_marquardt_scaling! end
 
 @inline make_svec(arr::AbstractVector{T}, off::Int, ::StaticInt{1}) where T = SVector{1, T}(arr[off])
 @inline make_svec(arr::AbstractVector{T}, off::Int, ::StaticInt{2}) where T = SVector{2, T}(arr[off], arr[off+1])
@@ -542,7 +540,7 @@ end
 """
     reset_schur_dense!(S, B, scaling_c, lambda, ws)
 
-Reset dense reduced system S = B + lambda * diag(scaling_c)^2 and zero chunk accumulators.
+Reset dense reduced system S = B + lambda * diag(scaling_c) and zero chunk accumulators.
 """
 function reset_schur_dense!(
     S::Matrix{T}, B::Matrix{T}, scaling_c::AbstractVector{T},
@@ -550,7 +548,7 @@ function reset_schur_dense!(
 ) where T
     copyto!(S, B)
     @inbounds for (i, sc) in enumerate(scaling_c)
-        S[i, i] += lambda * sc^2
+        S[i, i] += lambda * sc
     end
     for k in eachindex(ws.W_scratch)
         fill!(ws.thread_g_S[k], zero(T))
@@ -563,7 +561,7 @@ end
 """
     reset_schur_sparse!(nzval, B_nzval, b_to_s_map, diag_inds, scaling_c, lambda, ws)
 
-Reset sparse reduced system S = B + lambda * diag(scaling_c)^2 and zero chunk accumulators.
+Reset sparse reduced system S = B + lambda * diag(scaling_c) and zero chunk accumulators.
 """
 function reset_schur_sparse!(
     nzval::Vector{T}, B_nzval::Vector{T}, b_to_s_map::Vector{Int},
@@ -578,7 +576,7 @@ function reset_schur_sparse!(
         end
     end
     @inbounds for (i, idx) in enumerate(diag_inds)
-        nzval[idx] += lambda * scaling_c[i]^2
+        nzval[idx] += lambda * scaling_c[i]
     end
     for k in eachindex(ws.W_scratch)
         fill!(ws.thread_g_S[k], zero(T))

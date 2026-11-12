@@ -139,12 +139,18 @@ end
 @testset "SecondOrderOptimization extension: Schur solve equals full Cholesky solve" begin
     p = standard_problem()
     n = length(p.b)
-    for kind in (:dense, :sparse), solver in (:auto, :ldl), lambda in (0.0, 0.3)
-        @testset "$kind, $solver, lambda=$lambda" begin
-            ls = make_schur_ls(kind, p)
+    scalings = (
+        "I" => ones(n),
+        # Marquardt (:levenbergmarquardt_dtd) scaling: |diag(H)|, damping is lambda * diag(H), not squared (B2)
+        "D'D" => abs.(diag(p.H)),
+        "wide-range" => exp.(range(-4, 8; length=n)),
+    )
+    for kind in (:dense, :sparse), solver in (:auto, :ldl), (sname, scaling) in scalings, lambda in (0.0, 0.3)
+        @testset "$kind, $solver, $sname, lambda=$lambda" begin
+            ls = make_schur_ls(kind, p, scaling)
             SecondOrderOptimization.dampen!(ls, lambda)
             @test SecondOrderOptimization.solve!(ls, solver) == SecondOrderOptimization.Success
-            x_ref = reference_solve(p, lambda, ones(n))
+            x_ref = reference_solve(p, lambda, scaling)
             @test norm(ls.x - x_ref) <= 1e-10 * norm(x_ref)
         end
     end

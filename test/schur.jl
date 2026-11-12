@@ -150,13 +150,13 @@ using Test, LinearAlgebra, SparseArrays, StaticArrays, Static, BlockLinearSystem
     # 3. Assemble Full Monolithic Normal Equations & Ground Truth Solve
     # --------------------------------------------------------------------------
     H_full = zeros(nc + np, nc + np)
-    # B block + lambda * diag(scaling_c)^2
+    # B block + lambda * diag(scaling_c)
     H_full[1:nc, 1:nc] .= B
     for i in 1:nc
-        H_full[i, i] += lambda * scaling_c[i]^2
+        H_full[i, i] += lambda * scaling_c[i]
     end
 
-    # C block + lambda * diag(scaling_p)^2
+    # C block + lambda * diag(scaling_p)
     for l in 1:npblocks
         dp = Int(p_dims[l])
         po = ppoffsets[l]
@@ -165,7 +165,7 @@ using Test, LinearAlgebra, SparseArrays, StaticArrays, Static, BlockLinearSystem
             H_full[nc + p_off + row - 1, nc + p_off + col - 1] = C_data[po + (col-1)*dp + row - 1]
         end
         for i in 1:dp
-            H_full[nc + p_off + i - 1, nc + p_off + i - 1] += lambda * scaling_p[p_off + i - 1]^2
+            H_full[nc + p_off + i - 1, nc + p_off + i - 1] += lambda * scaling_p[p_off + i - 1]
         end
     end
 
@@ -496,13 +496,13 @@ using Test, LinearAlgebra, SparseArrays, StaticArrays, Static, BlockLinearSystem
     # Undamped H_full
     H_full_undamped = copy(H_full)
     for i in 1:nc
-        H_full_undamped[i, i] -= lambda * scaling_c[i]^2
+        H_full_undamped[i, i] -= lambda * scaling_c[i]
     end
     for l in 1:npblocks
         dp = Int(p_dims[l])
         p_off = boffsets_p[l]
         for i in 1:dp
-            H_full_undamped[nc + p_off + i - 1, nc + p_off + i - 1] -= lambda * scaling_p[p_off + i - 1]^2
+            H_full_undamped[nc + p_off + i - 1, nc + p_off + i - 1] -= lambda * scaling_p[p_off + i - 1]
         end
     end
 

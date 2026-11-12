@@ -13,7 +13,7 @@ export SchurStructure, SchurBlockStructure, SchurBlockMatrix, SchurReductionWork
 export expand_block_perm, sort_schur_blocks, build_schur_covisibility, build_b_to_s_map
 export inv_sym_block, reduce_schur_dense!, reduce_schur_sparse!
 export reset_schur_dense!, reset_schur_sparse!, merge_dense_S!, merge_sparse_S!, backsubstitute!
-export fast_bAb, update_marquardt_scaling!
+export fast_bAb
 
 include("utils.jl")
 include("BlockRLE.jl")

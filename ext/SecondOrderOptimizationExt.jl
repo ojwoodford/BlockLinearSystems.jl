@@ -4,7 +4,7 @@ using SecondOrderOptimization
 import SecondOrderOptimization: AbstractLinearSystem, solve!, dampen!, copy_structure, sharex, getA, getb, getx, zero!, fast_bAb, SolveStatus, Success, NotPositiveDefinite, Indefinite, makelinearsystem, max_diag, updatescaling!, AnyMarquardtData, quadratic_model_reduction, is_indefinite
 import SecondOrderOptimization.LDLFactorizations: ldl_analyze, ldl_factorize!, factorized
 using BlockLinearSystems
-import BlockLinearSystems: SchurBlockMatrix, SchurStructure, SchurBlockStructure, SchurReductionWorkspace, reset_schur_dense!, reset_schur_sparse!, reduce_schur_dense!, reduce_schur_sparse!, backsubstitute!, build_schur_covisibility, build_b_to_s_map, update_marquardt_scaling!
+import BlockLinearSystems: SchurBlockMatrix, SchurStructure, SchurBlockStructure, SchurReductionWorkspace, reset_schur_dense!, reset_schur_sparse!, reduce_schur_dense!, reduce_schur_sparse!, backsubstitute!, build_schur_covisibility, build_b_to_s_map
 using LinearAlgebra, SparseArrays, Static
 
 """
@@ -251,72 +251,6 @@ function SecondOrderOptimization.updatescaling!(lmd::AnyMarquardtData, ls::Spars
         end
     end
     lmd.scaling .= max.(lmd.scaling, max(m * 1e-8, 1e-12))
-end
-
-function BlockLinearSystems.update_marquardt_scaling!(ls::DenseSchurLinearSystem{T}) where T
-    B = ls.H.B
-    C_data = ls.H.C_data
-    struct_info = ls.H.structure
-    nc = struct_info.nc
-
-    med_diag = zero(T)
-    for i in 1:nc
-        med_diag = max(med_diag, abs(B[i, i]))
-    end
-    eps_scale = 1e-12 * med_diag
-
-    for i in 1:nc
-        ls.scaling[i] = sqrt(max(abs(B[i, i]), eps_scale))
-    end
-    for l in 1:struct_info.npblocks
-        po = struct_info.ppoffsets[l]
-        p_off = struct_info.boffsets_p[l]
-        dp = Int(struct_info.p_dims[l])
-        for i in 1:dp
-            c_ii = C_data[po + (i - 1)*(dp + 1)]
-            ls.scaling[nc + p_off + i - 1] = sqrt(max(abs(c_ii), eps_scale))
-        end
-    end
-end
-
-function BlockLinearSystems.update_marquardt_scaling!(ls::SparseSchurLinearSystem{T}) where T
-    B_sys = ls.H.B
-    C_data = ls.H.C_data
-    struct_info = ls.H.structure
-    nc = struct_info.nc
-
-    med_diag = zero(T)
-    for b in 1:struct_info.ncblocks
-        ptr = B_sys.indices[b, b]
-        if ptr > 0
-            db = Int(struct_info.c_dims[b])
-            for i in 1:db
-                med_diag = max(med_diag, abs(B_sys.data[ptr + (i - 1)*(db + 1)]))
-            end
-        end
-    end
-    eps_scale = 1e-12 * med_diag
-
-    for b in 1:struct_info.ncblocks
-        ptr = B_sys.indices[b, b]
-        db = Int(struct_info.c_dims[b])
-        bo = struct_info.boffsets_c[b]
-        if ptr > 0
-            for i in 1:db
-                b_ii = B_sys.data[ptr + (i - 1)*(db + 1)]
-                ls.scaling[bo + i - 1] = sqrt(max(abs(b_ii), eps_scale))
-            end
-        end
-    end
-    for l in 1:struct_info.npblocks
-        po = struct_info.ppoffsets[l]
-        p_off = struct_info.boffsets_p[l]
-        dp = Int(struct_info.p_dims[l])
-        for i in 1:dp
-            c_ii = C_data[po + (i - 1)*(dp + 1)]
-            ls.scaling[nc + p_off + i - 1] = sqrt(max(abs(c_ii), eps_scale))
-        end
-    end
 end
 
 function SecondOrderOptimization.zero!(ls::DenseSchurLinearSystem)
