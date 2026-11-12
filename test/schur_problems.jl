@@ -204,6 +204,63 @@ end
     end
 end
 
+# A gauge-deficient problem: every observation constrains only the *difference* x_camera[1:3] - x_landmark, so
+# translating all cameras and landmarks together changes nothing and H is singular along that direction.
+# Camera dimensions 4:6 only have a tiny prior, which makes H ill conditioned (and rank deficient without it).
+function gauge_problem(seed=21; prior=1e-8)
+    rng = Random.Xoshiro(seed)
+    c_dims = [6, 6, 6, 6]
+    p_dims = [3, 3, 3, 3, 3, 3]
+    observations = [[1, 2], [1, 2, 3], [2, 3, 4], [3, 4], [1, 4], [1, 2, 3, 4]]
+    nc, np = sum(c_dims), sum(p_dims)
+    H = zeros(nc + np, nc + np)
+    for (l, cams) in enumerate(observations), c in cams
+        w = 0.5 + rand(rng)
+        ci = 6 * (c - 1) .+ (1:3)           # camera translation dimensions
+        li = nc + 3 * (l - 1) .+ (1:3)       # landmark dimensions
+        H[ci, ci] .+= w * I(3); H[li, li] .+= w * I(3)
+        H[ci, li] .-= w * I(3); H[li, ci] .-= w * I(3)
+    end
+    for c in 1:4
+        ci = 6 * (c - 1) .+ (4:6)
+        H[ci, ci] .+= prior * I(3)
+    end
+    return SchurTestProblem(H, randn(rng, nc + np), c_dims, p_dims, observations, Tuple{Int, Int}[])
+end
+
+@testset "Schur solve on a gauge-deficient, ill-conditioned problem: relative residual (T1)" begin
+    p = gauge_problem()
+    n = length(p.b)
+    @test cond(p.H) > 1e7                        # ill conditioned: a forward-error check would be meaningless
+    ev = eigvals(Symmetric(p.H))
+    @test ev[1] > -1e-12 && ev[1] < 1e-12        # exactly singular along the gauge direction
+    for make in (dense_schur_matrix, sparse_schur_matrix), lambda in (1e-6, 1e-3, 0.1)
+        scaling = ones(n)
+        x, ok = schur_solve(make(p), p.b, scaling, lambda)
+        @test ok
+        Hd = p.H + lambda * Diagonal(scaling)
+        # backward-stable solve: the residual relative to the data does not grow with the condition number
+        rel_res = norm(Hd * x - p.b) / (opnorm(Hd) * norm(x) + norm(p.b))
+        @test rel_res <= 1e-13
+    end
+end
+
+@testset "Well-conditioned test problems (T1)" begin
+    for p in (standard_problem(), coupled_groups_problem(), mixed_dims_problem())
+        @test cond(p.H) <= 1e4
+        n = length(p.b)
+        nc_ = nc(p)
+        for make in (dense_schur_matrix, sparse_schur_matrix), lambda in (0.0, 0.3)
+            x, ok = schur_solve(make(p), p.b, ones(n), lambda)
+            x_ref = reference_solve(p, lambda, ones(n))
+            @test ok
+            # both the retained and the eliminated parts match
+            @test norm(x[1:nc_] - x_ref[1:nc_]) <= 1e-10 * norm(x_ref[1:nc_])
+            @test norm(x[nc_+1:end] - x_ref[nc_+1:end]) <= 1e-10 * norm(x_ref[nc_+1:end])
+        end
+    end
+end
+
 @testset "copy_structure(::SchurBlockMatrix) shares nothing mutable (B1)" begin
     for make in (dense_schur_matrix, sparse_schur_matrix)
         H = make(standard_problem())
