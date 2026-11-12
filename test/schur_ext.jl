@@ -370,3 +370,29 @@ end
         BlockLinearSystems.SCHUR_THREAD_MIN_WORK[] = old
     end
 end
+
+@testset "SecondOrderOptimization extension: solver symbols (B12)" begin
+    p = standard_problem()
+    Hd, Hs = dense_schur_matrix(p), sparse_schur_matrix(p)
+    mk(H, s) = SecondOrderOptimization.makelinearsystem(nothing, H, s)
+    @test mk(Hd, :schur) isa SOOExt.DenseSchurLinearSystem
+    @test mk(Hd, :dense_schur) isa SOOExt.DenseSchurLinearSystem
+    @test mk(Hs, :schur) isa SOOExt.SparseSchurLinearSystem
+    @test mk(Hs, :sparse_schur) isa SOOExt.SparseSchurLinearSystem
+    @test mk(Hd, static(:schur)) isa SOOExt.DenseSchurLinearSystem
+    @test mk(Hd, SecondOrderOptimization.auto_solver) isa SOOExt.DenseSchurLinearSystem
+    # A request that contradicts the storage of B is an error, not silently ignored or a MethodError
+    @test_throws ArgumentError mk(Hd, :sparse_schur)
+    @test_throws ArgumentError mk(Hs, :dense_schur)
+
+    # solve! accepts Symbols, static symbols and the OptimizationLinearSolver enum without ambiguity
+    n = length(p.b)
+    x_ref = reference_solve(p, 0.3, ones(n))
+    for kind in (:dense, :sparse), s in (:auto, :cholesky, :ldl, static(:auto), static(:ldl),
+                                        SecondOrderOptimization.auto_solver, SecondOrderOptimization.cholesky_solver, SecondOrderOptimization.ldl_solver)
+        ls = make_schur_ls(kind, p)
+        SecondOrderOptimization.dampen!(ls, 0.3)
+        @test SecondOrderOptimization.solve!(ls, s) == SecondOrderOptimization.Success
+        @test norm(ls.x - x_ref) <= 1e-10 * norm(x_ref)
+    end
+end

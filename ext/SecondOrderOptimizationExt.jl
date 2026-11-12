@@ -1,6 +1,7 @@
 module SecondOrderOptimizationExt
 
 using SecondOrderOptimization
+import SecondOrderOptimization: OptimizationLinearSolver
 import SecondOrderOptimization: AbstractLinearSystem, solve!, dampen!, copy_structure, sharex, getA, getb, getx, zero!, fast_bAb, SolveStatus, Success, NotPositiveDefinite, Indefinite, makelinearsystem, max_diag, updatescaling!, AnyMarquardtData, is_indefinite
 import SecondOrderOptimization.LDLFactorizations: ldl_analyze, ldl_factorize!, factorized
 using BlockLinearSystems
@@ -116,14 +117,7 @@ function SparseSchurLinearSystem(
     Ti = eltype(covis.block_rowval)
 
     # 2. Map B to S
-    if H.B isa SparseBlockLinearSystem
-        b_to_s_map = build_b_to_s_map(H.B, S, H.structure.boffsets_c)
-    elseif H.B isa SparseMatrixCSC
-        b_to_s_map = build_b_to_s_map(H.B, S)
-    else
-        B_sparse, _ = sparse_with_map(H.B; symmetric=true)
-        b_to_s_map = build_b_to_s_map(B_sparse, S)
-    end
+    b_to_s_map = build_b_to_s_map(H.B, S, H.structure.boffsets_c)
 
     # 3. Pre-analyze CHOLMOD symbolic factor and LDLFactorizations symbolic factor
     S_factor = SparseArrays.CHOLMOD.analyze(SparseArrays.CHOLMOD.Sparse(Symmetric(S, :U)))
@@ -289,7 +283,7 @@ function solve_bunchkaufman!(ls::DenseSchurLinearSystem)
     return Success
 end
 
-function SecondOrderOptimization.solve!(ls::DenseSchurLinearSystem, solver_opt::Any=static(:auto))
+function SecondOrderOptimization.solve!(ls::DenseSchurLinearSystem, solver_opt::StaticSymbol=static(:auto))
     build_reduced!(ls) || return NotPositiveDefinite
 
     if solver_opt isa StaticSymbol{:ldl}
@@ -312,6 +306,7 @@ function SecondOrderOptimization.solve!(ls::DenseSchurLinearSystem, solver_opt::
     return Success
 end
 SecondOrderOptimization.solve!(ls::DenseSchurLinearSystem, s::Symbol) = SecondOrderOptimization.solve!(ls, static(s))
+SecondOrderOptimization.solve!(ls::DenseSchurLinearSystem, s::OptimizationLinearSolver) = SecondOrderOptimization.solve!(ls, static(SecondOrderOptimization.linsolver_symbol(s)))
 
 # `ldiv!(x, ::CHOLMOD.Factor, b)` only exists from Julia 1.12; earlier versions need the allocating `\\`.
 @static if VERSION >= v"1.12"
@@ -320,16 +315,9 @@ else
     cholmod_ldiv!(x, F::SparseArrays.CHOLMOD.Factor, b) = copyto!(x, F \ b)
 end
 
-function SecondOrderOptimization.solve!(ls::SparseSchurLinearSystem, solver_opt::Any=static(:auto))
-    B_nzval = if ls.H.B isa SparseBlockLinearSystem
-        ls.H.B.data
-    elseif ls.H.B isa SparseMatrixCSC
-        ls.H.B.nzval
-    else
-        error("Unsupported B type for SparseSchurLinearSystem: $(typeof(ls.H.B))")
-    end
+function SecondOrderOptimization.solve!(ls::SparseSchurLinearSystem, solver_opt::StaticSymbol=static(:auto))
     reset_schur_sparse!(
-        ls.S.nzval, B_nzval, ls.b_to_s_map, ls.diag_inds, ls.scaling_c, ls.lambda, ls.workspace
+        ls.S.nzval, ls.H.B.data, ls.b_to_s_map, ls.diag_inds, ls.scaling_c, ls.lambda, ls.workspace
     )
     success = reduce_schur_sparse!(
         ls.S, ls.g_S, ls.b_c, ls.b_p, ls.scaling_p, ls.lambda,
@@ -370,6 +358,7 @@ function SecondOrderOptimization.solve!(ls::SparseSchurLinearSystem, solver_opt:
     return Success
 end
 SecondOrderOptimization.solve!(ls::SparseSchurLinearSystem, s::Symbol) = SecondOrderOptimization.solve!(ls, static(s))
+SecondOrderOptimization.solve!(ls::SparseSchurLinearSystem, s::OptimizationLinearSolver) = SecondOrderOptimization.solve!(ls, static(SecondOrderOptimization.linsolver_symbol(s)))
 
 # `quadratic_model_reduction` is intentionally not specialised: SecondOrderOptimization's generic method
 # (0.5 * fast_bAb(getA(ls), dx) + fast_dot(getb(ls), dx)) is the undamped model change, and works with
@@ -471,11 +460,14 @@ function SecondOrderOptimization.makelinearsystem(x0, H::SchurBlockMatrix{T}, li
     b = zeros(T, tot)
     x = zeros(T, tot)
     sym = SecondOrderOptimization.linsolver_symbol(linsolver)
-    if sym === :sparse_schur || H.B isa SparseBlockLinearSystem || H.B isa AbstractSparseMatrix
-        return SparseSchurLinearSystem(H, b, x)
-    else
-        return DenseSchurLinearSystem(H, b, x)
+    sparse_B = H.B isa SparseBlockLinearSystem
+    if sym === :sparse_schur && !sparse_B
+        throw(ArgumentError("linsolver = :sparse_schur requires a SchurBlockMatrix whose B is a SparseBlockLinearSystem, got $(typeof(H.B))"))
+    elseif sym === :dense_schur && sparse_B
+        throw(ArgumentError("linsolver = :dense_schur requires a SchurBlockMatrix whose B is a dense Matrix, got $(typeof(H.B))"))
     end
+    # :schur (and any other symbol) picks the system from the storage of B
+    return sparse_B ? SparseSchurLinearSystem(H, b, x) : DenseSchurLinearSystem(H, b, x)
 end
 
 end # module SecondOrderOptimizationExt
