@@ -13,6 +13,7 @@ BlockOffsets
 
 ```@docs
 block
+blockrange
 validblock
 blocksizes
 nblocks
@@ -53,10 +54,53 @@ eachrun
 sort_blocks_hierarchical
 ```
 
+## Schur Complement Reduction
+
+Data structures and kernels for bipartite problems, where retained variables (e.g. cameras) are coupled
+through eliminated variables (e.g. landmarks). See the [Schur reduction tutorial](tutorials/schur_reduction.md).
+
+```@docs
+SchurStructure
+SchurBlockMatrix
+SchurReductionWorkspace
+trial_workspace
+reset_schur_dense!
+reset_schur_sparse!
+reduce_schur_dense!
+reduce_schur_sparse!
+backsubstitute!
+fast_bAb
+```
+
+### Reduced-System Sparsity
+
+```@docs
+build_schur_covisibility
+retained_block_pairs
+build_b_to_s_map
+```
+
+### Variable Ordering
+
+```@docs
+sort_schur_blocks
+expand_block_perm
+```
+
 ## Internal Utilities
 
 ```@docs
 BlockLinearSystems.computestartindices
 BlockLinearSystems.find_diag_inds
 BlockLinearSystems.inplacecumsum!
+```
+
+### Schur Reduction Kernels
+
+```@docs
+BlockLinearSystems.factor_landmark!
+BlockLinearSystems.factor_landmarks_group!
+BlockLinearSystems.accumulate_dense_columns!
+BlockLinearSystems.accumulate_sparse_columns!
+BlockLinearSystems.partition_columns
 ```

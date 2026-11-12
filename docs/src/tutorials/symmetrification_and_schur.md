@@ -1,4 +1,4 @@
-# Symmetrification, CSC Scatter & Schur Systems
+# Symmetrification & CSC Scatter
 
 During Gauss-Newton or second-order optimization, only the block-lower triangle ($i \ge j$) of the symmetric Hessian $H$ needs to be accumulated. Once assembly is complete, the linear solver requires either a full symmetric `Matrix{T}`, a full symmetric `SparseMatrixCSC{T, Int}`, or a reduced Schur complement system.
 
@@ -29,7 +29,7 @@ block(bsm, 2, 2, Val(2), Val(2)) .= [6.0 0.0; 0.0 7.0]
 copyto!(H_csc, bsm, scatter_map)
 ```
 
-## Extracting Principal Submatrices for Schur Complement Solvers
+## Extracting Principal Submatrices
 
 In bipartite problems such as Bundle Adjustment, variables partition into camera blocks $C$ and landmark blocks $L$. [`symmetrifyfull!`](@ref) accepts an optional `blocks` index vector (or boolean mask) to extract and symmetrify only a selected subset of blocks into a preallocated dense matrix:
 
@@ -50,3 +50,5 @@ For small or densely connected graphs, dense Cholesky factorization outperforms 
 blocksizes = [2, 2]
 nnz_lower = block_sparse_nnz(sparsity, blocksizes) # 2*2 + 2*2 + 2*2 = 12
 ```
+
+For eliminating the landmark blocks rather than extracting the camera blocks, see the [Schur reduction tutorial](schur_reduction.md).

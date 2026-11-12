@@ -17,7 +17,8 @@ makedocs(
         "API Reference" => "api.md",
         "Tutorials & Guide" => [
             "Block Linear System Assembly & Indexing" => "tutorials/block_assembly.md",
-            "Symmetrification, CSC Scatter & Schur Systems" => "tutorials/symmetrification_and_schur.md",
+            "Symmetrification & CSC Scatter" => "tutorials/symmetrification_and_schur.md",
+            "Schur Complement Reduction" => "tutorials/schur_reduction.md",
         ],
     ]
 )

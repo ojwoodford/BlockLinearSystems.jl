@@ -16,7 +16,7 @@ In nonlinear least squares (NLS), bundle adjustment (BA), and SLAM, optimization
 - **Contiguous Block Storage**: Each non-zero block $(i, j)$ is stored contiguously in column-major order in a flat buffer, making block accumulation a single contiguous memory write.
 - **Zero-Allocation Views**: Accessing blocks with static dimensions (`static(N)` or `Val(N)`) returns stack-allocated `SizedMatrix` or `HybridArray` views, enabling unrolled SIMD addition with StaticArrays (`.+=`).
 - **Zero-Allocation Solver Scatter**: In iterative solvers, `sparse_with_map` precomputes the CSC pattern and an integer scatter map once during setup. In each iteration, `copyto!(csc_mat, bsm, scatter_map)` updates the sparse solver matrix with **zero allocations**.
-- **Schur Complement Subsystems**: `symmetrifyfull!(dest, bsm, camera_blocks)` extracts and symmetrifies principal block submatrices in-place for fast Schur elimination.
+- **Schur Complement Reduction**: `SchurStructure`, `SchurBlockMatrix` and the parallel `reduce_schur_dense!` / `reduce_schur_sparse!` kernels eliminate landmark blocks (any dimension, 1–255) from bipartite systems, with dense or sparse reduced systems. `symmetrifyfull!(dest, bsm, camera_blocks)` extracts principal block submatrices in-place.
 - **Thread-Local Clones**: `copy_structure(sys)` creates a lightweight thread-local accumulator sharing index structures, reduced after assembly via a fast BLAS vector addition (`sys.data .+= thread_sys.data`).
 
 ### Design Scope: Accumulators, Not General Matrices
@@ -93,3 +93,23 @@ symmetrifyfull!(bdm)
 H_cameras = Matrix{Float64}(undef, 12, 12)
 symmetrifyfull!(H_cameras, bsm, [1, 2])
 ```
+
+### 4. Schur Complement Reduction
+
+```julia
+st = SchurStructure([6, 6, 6], [3, 3, 3, 1], [[1, 2], [1, 2, 3], [2, 3], [3]])  # cameras, landmarks, who observes what
+ws = SchurReductionWorkspace{Float64}(st, 1)
+# ... fill B, C_data, E_data in a SchurBlockMatrix, then:
+reset_schur_dense!(S, B, scaling_c, lambda, ws)
+reduce_schur_dense!(S, g, b_c, b_p, scaling_p, lambda, st, C_data, E_data, ws)   # false if a block is singular
+# solve S x_c = g, then recover the eliminated variables:
+backsubstitute!(x_p, x_c, st, E_data, ws.C_inv_data, ws.z_data)
+```
+
+See the [Schur reduction tutorial](https://ojwoodford.github.io/BlockLinearSystems.jl/dev/tutorials/schur_reduction/) for a complete, runnable example.
+
+### Use with SecondOrderOptimization.jl
+
+Loading `BlockLinearSystems` together with [SecondOrderOptimization.jl](https://github.com/ojwoodford/SecondOrderOptimization.jl)
+activates an extension (defined in that package) with `DenseSchurLinearSystem` and `SparseSchurLinearSystem`,
+selected with `linsolver = :schur`, `:dense_schur` or `:sparse_schur`.
