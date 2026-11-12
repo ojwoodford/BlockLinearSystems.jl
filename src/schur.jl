@@ -844,26 +844,31 @@ function build_schur_covisibility(structure::SchurStructure; extra_blocks=())
     boffsets_c = structure.boffsets_c
     nc = structure.nc
 
-    # 1. Build camera block co-visibility graph (upper triangle)
-    block_covis = spzeros(Bool, ncblocks, ncblocks)
+    # 1. Build camera block co-visibility graph (upper triangle). Collect (I, J) pairs and build the
+    # sparse matrix once: inserting entries one at a time into a SparseMatrixCSC is O(nnz^2).
+    I_cov = Int[]
+    J_cov = Int[]
     for l in 1:npblocks
         e_start = cpptr[l]
         e_end = cpptr[l + 1] - 1
         for idx2 in e_start:e_end
             c2 = cpblock[idx2]
             for idx1 in e_start:idx2
-                c1 = cpblock[idx1]
-                block_covis[c1, c2] = true
+                push!(I_cov, cpblock[idx1])
+                push!(J_cov, c2)
             end
         end
     end
     for (i, j) in extra_blocks
         (1 <= i <= ncblocks && 1 <= j <= ncblocks) || throw(ArgumentError("Extra block pair ($i, $j) is outside the $ncblocks retained blocks"))
-        block_covis[min(i, j), max(i, j)] = true
+        push!(I_cov, min(i, j))
+        push!(J_cov, max(i, j))
     end
     for c in 1:ncblocks
-        block_covis[c, c] = true
+        push!(I_cov, c)
+        push!(J_cov, c)
     end
+    block_covis = sparse(I_cov, J_cov, true, ncblocks, ncblocks, |)
 
     block_colptr = Vector{Int}(block_covis.colptr)
     block_rowval = Vector{Int}(block_covis.rowval)

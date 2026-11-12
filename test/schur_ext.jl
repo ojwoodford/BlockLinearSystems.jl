@@ -246,3 +246,25 @@ end
         end
     end
 end
+
+@testset "build_schur_covisibility scales to many observations (B8) and can be reused" begin
+    # Many cameras, each landmark seen by a window of consecutive cameras
+    ncam, nlm = 3000, 6000
+    obs = [collect(c:min(c + 3, ncam)) for c in (min.(1 .+ (0:nlm-1) .* ncam .÷ nlm, ncam))]
+    structure = SchurStructure(fill(6, ncam), fill(3, nlm), obs)
+    build_schur_covisibility(structure)   # compile
+    t = @elapsed covis = build_schur_covisibility(structure)
+    @test t < 5
+    @test nnz(covis.block_covis) == length(covis.block_rowval)
+    # Upper triangle with the diagonal; the sliding window gives bandwidth 3
+    @test all(covis.block_rowval[k] <= c for c in 1:ncam for k in covis.block_colptr[c]:covis.block_colptr[c+1]-1)
+    @test nnz(covis.block_covis) <= ncam * 4
+
+    # Passing a precomputed covis to the constructor gives the same system
+    p = coupled_groups_problem()
+    H = sparse_schur_matrix(p)
+    pre = build_schur_covisibility(H.structure; extra_blocks=retained_block_pairs(H.B))
+    ls1 = SOOExt.SparseSchurLinearSystem(H, copy(p.b), zeros(length(p.b)))
+    ls2 = SOOExt.SparseSchurLinearSystem(H, copy(p.b), zeros(length(p.b)); covis=pre)
+    @test ls1.S == ls2.S && ls1.b_to_s_map == ls2.b_to_s_map
+end

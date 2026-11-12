@@ -91,7 +91,8 @@ function SparseSchurLinearSystem(
     H::SchurBlockMatrix{T, SparseBlockLinearSystem{T}},
     b::Vector{T}, x::Vector{T},
     scaling::Vector{T}=ones(T, length(b));
-    nchunks::Int=0
+    nchunks::Int=0,
+    covis=nothing
 ) where T
     nc = H.structure.nc
     tot_dim = length(b)
@@ -106,7 +107,11 @@ function SparseSchurLinearSystem(
 
     # 1. Build co-visibility graph and sparsity structures. Retained-retained couplings stored in B
     # that do not go through an eliminated block need slots in S too.
-    covis = build_schur_covisibility(H.structure; extra_blocks=BlockLinearSystems.retained_block_pairs(H.B))
+    # A precomputed `covis` (the result of an earlier build_schur_covisibility call with the same
+    # extra blocks) can be passed in to avoid rebuilding it.
+    if covis === nothing
+        covis = build_schur_covisibility(H.structure; extra_blocks=BlockLinearSystems.retained_block_pairs(H.B))
+    end
     S = covis.S_sparse
     Ti = eltype(covis.block_rowval)
 
