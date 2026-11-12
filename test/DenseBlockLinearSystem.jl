@@ -136,3 +136,19 @@
     @test size(DenseBlockLinearSystem(data55; offsets=[1, 3, 6])) == (5, 5)
     @test size(DenseBlockLinearSystem(data53; offsets=[1, 3, 6], coloffsets=[1, 4])) == (5, 3)
 end
+
+@testset "symmetrifyfull! tiled copy (M7)" begin
+    for n in (1, 2, 5, 31, 32, 33, 64, 70, 100)
+        A = randn(n, n)
+        L = tril(A)
+        expected = L + tril(A, -1)'
+        sys = DenseBlockLinearSystem{Float64}(copy(A), fill(1, n))
+        result = symmetrifyfull!(sys)
+        @test result === sys.data
+        @test result == expected
+        @test result == result'
+        sys2 = DenseBlockLinearSystem{Float64}(copy(A), fill(1, n))
+        @test symmetrifyfull(sys2) == expected
+        @test sys2.data == A        # symmetrifyfull does not modify its argument
+    end
+end

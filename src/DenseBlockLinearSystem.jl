@@ -170,23 +170,35 @@ Base.length(bdm::DenseBlockLinearSystem) = length(bdm.data)
 Base.eltype(::DenseBlockLinearSystem{T}) where T = T
 Base.Matrix(bdm::DenseBlockLinearSystem) = Matrix(bdm.data)
 
-function symmetrifyfull!(bdm::DenseBlockLinearSystem)
-    bdm.rowblocksizes == bdm.columnblocksizes || throw(ArgumentError("Row and column block sizes must match for symmetrification"))
-    for r in 2:size(bdm.data, 1)
-        for c in 1:r-1
-            @inbounds bdm.data[c, r] = bdm.data[r, c]
+# Copy the strict lower triangle of `A` into the strict upper triangle, in cache-sized tiles so that both
+# the reads and the writes stay within a small, cache-resident working set (a plain double loop reads or
+# writes with a stride of a whole column).
+const SYMMETRIFY_TILE = 32
+
+function copylowertoupper!(A::AbstractMatrix)
+    n = LinearAlgebra.checksquare(A)
+    T = SYMMETRIFY_TILE
+    @inbounds for jj in 1:T:n                      # tile of columns
+        jend = min(jj + T - 1, n)
+        for ii in jj:T:n                           # tiles of rows on or below the diagonal tile
+            iend = min(ii + T - 1, n)
+            for j in jj:jend
+                for i in max(ii, j + 1):iend
+                    A[j, i] = A[i, j]
+                end
+            end
         end
     end
+    return A
+end
+
+function symmetrifyfull!(bdm::DenseBlockLinearSystem)
+    bdm.rowblocksizes == bdm.columnblocksizes || throw(ArgumentError("Row and column block sizes must match for symmetrification"))
+    copylowertoupper!(bdm.data)
     return bdm.data
 end
 
 function symmetrifyfull(bdm::DenseBlockLinearSystem)
     bdm.rowblocksizes == bdm.columnblocksizes || throw(ArgumentError("Row and column block sizes must match for symmetrification"))
-    output = copy(bdm.data)
-    for r in 2:size(output, 1)
-        for c in 1:r-1
-            @inbounds output[c, r] = output[r, c]
-        end
-    end
-    return output
+    return copylowertoupper!(copy(bdm.data))
 end
