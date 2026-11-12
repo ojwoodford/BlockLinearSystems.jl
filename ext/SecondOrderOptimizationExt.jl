@@ -59,11 +59,11 @@ function DenseSchurLinearSystem(
 end
 
 """
-    SparseSchurLinearSystem{T, Ti, TL} <: AbstractLinearSystem
+    SparseSchurLinearSystem{T, Ti, TL, TF} <: AbstractLinearSystem
 
 Linear system solving bipartite normal equations via sparse Schur reduction, CHOLMOD sparse Cholesky, and LDL factorizations.
 """
-mutable struct SparseSchurLinearSystem{T, Ti, TL} <: AbstractLinearSystem
+mutable struct SparseSchurLinearSystem{T, Ti, TL, TF} <: AbstractLinearSystem
     H::SchurBlockMatrix{T, SparseBlockLinearSystem{T}}
     b::Vector{T}
     x::Vector{T}
@@ -73,7 +73,7 @@ mutable struct SparseSchurLinearSystem{T, Ti, TL} <: AbstractLinearSystem
     x_p::SubArray{T, 1, Vector{T}, Tuple{UnitRange{Int}}, true}
     g_S::Vector{T}
     S::SparseMatrixCSC{T, Ti}
-    S_factor::SparseArrays.CHOLMOD.Factor{T}
+    S_factor::TF                      # CHOLMOD.Factor (its type parameters differ between Julia versions)
     S_factor_ldl::TL
     b_to_s_map::Vector{Int}
     diag_inds::Vector{Int}
@@ -111,7 +111,7 @@ function SparseSchurLinearSystem(
     # A precomputed `covis` (the result of an earlier build_schur_covisibility call with the same
     # extra blocks) can be passed in to avoid rebuilding it.
     if covis === nothing
-        covis = build_schur_covisibility(H.structure; extra_blocks=BlockLinearSystems.retained_block_pairs(H.B))
+        covis = build_schur_covisibility(H.structure, T; extra_blocks=BlockLinearSystems.retained_block_pairs(H.B))
     end
     S = covis.S_sparse
     Ti = eltype(covis.block_rowval)
@@ -128,7 +128,7 @@ function SparseSchurLinearSystem(
     K = nchunks > 0 ? nchunks : (isempty(H.structure.chunks) ? 1 : length(H.structure.chunks[1]))
     ws = SchurReductionWorkspace{T}(H.structure, K; is_dense=false, nnz_S=nnz(S))
 
-    return SparseSchurLinearSystem{T, Ti, typeof(S_factor_ldl)}(
+    return SparseSchurLinearSystem{T, Ti, typeof(S_factor_ldl), typeof(S_factor)}(
         H, b, x, b_c, b_p, x_c, x_p, g_S, S, S_factor, S_factor_ldl,
         b_to_s_map, covis.diag_inds,
         covis.block_rowval, covis.block_colptr, covis.block_row_offsets, covis.col_heights,
@@ -391,7 +391,7 @@ function SecondOrderOptimization.copy_structure(ls::DenseSchurLinearSystem{T}) w
 end
 
 
-function SecondOrderOptimization.copy_structure(ls::SparseSchurLinearSystem{T, Ti, TL}) where {T, Ti, TL}
+function SecondOrderOptimization.copy_structure(ls::SparseSchurLinearSystem{T, Ti, TL, TF}) where {T, Ti, TL, TF}
     # New storage for the Hessian and gradient (the original is kept for retries); x is shared
     nc = ls.H.structure.nc
     b = copy(ls.b)
@@ -406,7 +406,7 @@ function SecondOrderOptimization.copy_structure(ls::SparseSchurLinearSystem{T, T
         ls.workspace.thread_nzvals,
         Base.Threads.Atomic{Int}(0)
     )
-    return SparseSchurLinearSystem{T, Ti, TL}(
+    return SparseSchurLinearSystem{T, Ti, TL, TF}(
         BlockLinearSystems.copy_structure(ls.H), b, x,
         view(b, 1:nc), view(b, nc+1:length(b)),
         view(x, 1:nc), view(x, nc+1:length(x)),
@@ -436,11 +436,11 @@ function SecondOrderOptimization.sharex(ls::DenseSchurLinearSystem{T}, from) whe
     )
 end
 
-function SecondOrderOptimization.sharex(ls::SparseSchurLinearSystem{T, Ti, TL}, from) where {T, Ti, TL}
+function SecondOrderOptimization.sharex(ls::SparseSchurLinearSystem{T, Ti, TL, TF}, from) where {T, Ti, TL, TF}
     ls.x === from.x && return ls
     nc = ls.H.structure.nc
     x = from.x
-    return SparseSchurLinearSystem{T, Ti, TL}(
+    return SparseSchurLinearSystem{T, Ti, TL, TF}(
         ls.H, ls.b, x,
         ls.b_c, ls.b_p,
         view(x, 1:nc), view(x, nc+1:length(x)),

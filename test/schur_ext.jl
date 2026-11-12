@@ -429,3 +429,39 @@ end
         @test norm(ls.x - x_ref) <= 1e-10 * norm(x_ref)
     end
 end
+
+function to_float32(H::SchurBlockMatrix)
+    B = if H.B isa Matrix
+        Float32.(H.B)
+    else
+        S = H.B
+        SparseBlockLinearSystem{Float32}(Float32.(S.data), S.indices, S.indicestransposed, S.rowblocksizes, S.columnblocksizes, S.m, S.n)
+    end
+    return SchurBlockMatrix(H.structure, B, Float32.(H.C_data), Float32.(H.E_data))
+end
+
+@testset "Schur solve in Float32 (M4)" begin
+    p = standard_problem()
+    n = length(p.b)
+    x_ref = reference_solve(p, 0.3, ones(n))
+    for kind in (:dense, :sparse)
+        H = to_float32(kind === :dense ? dense_schur_matrix(p) : sparse_schur_matrix(p))
+        ls = kind === :dense ? SOOExt.DenseSchurLinearSystem(H, Float32.(p.b), zeros(Float32, n)) :
+                               SOOExt.SparseSchurLinearSystem(H, Float32.(p.b), zeros(Float32, n))
+        @test eltype(ls.S) == Float32
+        @test eltype(ls.x) == Float32
+        SecondOrderOptimization.dampen!(ls, 0.3)
+        @test SecondOrderOptimization.solve!(ls) == SecondOrderOptimization.Success
+        @test norm(Float64.(ls.x) - x_ref) <= 1e-3 * norm(x_ref)
+    end
+    # The sparse system's factor type is concrete
+    ls = SOOExt.SparseSchurLinearSystem(sparse_schur_matrix(p), copy(p.b), zeros(n))
+    @test isconcretetype(typeof(ls.S_factor))
+    @test isconcretetype(fieldtype(typeof(ls), :S_factor))
+
+    # Singularity tolerance scales with the precision: a block that is singular to Float32 precision is rejected
+    H2 = SMatrix{2, 2, Float32, 4}(1, 1, 1, 1 + 1f-6)
+    @test !inv_sym_block(H2, 0f0, SVector{2, Float32}(1, 1)).success
+    H2d = SMatrix{2, 2, Float64, 4}(1, 1, 1, 1 + 1e-6)
+    @test inv_sym_block(H2d, 0.0, SVector{2, Float64}(1, 1)).success
+end

@@ -7,6 +7,10 @@ Invert a symmetric positive semi-definite block `H` with diagonal Levenberg-Marq
 `H + lambda * diag(scale)` (`scale` is the damping diagonal itself, e.g. `|diag(H)|` for Marquardt scaling) in registers.
 Returns `(invH, success)` where `success` is false if the block is numerically rank-deficient.
 """
+# Relative tolerance used to declare a damped block numerically singular: 1e-12 for Float64, scaled
+# with the precision of T.
+@inline singular_tol(::Type{T}) where T = 4504 * eps(T)
+
 @inline function inv_sym_block(H::SMatrix{1, 1, T, 1}, lambda::T, scale::SVector{1, T}) where T
     h11 = H[1, 1] + lambda * scale[1]
     if h11 <= eps(T) * abs(H[1, 1]) || !isfinite(h11)
@@ -21,7 +25,7 @@ end
     H12 = H[1, 2]
 
     det = H11 * H22 - H12 * H12
-    if det <= 1e-12 * (H11 * H22) || !isfinite(det)
+    if det <= singular_tol(T) * (H11 * H22) || !isfinite(det)
         return (invH = zeros(SMatrix{2, 2, T, 4}), success = false)
     end
     inv_det = inv(det)
@@ -45,7 +49,7 @@ end
     det = H11 * c11 + H12 * c12 + H13 * c13
     diag_prod = H11 * H22 * H33
 
-    if det <= 1e-12 * diag_prod || !isfinite(det)
+    if det <= singular_tol(T) * diag_prod || !isfinite(det)
         return (invH = zeros(SMatrix{3, 3, T, 9}), success = false)
     end
 
@@ -900,10 +904,11 @@ function sort_schur_blocks(
 end
 
 """
-    build_schur_covisibility(structure::SchurStructure; extra_blocks=()) -> NamedTuple
+    build_schur_covisibility(structure::SchurStructure, [T=Float64]; extra_blocks=()) -> NamedTuple
 
 Compute block-level and scalar-level co-visibility sparsity patterns for the reduced camera system S.
-Returns `(block_covis, block_colptr, block_rowval, block_row_offsets, col_heights, S_sparse, diag_inds)`.
+Returns `(block_covis, block_colptr, block_rowval, block_row_offsets, col_heights, S_sparse, diag_inds)`;
+`S_sparse` is a zero-valued `SparseMatrixCSC{T}`.
 
 The pattern contains every pair of retained blocks that share an eliminated block, plus the diagonal.
 Retained-retained couplings that do not go through an eliminated block (e.g. odometry factors or loop
@@ -911,7 +916,7 @@ closures between poses with no common landmark) have no such slot, so list them 
 iterable of `(i, j)` retained block index pairs (in either order; `i == j` is allowed and ignored).
 Use [`retained_block_pairs`](@ref) to obtain them from the block pattern of `B`.
 """
-function build_schur_covisibility(structure::SchurStructure; extra_blocks=())
+function build_schur_covisibility(structure::SchurStructure, ::Type{T}=Float64; extra_blocks=()) where T
     ncblocks = structure.ncblocks
     npblocks = structure.npblocks
     c_dims = structure.c_dims
@@ -975,7 +980,7 @@ function build_schur_covisibility(structure::SchurStructure; extra_blocks=())
             end
         end
     end
-    S_sparse = sparse(I_list, J_list, zeros(length(I_list)), nc, nc)
+    S_sparse = sparse(I_list, J_list, zeros(T, length(I_list)), nc, nc)
 
     # 4. Compute diagonal indices in S_sparse.nzval
     diag_inds = zeros(Int, nc)
