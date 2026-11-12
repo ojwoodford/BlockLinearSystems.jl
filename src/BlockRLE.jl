@@ -44,9 +44,13 @@ end
 
 # Outer constructors
 function BlockRLE{T}(runlengths::AbstractVector{<:Integer}, blocksizes::AbstractVector{<:Integer}) where T<:Integer
-    all(b -> 0 < b <= 255, blocksizes) || throw(ArgumentError("Block dimensions must be between 1 and 255"))
-    rl = convert(Vector{Int}, runlengths)
-    bs = convert(Vector{T}, blocksizes)
+    length(runlengths) == length(blocksizes) || throw(DimensionMismatch("runlengths and blocksizes must have identical length"))
+    # Zero-length runs contain no blocks, so their sizes are irrelevant (and are not validated, matching
+    # the inner constructor); negative lengths are rejected there.
+    keep = findall(!iszero, runlengths)
+    all(b -> 0 < b <= 255, view(blocksizes, keep)) || throw(ArgumentError("Block dimensions must be between 1 and 255"))
+    rl = convert(Vector{Int}, runlengths[keep])
+    bs = convert(Vector{T}, blocksizes[keep])
     return BlockRLE{T, Int}(rl, bs)
 end
 

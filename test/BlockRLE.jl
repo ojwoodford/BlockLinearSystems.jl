@@ -168,3 +168,17 @@ end
     @test runblocksize(rle, 1) * runblocksize(rle, 2) == 320
     @test sum(rle) == 3 * 16 + 2 * 20
 end
+
+@testset "Zero-length runs are not validated (M11)" begin
+    # A zero-length run may carry any size: it contains no blocks
+    rle = BlockRLE([2, 0, 3], [4, 0, 5])
+    @test rle == BlockRLE([2, 3], [4, 5])
+    @test length(rle) == 5
+    @test BlockRLE([0, 2], [300, 7]) == BlockRLE([2], [7])
+    @test length(BlockRLE([0], [1000])) == 0
+    # Non-empty runs are still validated, as are lengths
+    @test_throws ArgumentError BlockRLE([1], [0])
+    @test_throws ArgumentError BlockRLE([2, 1], [4, 300])
+    @test_throws DimensionMismatch BlockRLE([1, 2], [4])
+    @test_throws ArgumentError BlockRLE([-1], [4])
+end
