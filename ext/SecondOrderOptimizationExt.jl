@@ -271,40 +271,42 @@ function SecondOrderOptimization.zero!(ls::SparseSchurLinearSystem)
     return ls
 end
 
-function SecondOrderOptimization.solve!(ls::DenseSchurLinearSystem, solver_opt::Any=static(:auto))
+# Build the reduced system S and g_S from scratch. Called at the start of each solve, and again if an
+# in-place factorization has overwritten S and a fallback factorization is needed.
+function build_reduced!(ls::DenseSchurLinearSystem)
     reset_schur_dense!(ls.S, ls.H.B, ls.scaling_c, ls.lambda, ls.workspace)
-    success = reduce_schur_dense!(
+    return reduce_schur_dense!(
         ls.S, ls.g_S, ls.b_c, ls.b_p, ls.scaling_p, ls.lambda,
         ls.H.structure, ls.H.C_data, ls.H.E_data, ls.workspace
     )
-    if !success
-        return NotPositiveDefinite
-    end
+end
 
-    if (solver_opt isa StaticSymbol{:ldl}) || ls.lambda == 0
-        bk = bunchkaufman!(Symmetric(ls.S, :U); check=false)
-        if !issuccess(bk)
-            return NotPositiveDefinite
-        end
-        ldiv!(ls.x_c, bk, ls.g_S)
-        if is_indefinite(bk)
-            return Indefinite
-        end
+function solve_bunchkaufman!(ls::DenseSchurLinearSystem)
+    bk = bunchkaufman!(Symmetric(ls.S, :U); check=false)
+    issuccess(bk) || return NotPositiveDefinite
+    ldiv!(ls.x_c, bk, ls.g_S)
+    is_indefinite(bk) && return Indefinite
+    return Success
+end
+
+function SecondOrderOptimization.solve!(ls::DenseSchurLinearSystem, solver_opt::Any=static(:auto))
+    build_reduced!(ls) || return NotPositiveDefinite
+
+    if solver_opt isa StaticSymbol{:ldl}
+        status = solve_bunchkaufman!(ls)
     else
-        cholfac = cholesky(Symmetric(ls.S, :U); check=false)
-        if !issuccess(cholfac)
-            bk = bunchkaufman!(Symmetric(ls.S, :U); check=false)
-            if !issuccess(bk)
-                return NotPositiveDefinite
-            end
-            ldiv!(ls.x_c, bk, ls.g_S)
-            if is_indefinite(bk)
-                return Indefinite
-            end
-        else
+        # Cholesky first, whether or not there is damping. It works in place on S (which is rebuilt on
+        # every solve anyway); only if it fails do we rebuild S and fall back to Bunch-Kaufman.
+        cholfac = cholesky!(Symmetric(ls.S, :U); check=false)
+        if issuccess(cholfac)
             ldiv!(ls.x_c, cholfac, ls.g_S)
+            status = Success
+        else
+            build_reduced!(ls) || return NotPositiveDefinite
+            status = solve_bunchkaufman!(ls)
         end
     end
+    status == Success || return status
 
     backsubstitute!(ls.x_p, ls.x_c, ls.H.structure, ls.H.E_data, ls.workspace.C_inv_data, ls.workspace.z_data)
     return Success
@@ -339,7 +341,7 @@ function SecondOrderOptimization.solve!(ls::SparseSchurLinearSystem, solver_opt:
         return NotPositiveDefinite
     end
 
-    if (solver_opt isa StaticSymbol{:ldl}) || ls.lambda == 0
+    if solver_opt isa StaticSymbol{:ldl}
         F = ldl_factorize!(Symmetric(ls.S, :U), ls.S_factor_ldl)
         if !factorized(F)
             return NotPositiveDefinite
@@ -349,7 +351,7 @@ function SecondOrderOptimization.solve!(ls::SparseSchurLinearSystem, solver_opt:
             return Indefinite
         end
     else
-        LinearAlgebra.cholesky!(ls.S_factor, Symmetric(ls.S, :U))
+        LinearAlgebra.cholesky!(ls.S_factor, Symmetric(ls.S, :U); check=false)
         if !LinearAlgebra.issuccess(ls.S_factor)
             F = ldl_factorize!(Symmetric(ls.S, :U), ls.S_factor_ldl)
             if !factorized(F)

@@ -268,3 +268,36 @@ end
     ls2 = SOOExt.SparseSchurLinearSystem(H, copy(p.b), zeros(length(p.b)); covis=pre)
     @test ls1.S == ls2.S && ls1.b_to_s_map == ls2.b_to_s_map
 end
+
+@testset "SecondOrderOptimization extension: undamped solves use Cholesky, fall back on failure (B5)" begin
+    p = standard_problem()
+    n = length(p.b)
+    x_ref = reference_solve(p, 0.0, ones(n))
+    for kind in (:dense, :sparse)
+        @testset "$kind positive definite" begin
+            ls = make_schur_ls(kind, p)
+            SecondOrderOptimization.dampen!(ls, 0.0)
+            # Solving twice gives identical results (S is rebuilt each time even though Cholesky works in place)
+            for _ in 1:2
+                @test SecondOrderOptimization.solve!(ls) == SecondOrderOptimization.Success
+                @test norm(ls.x - x_ref) <= 1e-10 * norm(x_ref)
+            end
+        end
+        @testset "$kind indefinite" begin
+            # Make the retained diagonal very negative so that S is indefinite, and Cholesky must fail
+            q = standard_problem()
+            q.H[1, 1] = -50.0
+            for solver in (:auto, :ldl)
+                ls = make_schur_ls(kind, q)
+                SecondOrderOptimization.dampen!(ls, 0.0)
+                @test SecondOrderOptimization.solve!(ls, solver) == SecondOrderOptimization.Indefinite
+            end
+            # With enough damping it is positive definite again, and the fallback is not needed
+            ls = make_schur_ls(kind, q)
+            SecondOrderOptimization.dampen!(ls, 100.0)
+            @test SecondOrderOptimization.solve!(ls) == SecondOrderOptimization.Success
+            x_ref_q = reference_solve(q, 100.0, ones(n))
+            @test norm(ls.x - x_ref_q) <= 1e-10 * norm(x_ref_q)
+        end
+    end
+end
