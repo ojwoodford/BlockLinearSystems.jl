@@ -391,8 +391,9 @@ using Test, LinearAlgebra, SparseArrays, StaticArrays, Static, BlockLinearSystem
     )
     @test success_sparse_K4 == true
     @test ws_sparse_K4.failed_landmark[] == 0
-    @test norm(S_sparse_K4.nzval - S_sparse.nzval) < 1e-14
-    @test norm(g_S_sparse_K4 - g_S_sparse) < 1e-14
+    # Chunks are summed in a different order than for K=1, so compare to rounding error
+    @test norm(S_sparse_K4.nzval - S_sparse.nzval) < 1e-13 * norm(S_sparse.nzval)
+    @test norm(g_S_sparse_K4 - g_S_sparse) < 1e-13 * norm(g_S_sparse)
 
     # --------------------------------------------------------------------------
     # 7. Exact Rank-Deficient Degenerate Landmark Test
@@ -424,13 +425,13 @@ using Test, LinearAlgebra, SparseArrays, StaticArrays, Static, BlockLinearSystem
     # --------------------------------------------------------------------------
     # Warmup
     BlockLinearSystems.reduce_schur_dense_group!(
-        ws_K1.thread_dense_S[1], ws_K1.thread_g_S[1], ws_K1.C_inv_data, ws_K1.z_data,
+        S_dense, ws_K1.thread_g_S[1], ws_K1.C_inv_data, ws_K1.z_data,
         ws_K1.W_scratch[1], ws_K1.failed_landmark,
         structure_K1, C_data, E_data, b_p, scaling_p, lambda,
         1:8, static(3)
     )
     allocs_dense_kernel = @allocated BlockLinearSystems.reduce_schur_dense_group!(
-        ws_K1.thread_dense_S[1], ws_K1.thread_g_S[1], ws_K1.C_inv_data, ws_K1.z_data,
+        S_dense, ws_K1.thread_g_S[1], ws_K1.C_inv_data, ws_K1.z_data,
         ws_K1.W_scratch[1], ws_K1.failed_landmark,
         structure_K1, C_data, E_data, b_p, scaling_p, lambda,
         1:8, static(3)
@@ -439,14 +440,14 @@ using Test, LinearAlgebra, SparseArrays, StaticArrays, Static, BlockLinearSystem
 
     # Warmup sparse kernel
     BlockLinearSystems.reduce_schur_sparse_group!(
-        ws_sparse_K1.thread_nzvals[1], ws_sparse_K1.thread_g_S[1], ws_sparse_K1.C_inv_data, ws_sparse_K1.z_data,
+        S_sparse.nzval, ws_sparse_K1.thread_g_S[1], ws_sparse_K1.C_inv_data, ws_sparse_K1.z_data,
         ws_sparse_K1.W_scratch[1], ws_sparse_K1.failed_landmark,
         structure_K1, C_data, E_data, S_sparse.colptr,
         block_colptr, block_rowval, block_row_offsets, col_heights,
         b_p, scaling_p, lambda, 1:8, static(3)
     )
     allocs_sparse_kernel = @allocated BlockLinearSystems.reduce_schur_sparse_group!(
-        ws_sparse_K1.thread_nzvals[1], ws_sparse_K1.thread_g_S[1], ws_sparse_K1.C_inv_data, ws_sparse_K1.z_data,
+        S_sparse.nzval, ws_sparse_K1.thread_g_S[1], ws_sparse_K1.C_inv_data, ws_sparse_K1.z_data,
         ws_sparse_K1.W_scratch[1], ws_sparse_K1.failed_landmark,
         structure_K1, C_data, E_data, S_sparse.colptr,
         block_colptr, block_rowval, block_row_offsets, col_heights,

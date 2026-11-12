@@ -412,3 +412,20 @@ end
     # The same retained block may of course observe different landmarks
     @test SchurStructure([6, 6], [3, 3], [[1], [1]]).npblocks == 2
 end
+
+@testset "Multi-chunk Schur reduction needs buffers only for chunks 2..K (M3)" begin
+    p = standard_problem()
+    n = length(p.b)
+    x_ref = reference_solve(p, 0.4, ones(n))
+    for kind in (:dense, :sparse), nchunks in (1, 2, 4)
+        ls = make_schur_ls(kind, p; nchunks)
+        extra = kind === :dense ? ls.workspace.thread_dense_S : ls.workspace.thread_nzvals
+        @test length(extra) == nchunks - 1
+        SecondOrderOptimization.dampen!(ls, 0.4)
+        @test SecondOrderOptimization.solve!(ls) == SecondOrderOptimization.Success
+        @test norm(ls.x - x_ref) <= 1e-10 * norm(x_ref)
+        # A second solve (buffers are reused) gives the same answer
+        @test SecondOrderOptimization.solve!(ls) == SecondOrderOptimization.Success
+        @test norm(ls.x - x_ref) <= 1e-10 * norm(x_ref)
+    end
+end

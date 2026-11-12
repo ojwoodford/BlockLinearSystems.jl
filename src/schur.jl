@@ -217,8 +217,8 @@ struct SchurReductionWorkspace{T}
     C_inv_data::Vector{T}                 # Cached C_l(lambda)^-1: length sum_l d_l^2
     z_data::Vector{T}                     # Cached z_l = C_inv * g_p,l: length sum_l d_l
     thread_g_S::Vector{Vector{T}}         # length nchunks, each length nc
-    thread_dense_S::Vector{Matrix{T}}     # length nchunks, each nc x nc (empty if sparse)
-    thread_nzvals::Vector{Vector{T}}      # length nchunks, each length nnz(S) (empty if dense)
+    thread_dense_S::Vector{Matrix{T}}     # length nchunks-1, each nc x nc (empty if sparse); chunk 1 accumulates directly into S
+    thread_nzvals::Vector{Vector{T}}      # length nchunks-1, each length nnz(S) (empty if dense); chunk 1 accumulates directly into S.nzval
     failed_landmark::Base.Threads.Atomic{Int}
 end
 
@@ -239,11 +239,11 @@ function SchurReductionWorkspace{T}(
     thread_g_S = [Vector{T}(undef, structure.nc) for _ in 1:nchunks]
     
     if is_dense
-        thread_dense_S = [Matrix{T}(undef, structure.nc, structure.nc) for _ in 1:nchunks]
+        thread_dense_S = [Matrix{T}(undef, structure.nc, structure.nc) for _ in 2:nchunks]
         thread_nzvals = Vector{Vector{T}}()
     else
         thread_dense_S = Vector{Matrix{T}}()
-        thread_nzvals = [Vector{T}(undef, nnz_S) for _ in 1:nchunks]
+        thread_nzvals = [Vector{T}(undef, nnz_S) for _ in 2:nchunks]
     end
 
     return SchurReductionWorkspace{T}(
@@ -321,6 +321,10 @@ end
 const SCHUR_THREAD_MIN_WORK = Ref(4096)
 
 @inline use_threads(nitems::Integer, work::Integer=nitems) = nitems > 1 && work >= SCHUR_THREAD_MIN_WORK[] && Threads.nthreads() > 1
+
+# Chunk 1 accumulates straight into the reduced system (`S` or `S.nzval`); only chunks 2..K need their
+# own buffers, which are merged in afterwards. With a single chunk no extra memory is needed at all.
+@inline chunk_buffer(target::AbstractArray, extra::Vector, k::Int) = k == 1 ? target : @inbounds(extra[k - 1])
 
 @inline function foreach_index(f::F, n::Int, threaded::Bool) where F
     if threaded
@@ -591,7 +595,9 @@ function reset_schur_dense!(
     end
     for k in eachindex(ws.W_scratch)
         fill!(ws.thread_g_S[k], zero(T))
-        fill!(ws.thread_dense_S[k], zero(T))
+    end
+    for buf in ws.thread_dense_S
+        fill!(buf, zero(T))
     end
     ws.failed_landmark[] = 0
     return nothing
@@ -619,7 +625,9 @@ function reset_schur_sparse!(
     end
     for k in eachindex(ws.W_scratch)
         fill!(ws.thread_g_S[k], zero(T))
-        fill!(ws.thread_nzvals[k], zero(T))
+    end
+    for buf in ws.thread_nzvals
+        fill!(buf, zero(T))
     end
     ws.failed_landmark[] = 0
     return nothing
@@ -645,15 +653,15 @@ function reduce_schur_dense!(
         # Function barrier outside thread loop
         if dp == 3
             foreach_index(nchunks, threaded) do k
-                reduce_schur_dense_group!(ws.thread_dense_S[k], ws.thread_g_S[k], ws.C_inv_data, ws.z_data, ws.W_scratch[k], ws.failed_landmark, structure, C_data, E_data, b_p, scaling_p, lambda, chunks[k], static(3))
+                reduce_schur_dense_group!(chunk_buffer(S, ws.thread_dense_S, k), ws.thread_g_S[k], ws.C_inv_data, ws.z_data, ws.W_scratch[k], ws.failed_landmark, structure, C_data, E_data, b_p, scaling_p, lambda, chunks[k], static(3))
             end
         elseif dp == 1
             foreach_index(nchunks, threaded) do k
-                reduce_schur_dense_group!(ws.thread_dense_S[k], ws.thread_g_S[k], ws.C_inv_data, ws.z_data, ws.W_scratch[k], ws.failed_landmark, structure, C_data, E_data, b_p, scaling_p, lambda, chunks[k], static(1))
+                reduce_schur_dense_group!(chunk_buffer(S, ws.thread_dense_S, k), ws.thread_g_S[k], ws.C_inv_data, ws.z_data, ws.W_scratch[k], ws.failed_landmark, structure, C_data, E_data, b_p, scaling_p, lambda, chunks[k], static(1))
             end
         elseif dp == 2
             foreach_index(nchunks, threaded) do k
-                reduce_schur_dense_group!(ws.thread_dense_S[k], ws.thread_g_S[k], ws.C_inv_data, ws.z_data, ws.W_scratch[k], ws.failed_landmark, structure, C_data, E_data, b_p, scaling_p, lambda, chunks[k], static(2))
+                reduce_schur_dense_group!(chunk_buffer(S, ws.thread_dense_S, k), ws.thread_g_S[k], ws.C_inv_data, ws.z_data, ws.W_scratch[k], ws.failed_landmark, structure, C_data, E_data, b_p, scaling_p, lambda, chunks[k], static(2))
             end
         else
             error("Unsupported landmark dimension $dp")
@@ -672,17 +680,21 @@ function merge_dense_S!(
     copyto!(g_S, b_c)
     nchunks = length(thread_g_S)
 
-    # Column-wise over the upper triangle, in parallel only when there is enough work
-    foreach_index(nc, use_threads(nc, nc * nc * nchunks)) do j
+    # Column-wise over the upper triangle, in parallel only when there is enough work. Chunk 1 has
+    # already accumulated into S; `thread_dense_S` holds the buffers of chunks 2..nchunks.
+    nextra = length(thread_dense_S)
+    foreach_index(nc, use_threads(nc, nc * (nextra * nc + nchunks))) do j
         for k in 1:nchunks
             @inbounds g_S[j] -= thread_g_S[k][j]
         end
-        for i in 1:j
-            val = zero(T)
-            for k in 1:nchunks
-                @inbounds val += thread_dense_S[k][i, j]
+        if nextra > 0
+            for i in 1:j
+                val = zero(T)
+                for k in 1:nextra
+                    @inbounds val += thread_dense_S[k][i, j]
+                end
+                @inbounds S[i, j] += val
             end
-            @inbounds S[i, j] += val
         end
     end
     return nothing
@@ -711,15 +723,15 @@ function reduce_schur_sparse!(
 
         if dp == 3
             foreach_index(nchunks, threaded) do k
-                reduce_schur_sparse_group!(ws.thread_nzvals[k], ws.thread_g_S[k], ws.C_inv_data, ws.z_data, ws.W_scratch[k], ws.failed_landmark, structure, C_data, E_data, S.colptr, block_colptr, block_rowval, block_row_offsets, col_heights, b_p, scaling_p, lambda, chunks[k], static(3))
+                reduce_schur_sparse_group!(chunk_buffer(S.nzval, ws.thread_nzvals, k), ws.thread_g_S[k], ws.C_inv_data, ws.z_data, ws.W_scratch[k], ws.failed_landmark, structure, C_data, E_data, S.colptr, block_colptr, block_rowval, block_row_offsets, col_heights, b_p, scaling_p, lambda, chunks[k], static(3))
             end
         elseif dp == 1
             foreach_index(nchunks, threaded) do k
-                reduce_schur_sparse_group!(ws.thread_nzvals[k], ws.thread_g_S[k], ws.C_inv_data, ws.z_data, ws.W_scratch[k], ws.failed_landmark, structure, C_data, E_data, S.colptr, block_colptr, block_rowval, block_row_offsets, col_heights, b_p, scaling_p, lambda, chunks[k], static(1))
+                reduce_schur_sparse_group!(chunk_buffer(S.nzval, ws.thread_nzvals, k), ws.thread_g_S[k], ws.C_inv_data, ws.z_data, ws.W_scratch[k], ws.failed_landmark, structure, C_data, E_data, S.colptr, block_colptr, block_rowval, block_row_offsets, col_heights, b_p, scaling_p, lambda, chunks[k], static(1))
             end
         elseif dp == 2
             foreach_index(nchunks, threaded) do k
-                reduce_schur_sparse_group!(ws.thread_nzvals[k], ws.thread_g_S[k], ws.C_inv_data, ws.z_data, ws.W_scratch[k], ws.failed_landmark, structure, C_data, E_data, S.colptr, block_colptr, block_rowval, block_row_offsets, col_heights, b_p, scaling_p, lambda, chunks[k], static(2))
+                reduce_schur_sparse_group!(chunk_buffer(S.nzval, ws.thread_nzvals, k), ws.thread_g_S[k], ws.C_inv_data, ws.z_data, ws.W_scratch[k], ws.failed_landmark, structure, C_data, E_data, S.colptr, block_colptr, block_rowval, block_row_offsets, col_heights, b_p, scaling_p, lambda, chunks[k], static(2))
             end
         else
             error("Unsupported landmark dimension $dp")
@@ -743,9 +755,10 @@ function merge_sparse_S!(
             @inbounds g_S[j] -= thread_g_S[k][j]
         end
     end
-    foreach_index(length(nzval), use_threads(length(nzval), length(nzval) * nchunks)) do i
+    nextra = length(thread_nzvals)   # chunk 1 has already accumulated into nzval
+    nextra > 0 && foreach_index(length(nzval), use_threads(length(nzval), length(nzval) * nextra)) do i
         val = zero(T)
-        for k in 1:nchunks
+        for k in 1:nextra
             @inbounds val += thread_nzvals[k][i]
         end
         @inbounds nzval[i] += val
