@@ -202,3 +202,47 @@ end
         end
     end
 end
+
+# Two groups of cameras ({1, 2} and {3, 4}) that share no landmark with each other, coupled only by
+# direct retained-retained blocks (odometry / loop-closure style), which have no eliminated variable.
+function coupled_groups_problem(seed=3)
+    rng = Random.Xoshiro(seed)
+    c_dims = [6, 6, 6, 6]
+    p_dims = [3, 3, 3, 3, 2, 2, 1, 1]
+    observations = [[1, 2], [1, 2], [3, 4], [3, 4], [1], [4], [2, 1], [3, 4]]
+    return SchurTestProblem(rng, c_dims, p_dims, observations; cc_pairs=[(3, 1), (4, 2), (2, 1)])
+end
+
+@testset "SecondOrderOptimization extension: retained-retained couplings without a shared eliminated variable (B4)" begin
+    p = coupled_groups_problem()
+    n = length(p.b)
+    structure = schur_structure(p)
+
+    # Pattern: the extra pairs get slots, in either order, and nothing else changes
+    plain = build_schur_covisibility(structure)
+    withextra = build_schur_covisibility(structure; extra_blocks=[(3, 1), (2, 4)])
+    @test !plain.block_covis[1, 3] && !plain.block_covis[2, 4]
+    @test withextra.block_covis[1, 3] && withextra.block_covis[2, 4]
+    @test nnz(withextra.block_covis) == nnz(plain.block_covis) + 2
+    @test_throws ArgumentError build_schur_covisibility(structure; extra_blocks=[(1, 5)])
+
+    # The sparse system fails to build a slot for B's coupling without the extra pairs ...
+    H = sparse_schur_matrix(p)
+    @test Set(retained_block_pairs(H.B)) ⊇ Set([(3, 1), (4, 2)])
+    @test_throws AssertionError build_b_to_s_map(H.B, plain.S_sparse, structure.boffsets_c)
+    # ... and builds one with them
+    covis = build_schur_covisibility(structure; extra_blocks=retained_block_pairs(H.B))
+    b_to_s = build_b_to_s_map(H.B, covis.S_sparse, structure.boffsets_c)
+    # every upper-triangle entry of the diagonal blocks (21 each) and all 36 entries of each off-diagonal block
+    @test count(>(0), b_to_s) == 4 * 21 + 36 * length(retained_block_pairs(H.B))
+
+    for kind in (:dense, :sparse), lambda in (0.0, 0.5)
+        @testset "$kind, lambda=$lambda" begin
+            ls = make_schur_ls(kind, p)
+            SecondOrderOptimization.dampen!(ls, lambda)
+            @test SecondOrderOptimization.solve!(ls) == SecondOrderOptimization.Success
+            x_ref = reference_solve(p, lambda, ones(n))
+            @test norm(ls.x - x_ref) <= 1e-10 * norm(x_ref)
+        end
+    end
+end

@@ -824,12 +824,18 @@ function sort_schur_blocks(
 end
 
 """
-    build_schur_covisibility(structure::SchurStructure) -> NamedTuple
+    build_schur_covisibility(structure::SchurStructure; extra_blocks=()) -> NamedTuple
 
 Compute block-level and scalar-level co-visibility sparsity patterns for the reduced camera system S.
-Returns `(block_colptr, block_rowval, block_row_offsets, col_heights, S_sparse, diag_inds)`.
+Returns `(block_covis, block_colptr, block_rowval, block_row_offsets, col_heights, S_sparse, diag_inds)`.
+
+The pattern contains every pair of retained blocks that share an eliminated block, plus the diagonal.
+Retained-retained couplings that do not go through an eliminated block (e.g. odometry factors or loop
+closures between poses with no common landmark) have no such slot, so list them in `extra_blocks`, an
+iterable of `(i, j)` retained block index pairs (in either order; `i == j` is allowed and ignored).
+Use [`retained_block_pairs`](@ref) to obtain them from the block pattern of `B`.
 """
-function build_schur_covisibility(structure::SchurStructure)
+function build_schur_covisibility(structure::SchurStructure; extra_blocks=())
     ncblocks = structure.ncblocks
     npblocks = structure.npblocks
     c_dims = structure.c_dims
@@ -850,6 +856,10 @@ function build_schur_covisibility(structure::SchurStructure)
                 block_covis[c1, c2] = true
             end
         end
+    end
+    for (i, j) in extra_blocks
+        (1 <= i <= ncblocks && 1 <= j <= ncblocks) || throw(ArgumentError("Extra block pair ($i, $j) is outside the $ncblocks retained blocks"))
+        block_covis[min(i, j), max(i, j)] = true
     end
     for c in 1:ncblocks
         block_covis[c, c] = true
@@ -907,6 +917,17 @@ function build_schur_covisibility(structure::SchurStructure)
         S_sparse = S_sparse,
         diag_inds = diag_inds
     )
+end
+
+"""
+    retained_block_pairs(B::SparseBlockLinearSystem) -> Vector{Tuple{Int, Int}}
+
+Off-diagonal stored blocks of `B` as `(row_block, col_block)` pairs. Pass them as `extra_blocks` to
+[`build_schur_covisibility`](@ref) so the reduced system has a slot for every coupling in `B`.
+"""
+function retained_block_pairs(B::SparseBlockLinearSystem)
+    cols, rows, _ = SparseArrays.findnz(B.indicestransposed)
+    return [(Int(r), Int(c)) for (c, r) in zip(cols, rows) if r != c]
 end
 
 """

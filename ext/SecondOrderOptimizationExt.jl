@@ -104,8 +104,9 @@ function SparseSchurLinearSystem(
     scaling_c = view(scaling, 1:nc)
     scaling_p = view(scaling, nc+1:tot_dim)
 
-    # 1. Build co-visibility graph and sparsity structures
-    covis = build_schur_covisibility(H.structure)
+    # 1. Build co-visibility graph and sparsity structures. Retained-retained couplings stored in B
+    # that do not go through an eliminated block need slots in S too.
+    covis = build_schur_covisibility(H.structure; extra_blocks=BlockLinearSystems.retained_block_pairs(H.B))
     S = covis.S_sparse
     Ti = eltype(covis.block_rowval)
 
