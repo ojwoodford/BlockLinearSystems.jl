@@ -414,20 +414,35 @@ end
     @test SchurStructure([6, 6], [3, 3], [[1], [1]]).npblocks == 2
 end
 
-@testset "Multi-chunk Schur reduction needs buffers only for chunks 2..K (M3)" begin
+@testset "Chunks write disjoint column ranges of one S: no per-chunk copies (M3)" begin
     p = standard_problem()
     n = length(p.b)
     x_ref = reference_solve(p, 0.4, ones(n))
-    for kind in (:dense, :sparse), nchunks in (1, 2, 4)
+    for kind in (:dense, :sparse), nchunks in (1, 2, 4, 9)
         ls = make_schur_ls(kind, p; nchunks)
-        extra = kind === :dense ? ls.workspace.thread_dense_S : ls.workspace.thread_nzvals
-        @test length(extra) == nchunks - 1
+        ws = ls.workspace
+        @test !hasproperty(ws, :thread_dense_S) && !hasproperty(ws, :thread_nzvals)
+        # col_chunks tile the retained blocks without overlap
+        @test length(ws.col_chunks) == nchunks
+        @test reduce(vcat, collect.(ws.col_chunks)) == collect(1:ls.H.structure.ncblocks)
         SecondOrderOptimization.dampen!(ls, 0.4)
         @test SecondOrderOptimization.solve!(ls) == SecondOrderOptimization.Success
         @test norm(ls.x - x_ref) <= 1e-10 * norm(x_ref)
-        # A second solve (buffers are reused) gives the same answer
-        @test SecondOrderOptimization.solve!(ls) == SecondOrderOptimization.Success
+        @test SecondOrderOptimization.solve!(ls) == SecondOrderOptimization.Success   # workspace reuse
         @test norm(ls.x - x_ref) <= 1e-10 * norm(x_ref)
+    end
+    # Forced-threaded run with many chunks gives the same answer
+    old = BlockLinearSystems.SCHUR_THREAD_MIN_WORK[]
+    try
+        BlockLinearSystems.SCHUR_THREAD_MIN_WORK[] = 0
+        for kind in (:dense, :sparse)
+            ls = make_schur_ls(kind, p; nchunks=3)
+            SecondOrderOptimization.dampen!(ls, 0.4)
+            @test SecondOrderOptimization.solve!(ls) == SecondOrderOptimization.Success
+            @test norm(ls.x - x_ref) <= 1e-10 * norm(x_ref)
+        end
+    finally
+        BlockLinearSystems.SCHUR_THREAD_MIN_WORK[] = old
     end
 end
 

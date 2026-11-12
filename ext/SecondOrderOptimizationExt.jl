@@ -404,15 +404,7 @@ function SecondOrderOptimization.copy_structure(ls::DenseSchurLinearSystem{T}) w
     b = copy(ls.b)
     x = ls.x
     scaling = copy(ls.scaling)
-    ws_trial = SchurReductionWorkspace{T}(
-        ls.workspace.W_scratch,
-        similar(ls.workspace.C_inv_data),
-        similar(ls.workspace.z_data),
-        ls.workspace.thread_g_S,
-        ls.workspace.thread_dense_S,
-        ls.workspace.thread_nzvals,
-        Base.Threads.Atomic{Int}(0)
-    )
+    ws_trial = BlockLinearSystems.trial_workspace(ls.workspace)
     return DenseSchurLinearSystem{T}(
         BlockLinearSystems.copy_structure(ls.H), b, x,
         view(b, 1:nc), view(b, nc+1:length(b)),
@@ -430,15 +422,7 @@ function SecondOrderOptimization.copy_structure(ls::SparseSchurLinearSystem{T, T
     b = copy(ls.b)
     x = ls.x
     scaling = copy(ls.scaling)
-    ws_trial = SchurReductionWorkspace{T}(
-        ls.workspace.W_scratch,
-        similar(ls.workspace.C_inv_data),
-        similar(ls.workspace.z_data),
-        ls.workspace.thread_g_S,
-        ls.workspace.thread_dense_S,
-        ls.workspace.thread_nzvals,
-        Base.Threads.Atomic{Int}(0)
-    )
+    ws_trial = BlockLinearSystems.trial_workspace(ls.workspace)
     return SparseSchurLinearSystem{T, Ti, TL, TF, TC}(
         BlockLinearSystems.copy_structure(ls.H), b, x,
         view(b, 1:nc), view(b, nc+1:length(b)),

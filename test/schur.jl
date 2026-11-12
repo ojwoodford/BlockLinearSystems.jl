@@ -423,37 +423,31 @@ using Test, LinearAlgebra, SparseArrays, StaticArrays, Static, BlockLinearSystem
     # --------------------------------------------------------------------------
     # 8. Zero-Allocation Unit Tests on Inner Group Kernels
     # --------------------------------------------------------------------------
-    # Warmup
-    BlockLinearSystems.reduce_schur_dense_group!(
-        S_dense, ws_K1.thread_g_S[1], ws_K1.C_inv_data, ws_K1.z_data,
-        ws_K1.W_scratch[1], ws_K1.failed_landmark,
-        structure_K1, C_data, E_data, b_p, scaling_p, lambda,
-        1:8, static(3)
-    )
-    allocs_dense_kernel = @allocated BlockLinearSystems.reduce_schur_dense_group!(
-        S_dense, ws_K1.thread_g_S[1], ws_K1.C_inv_data, ws_K1.z_data,
-        ws_K1.W_scratch[1], ws_K1.failed_landmark,
-        structure_K1, C_data, E_data, b_p, scaling_p, lambda,
-        1:8, static(3)
-    )
-    @test allocs_dense_kernel == 0
+    # Phase 1 (landmark factorization) and phase 2 (column accumulation) kernels
+    call_phase1() = BlockLinearSystems.factor_landmarks_group!(
+        ws_K1.C_inv_data, ws_K1.z_data, ws_K1.W_data, ws_K1.W_scratch[1], ws_K1.failed_landmark,
+        structure_K1, C_data, E_data, b_p, scaling_p, lambda, 1:8, static(3))
+    call_phase1()
+    @test (@allocated call_phase1()) == 0
 
-    # Warmup sparse kernel
-    BlockLinearSystems.reduce_schur_sparse_group!(
-        S_sparse.nzval, ws_sparse_K1.thread_g_S[1], ws_sparse_K1.C_inv_data, ws_sparse_K1.z_data,
-        ws_sparse_K1.W_scratch[1], ws_sparse_K1.failed_landmark,
-        structure_K1, C_data, E_data, S_sparse.colptr,
-        block_colptr, block_rowval, block_row_offsets, col_heights,
-        b_p, scaling_p, lambda, 1:8, static(3)
-    )
-    allocs_sparse_kernel = @allocated BlockLinearSystems.reduce_schur_sparse_group!(
-        S_sparse.nzval, ws_sparse_K1.thread_g_S[1], ws_sparse_K1.C_inv_data, ws_sparse_K1.z_data,
-        ws_sparse_K1.W_scratch[1], ws_sparse_K1.failed_landmark,
-        structure_K1, C_data, E_data, S_sparse.colptr,
-        block_colptr, block_rowval, block_row_offsets, col_heights,
-        b_p, scaling_p, lambda, 1:8, static(3)
-    )
-    @test allocs_sparse_kernel == 0
+    call_dense_cols() = BlockLinearSystems.accumulate_dense_columns!(
+        S_dense, g_S_dense, structure_K1, E_data, ws_K1.W_data, ws_K1.z_data,
+        ws_K1.cam_ptr, ws_K1.cam_entry, ws_K1.entry_landmark, 1:ncblocks)
+    call_dense_cols()
+    @test (@allocated call_dense_cols()) == 0
+
+    call_phase1_sparse() = BlockLinearSystems.factor_landmarks_group!(
+        ws_sparse_K1.C_inv_data, ws_sparse_K1.z_data, ws_sparse_K1.W_data, ws_sparse_K1.W_scratch[1], ws_sparse_K1.failed_landmark,
+        structure_K1, C_data, E_data, b_p, scaling_p, lambda, 1:8, static(3))
+    call_phase1_sparse()
+    @test (@allocated call_phase1_sparse()) == 0
+
+    call_sparse_cols() = BlockLinearSystems.accumulate_sparse_columns!(
+        S_sparse.nzval, g_S_sparse, structure_K1, E_data, ws_sparse_K1.W_data, ws_sparse_K1.z_data,
+        ws_sparse_K1.cam_ptr, ws_sparse_K1.cam_entry, ws_sparse_K1.entry_landmark,
+        S_sparse.colptr, block_colptr, block_rowval, block_row_offsets, col_heights, 1:ncblocks)
+    call_sparse_cols()
+    @test (@allocated call_sparse_cols()) == 0
 
     # --------------------------------------------------------------------------
     # 9. Two-Pass Ordering & Permutation Expansion Tests
