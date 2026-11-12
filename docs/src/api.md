@@ -56,8 +56,8 @@ sort_blocks_hierarchical
 
 ## Schur Complement Reduction
 
-Data structures and kernels for bipartite problems, where retained variables (e.g. cameras) are coupled
-through eliminated variables (e.g. landmarks). See the [Schur reduction tutorial](tutorials/schur_reduction.md).
+Data structures and kernels for bipartite problems, where a few retained variable blocks are coupled
+to many small eliminated variable blocks. See the [Schur reduction tutorial](tutorials/schur_reduction.md).
 
 ```@docs
 SchurStructure
@@ -75,7 +75,7 @@ fast_bAb
 ### Reduced-System Sparsity
 
 ```@docs
-build_schur_covisibility
+build_schur_pattern
 retained_block_pairs
 build_b_to_s_map
 ```
@@ -98,8 +98,8 @@ BlockLinearSystems.inplacecumsum!
 ### Schur Reduction Kernels
 
 ```@docs
-BlockLinearSystems.factor_landmark!
-BlockLinearSystems.factor_landmarks_group!
+BlockLinearSystems.factor_eliminated!
+BlockLinearSystems.factor_eliminated_group!
 BlockLinearSystems.accumulate_dense_columns!
 BlockLinearSystems.accumulate_sparse_columns!
 BlockLinearSystems.partition_columns

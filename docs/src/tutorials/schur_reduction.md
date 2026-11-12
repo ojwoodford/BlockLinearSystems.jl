@@ -1,7 +1,7 @@
 # Schur Complement Reduction
 
-Bundle adjustment and similar problems are *bipartite*: a few **retained** variable blocks (cameras, `B`)
-are coupled to many small **eliminated** blocks (landmarks, `C`) through coupling blocks `E`. The normal
+Many problems (bundle adjustment is one example) are *bipartite*: a few **retained** variable blocks (`B`)
+are coupled to many small **eliminated** blocks (`C`) through coupling blocks `E`. The normal
 equations
 
 ```math
@@ -18,7 +18,7 @@ for this; the optimizer-facing linear systems built on them live in
 
 ## Describing the problem
 
-A [`SchurStructure`](@ref) records the block dimensions and which retained blocks observe each eliminated
+A [`SchurStructure`](@ref) records the block dimensions and which retained blocks are coupled to each eliminated
 block. Eliminated blocks may have any dimension from 1 to 255: up to `BlockLinearSystems.D_STATIC` (8) they
 use statically sized register arithmetic, larger ones use a LAPACK Cholesky on a scratch matrix. The
 numerical values live in a [`SchurBlockMatrix`](@ref): `B` (a dense `Matrix` or a
@@ -31,13 +31,13 @@ numerical values live in a [`SchurBlockMatrix`](@ref): `B` (a dense `Matrix` or 
 using BlockLinearSystems, LinearAlgebra, Random
 
 rng = Random.Xoshiro(1)
-c_dims = [6, 6, 6]                 # three cameras
-p_dims = [3, 3, 3, 3, 2, 1]        # six landmarks of dimension 3, 3, 3, 3, 2, 1
-observations = [[1, 2], [1, 2, 3], [2, 3], [1, 3], [1, 2], [3]]
-st = SchurStructure(c_dims, p_dims, observations)
+c_dims = [6, 6, 6]                 # three retained blocks
+p_dims = [3, 3, 3, 3, 2, 1]        # six eliminated blocks, of dimension 3, 3, 3, 3, 2 and 1
+couplings = [[1, 2], [1, 2, 3], [2, 3], [1, 3], [1, 2], [3]]
+st = SchurStructure(c_dims, p_dims, couplings)
 
 # A random diagonally dominant (so positive definite) Hessian with exactly the structure described above:
-# dense B, block-diagonal C, and a coupling block wherever a camera observes a landmark
+# dense B, block-diagonal C, and a coupling block wherever a retained block is coupled to an eliminated one
 n = st.nc + sum(p_dims)
 H = zeros(n, n)
 H[1:st.nc, 1:st.nc] .= rand(rng, st.nc, st.nc)
@@ -53,7 +53,7 @@ H = H + H'
 H[diagind(H)] .= sum(abs, H; dims=2)[:] .+ 1
 b = randn(rng, n)
 
-# Fill B, C and E (E is stored transposed: E_data[eo + (r-1)*dp + i - 1] = H[camera row r, landmark i])
+# Fill B, C and E (E is stored transposed: E_data[eo + (r-1)*dp + i - 1] = H[retained row r, eliminated column i])
 B = H[1:st.nc, 1:st.nc]
 C_data = zeros(sum(abs2, p_dims))
 E_data = zeros(sum(c_dims[st.cpblock[e]] * p_dims[l] for l in 1:st.npblocks for e in st.cpptr[l]:st.cpptr[l+1]-1))
@@ -90,23 +90,23 @@ norm(x - x_full) / norm(x_full)
 ```
 
 The reduction returns `false` if an eliminated block is numerically singular (or not positive definite), and
-`ws.failed_landmark[]` then holds the lowest failing block index.
+`ws.failed_block[]` then holds the lowest failing block index.
 
 ## Sparse reduced systems
 
-When many camera pairs share no landmark, `S` is sparse. [`build_schur_covisibility`](@ref) computes its
+When many pairs of retained blocks share no eliminated block, `S` is sparse. [`build_schur_pattern`](@ref) computes its
 pattern, and [`build_b_to_s_map`](@ref) maps the stored blocks of a [`SparseBlockLinearSystem`](@ref) `B` to
 it; [`reduce_schur_sparse!`](@ref) then fills `S.nzval` directly. Retained–retained couplings that go through
 no eliminated block (odometry or loop-closure factors) need slots too: pass them as `extra_blocks`, which
 [`retained_block_pairs`](@ref) extracts from `B`:
 
 ```julia
-covis = build_schur_covisibility(st; extra_blocks=retained_block_pairs(B))
-S = covis.S_sparse
-b_to_s = build_b_to_s_map(B, covis, st.boffsets_c)
-reset_schur_sparse!(S.nzval, B.data, b_to_s, covis.diag_inds, scaling_c, lambda, ws)
+pattern = build_schur_pattern(st; extra_blocks=retained_block_pairs(B))
+S = pattern.S_sparse
+b_to_s = build_b_to_s_map(B, pattern, st.boffsets_c)
+reset_schur_sparse!(S.nzval, B.data, b_to_s, pattern.diag_inds, scaling_c, lambda, ws)
 reduce_schur_sparse!(S, g, b_c, b_p, scaling_p, lambda, st, C_data, E_data,
-                     covis.block_colptr, covis.block_rowval, covis.block_row_offsets, covis.col_heights, ws)
+                     pattern.block_colptr, pattern.block_rowval, pattern.block_row_offsets, pattern.col_heights, ws)
 ```
 
 ## How the reduction is parallelised

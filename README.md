@@ -10,13 +10,13 @@ High-performance block-structured dense (`DenseBlockLinearSystem`) and sparse (`
 
 ## Why BlockLinearSystems.jl?
 
-In nonlinear least squares (NLS), bundle adjustment (BA), and SLAM, optimization problems are naturally organized around variable blocks (e.g. 6-DoF camera poses, 3-DoF landmarks). Accumulating cost factor Hessian contributions into a standard `SparseMatrixCSC` during optimization requires costly searches across compressed column pointers, causing significant allocation and cache penalties.
+In nonlinear least squares (NLS), bundle adjustment (BA), and SLAM, optimization problems are naturally organized around variable blocks of different sizes (e.g. blocks of 6 and 3 variables). Accumulating cost factor Hessian contributions into a standard `SparseMatrixCSC` during optimization requires costly searches across compressed column pointers, causing significant allocation and cache penalties.
 
 `BlockLinearSystems.jl` provides dedicated block linear system accumulators specifically tuned for this workflow:
 - **Contiguous Block Storage**: Each non-zero block $(i, j)$ is stored contiguously in column-major order in a flat buffer, making block accumulation a single contiguous memory write.
 - **Zero-Allocation Views**: Accessing blocks with static dimensions (`static(N)` or `Val(N)`) returns stack-allocated `SizedMatrix` or `HybridArray` views, enabling unrolled SIMD addition with StaticArrays (`.+=`).
 - **Zero-Allocation Solver Scatter**: In iterative solvers, `sparse_with_map` precomputes the CSC pattern and an integer scatter map once during setup. In each iteration, `copyto!(csc_mat, bsm, scatter_map)` updates the sparse solver matrix with **zero allocations**.
-- **Schur Complement Reduction**: `SchurStructure`, `SchurBlockMatrix` and the parallel `reduce_schur_dense!` / `reduce_schur_sparse!` kernels eliminate landmark blocks (any dimension, 1–255) from bipartite systems, with dense or sparse reduced systems. `symmetrifyfull!(dest, bsm, camera_blocks)` extracts principal block submatrices in-place.
+- **Schur Complement Reduction**: `SchurStructure`, `SchurBlockMatrix` and the parallel `reduce_schur_dense!` / `reduce_schur_sparse!` kernels eliminate blocks (any dimension, 1–255) from bipartite systems, with dense or sparse reduced systems. `symmetrifyfull!(dest, bsm, blocks)` extracts principal block submatrices in-place.
 - **Thread-Local Clones**: `copy_structure(sys)` creates a lightweight thread-local accumulator sharing index structures, reduced after assembly via a fast BLAS vector addition (`sys.data .+= thread_sys.data`).
 
 ### Design Scope: Accumulators, Not General Matrices
@@ -45,7 +45,7 @@ In nonlinear least squares (NLS), bundle adjustment (BA), and SLAM, optimization
 using BlockLinearSystems, SparseArrays, Static, StaticArrays
 
 # 1. Define block sizes and block sparsity pattern (lower-triangular)
-#    Blocks: 2 poses of dim 6, 1 landmark of dim 3
+#    Blocks: 2 blocks of dim 6, 1 block of dim 3
 blocksizes = [6, 6, 3]
 block_coords = [(1, 1), (2, 1), (2, 2), (3, 1), (3, 2), (3, 3)]
 bsm = SparseBlockLinearSystem{Float64}(block_coords, blocksizes)
@@ -60,7 +60,7 @@ zero!(bsm)
 H_pose = @SMatrix rand(6, 6)
 block(bsm, 1, 1, Val(6), Val(6)) .+= H_pose
 
-# Accumulate landmark-pose block using static dimensions
+# Accumulate an off-diagonal block using static dimensions
 H_meas = @SMatrix rand(3, 6)
 block(bsm, 3, 1, Val(3), Val(6)) .+= H_meas
 
@@ -89,15 +89,15 @@ symmetrifyfull!(bdm)
 ### 3. Schur Complement Submatrix Extraction
 
 ```julia
-# Extract only the camera submatrix (blocks 1 and 2) in-place:
-H_cameras = Matrix{Float64}(undef, 12, 12)
-symmetrifyfull!(H_cameras, bsm, [1, 2])
+# Extract only the submatrix of blocks 1 and 2 in-place:
+H_sub = Matrix{Float64}(undef, 12, 12)
+symmetrifyfull!(H_sub, bsm, [1, 2])
 ```
 
 ### 4. Schur Complement Reduction
 
 ```julia
-st = SchurStructure([6, 6, 6], [3, 3, 3, 1], [[1, 2], [1, 2, 3], [2, 3], [3]])  # cameras, landmarks, who observes what
+st = SchurStructure([6, 6, 6], [3, 3, 3, 1], [[1, 2], [1, 2, 3], [2, 3], [3]])  # retained block dims, eliminated block dims, retained blocks coupled to each eliminated block
 ws = SchurReductionWorkspace{Float64}(st, 1)
 # ... fill B, C_data, E_data in a SchurBlockMatrix, then:
 reset_schur_dense!(S, B, scaling_c, lambda, ws)
