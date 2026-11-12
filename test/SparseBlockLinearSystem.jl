@@ -70,9 +70,6 @@ end
     @test nblocks(b, 2) == 3
     @test nblocks(b) == (4, 3)
     @test blockdata(b) === b.data
-    @test blockrange(b, 1, 1) == 1:3
-    @test blockrange(b, 1, 2) == 4:6
-    @test blockrange(b, 2, 2) == 3:5
 
     # eachstoredblock iterator
     stored_coords = [(r, c) for (r, c, B) in eachstoredblock(b)]

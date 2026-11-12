@@ -1,10 +1,13 @@
 using Static, StaticArrays
 
-struct BlockRLE{T<:Integer, L<:Integer} <: AbstractVector{T}
+# Block sizes are *stored* compactly as `T` (normally `UInt8`, hence the 1-255 limit), but every accessor
+# returns `Int` so that products such as `rows * cols` can never wrap around in the storage type.
+struct BlockRLE{T<:Integer, L<:Integer} <: AbstractVector{Int}
     runlengths::Vector{L}
     blocksizes::Vector{T}
     cumblocks::Vector{L}
     cummatrixdims::Vector{Int}
+    flat::Vector{T}          # per-block sizes, one entry per block: O(1) getindex (and checked block access)
 
     function BlockRLE{T, L}(runlengths::Vector{L}, blocksizes::Vector{T}) where {T<:Integer, L<:Integer}
         length(runlengths) == length(blocksizes) || throw(DimensionMismatch("runlengths and blocksizes must have identical length"))
@@ -36,15 +39,24 @@ struct BlockRLE{T<:Integer, L<:Integer} <: AbstractVector{T}
             cummatrixdims[i + 1] = cummatrixdims[i] + Int(merged_rl[i]) * Int(merged_bs[i])
         end
 
-        return new{T, L}(merged_rl, merged_bs, cumblocks, cummatrixdims)
+        flat = Vector{T}(undef, Int(cumblocks[end]) - 1)
+        for i in eachindex(merged_rl)
+            fill!(view(flat, Int(cumblocks[i]):Int(cumblocks[i + 1]) - 1), merged_bs[i])
+        end
+
+        return new{T, L}(merged_rl, merged_bs, cumblocks, cummatrixdims, flat)
     end
 end
 
 # Outer constructors
 function BlockRLE{T}(runlengths::AbstractVector{<:Integer}, blocksizes::AbstractVector{<:Integer}) where T<:Integer
-    all(b -> 0 < b <= 255, blocksizes) || throw(ArgumentError("Block dimensions must be between 1 and 255"))
-    rl = convert(Vector{Int}, runlengths)
-    bs = convert(Vector{T}, blocksizes)
+    length(runlengths) == length(blocksizes) || throw(DimensionMismatch("runlengths and blocksizes must have identical length"))
+    # Zero-length runs contain no blocks, so their sizes are irrelevant (and are not validated, matching
+    # the inner constructor); negative lengths are rejected there.
+    keep = findall(!iszero, runlengths)
+    all(b -> 0 < b <= 255, view(blocksizes, keep)) || throw(ArgumentError("Block dimensions must be between 1 and 255"))
+    rl = convert(Vector{Int}, runlengths[keep])
+    bs = convert(Vector{T}, blocksizes[keep])
     return BlockRLE{T, Int}(rl, bs)
 end
 
@@ -107,9 +119,7 @@ Base.IndexStyle(::Type{<:BlockRLE}) = IndexLinear()
 
 @inline function Base.getindex(rle::BlockRLE, i::Int)
     @boundscheck checkbounds(rle, i)
-    # Binary search to find run index
-    run_idx = searchsortedlast(rle.cumblocks, i)
-    return @inbounds rle.blocksizes[run_idx]
+    return @inbounds Int(rle.flat[i])
 end
 
 # Fast reductions
@@ -117,11 +127,11 @@ Base.sum(rle::BlockRLE) = rle.cummatrixdims[end] - 1
 
 Base.copy(rle::BlockRLE{T, L}) where {T, L} = BlockRLE{T, L}(copy(rle.runlengths), copy(rle.blocksizes))
 
-function Base.collect(rle::BlockRLE{T}) where T
-    out = Vector{T}(undef, length(rle))
+function Base.collect(rle::BlockRLE)
+    out = Vector{Int}(undef, length(rle))
     idx = 1
     for k in 1:nruns(rle)
-        sz = rle.blocksizes[k]
+        sz = Int(rle.blocksizes[k])
         len = rle.runlengths[k]
         fill!(view(out, idx:(idx + len - 1)), sz)
         idx += len
@@ -129,7 +139,7 @@ function Base.collect(rle::BlockRLE{T}) where T
     return out
 end
 
-Base.Vector(rle::BlockRLE{T}) where T = collect(rle)
+Base.Vector(rle::BlockRLE) = collect(rle)
 Base.Vector{T}(rle::BlockRLE) where T = convert(Vector{T}, collect(rle))
 Base.convert(::Type{Vector{T}}, rle::BlockRLE) where T = convert(Vector{T}, collect(rle))
 Base.convert(::Type{Vector}, rle::BlockRLE) = collect(rle)
@@ -149,7 +159,7 @@ end
 # RLE Specific API
 nruns(rle::BlockRLE) = length(rle.runlengths)
 runlength(rle::BlockRLE, k::Integer) = rle.runlengths[k]
-runblocksize(rle::BlockRLE, k::Integer) = rle.blocksizes[k]
+runblocksize(rle::BlockRLE, k::Integer) = Int(rle.blocksizes[k])
 matrixdimension(rle::BlockRLE) = rle.cummatrixdims[end] - 1
 
 @inline function runblockrange(rle::BlockRLE, k::Integer)
@@ -160,14 +170,6 @@ end
 @inline function runmatrixrange(rle::BlockRLE, k::Integer)
     @boundscheck (1 <= k <= nruns(rle)) || throw(BoundsError(rle.runlengths, k))
     return @inbounds rle.cummatrixdims[k]:(rle.cummatrixdims[k+1] - 1)
-end
-
-@inline function blockrange(rle::BlockRLE, i::Integer)
-    @boundscheck (1 <= i <= length(rle)) || throw(BoundsError(rle, i))
-    run_idx = searchsortedlast(rle.cumblocks, i)
-    sz = Int(@inbounds rle.blocksizes[run_idx])
-    bstart = @inbounds rle.cummatrixdims[run_idx] + (i - @inbounds rle.cumblocks[run_idx]) * sz
-    return bstart:(bstart + sz - 1)
 end
 
 function computestartindices(rle::BlockRLE)
@@ -191,7 +193,7 @@ function eachrun(rle::BlockRLE)
     return (
         (run = k,
          blockrange = runblockrange(rle, k),
-         blocksize = rle.blocksizes[k],
+         blocksize = Int(rle.blocksizes[k]),
          matrixrange = runmatrixrange(rle, k))
         for k in 1:nruns(rle)
     )

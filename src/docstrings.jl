@@ -240,21 +240,6 @@ Returns the underlying data storage buffer (a contiguous flat `Vector{T}` for [`
 blockdata
 
 """
-    blockrange(sys, dim, idx) -> UnitRange{Int}
-
-Returns the 1-based global scalar coordinate range of block `idx` along dimension `dim` (1 for rows, 2 for columns).
-
-# Example
-```julia
-using BlockLinearSystems
-
-sys = DenseBlockLinearSystem{Float64}([2, 3])
-blockrange(sys, 1, 2) # 3:5
-```
-"""
-blockrange
-
-"""
     eachstoredblock(sys)
 
 Returns an iterator yielding `(i, j, block_view)` for every structurally non-zero block in `sys`.
@@ -348,7 +333,7 @@ sparse_with_map
     BlockRLE(vec::AbstractVector{<:Integer})
 
 Run-Length Encoded (RLE) block layout metadata capturing contiguous runs of uniform block sizes.
-Subtypes `AbstractVector{UInt8}` for transparent interop with all linear systems while providing
+Subtypes `AbstractVector{Int}` (storing the sizes compactly, normally as `UInt8`, but always returning `Int`) for transparent interop with all linear systems while providing
 \$O(1)\$ matrix dimension lookup, \$O(1)\$ run indexing, and \$O(\\log R)\$ block-to-coordinate mapping.
 
 # Fields
@@ -383,7 +368,7 @@ Returns the number of blocks in run `k`.
 runlength
 
 """
-    runblocksize(rle::BlockRLE, k::Integer) -> UInt8
+    runblocksize(rle::BlockRLE, k::Integer) -> Int
 
 Returns the block dimension for blocks in run `k`.
 """
@@ -428,3 +413,13 @@ variables from retained variables while grouping identical block dimensions into
 Returns the permutation vector `permutation` and the resulting `BlockRLE` metadata.
 """
 sort_blocks_hierarchical
+
+"""
+    blockrange(first, len) -> AbstractUnitRange
+
+Index range of a block of `len` entries starting at index `first`. A `StaticInt` `len` gives a statically
+sized range; any other integer `len` gives a plain `UnitRange{Int}`, so views built with it are type stable
+and allocation free even when the size is only known at run time. Integer sizes of any type (including
+the `UInt8` sizes stored by `BlockRLE`) are widened to `Int` before use.
+"""
+blockrange

@@ -25,10 +25,6 @@
     @test runblockrange(rle, 2) == 11:60
     @test runmatrixrange(rle, 1) == 1:60
     @test runmatrixrange(rle, 2) == 61:210
-    @test blockrange(rle, 1) == 1:6
-    @test blockrange(rle, 10) == 55:60
-    @test blockrange(rle, 11) == 61:63
-    @test blockrange(rle, 60) == 208:210
 
     # computestartindices
     starts = BlockLinearSystems.computestartindices(rle)
@@ -158,4 +154,31 @@
     @test BlockLinearSystems.as_block_rle(rle) === rle
     @test BlockLinearSystems.as_block_rle(rle_i32) isa BlockRLE{UInt8, Int}
     @test BlockLinearSystems.as_block_rle(rle_int) isa BlockRLE{UInt8, Int}
+end
+
+@testset "BlockRLE size accessors return Int (B7)" begin
+    rle = BlockRLE([3, 2], [16, 20])
+    @test rle isa AbstractVector{Int}
+    @test rle[1] isa Int
+    @test runblocksize(rle, 2) isa Int
+    @test first(eachrun(rle)).blocksize isa Int
+    @test collect(rle) isa Vector{Int}
+    # The product of two stored UInt8 sizes would wrap; the accessors must not
+    @test rle[1] * rle[4] == 320
+    @test runblocksize(rle, 1) * runblocksize(rle, 2) == 320
+    @test sum(rle) == 3 * 16 + 2 * 20
+end
+
+@testset "Zero-length runs are not validated (M11)" begin
+    # A zero-length run may carry any size: it contains no blocks
+    rle = BlockRLE([2, 0, 3], [4, 0, 5])
+    @test rle == BlockRLE([2, 3], [4, 5])
+    @test length(rle) == 5
+    @test BlockRLE([0, 2], [300, 7]) == BlockRLE([2], [7])
+    @test length(BlockRLE([0], [1000])) == 0
+    # Non-empty runs are still validated, as are lengths
+    @test_throws ArgumentError BlockRLE([1], [0])
+    @test_throws ArgumentError BlockRLE([2, 1], [4, 300])
+    @test_throws DimensionMismatch BlockRLE([1, 2], [4])
+    @test_throws ArgumentError BlockRLE([-1], [4])
 end

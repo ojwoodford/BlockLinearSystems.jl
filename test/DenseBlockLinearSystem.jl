@@ -21,8 +21,6 @@
     @test nblocks(bdm, 2) == 2
     @test nblocks(bdm) == (2, 2)
     @test blockdata(bdm) === bdm.data
-    @test blockrange(bdm, 1, 1) == 1:2
-    @test blockrange(bdm, 1, 2) == 3:4
 
     # eachstoredblock iterator
     all_blocks = [(r, c) for (r, c, B) in eachstoredblock(bdm)]
@@ -137,4 +135,36 @@
     @test size(DenseBlockLinearSystem{Float64}(data53; offsets=[1, 3, 6], coloffsets=[1, 4])) == (5, 3)
     @test size(DenseBlockLinearSystem(data55; offsets=[1, 3, 6])) == (5, 5)
     @test size(DenseBlockLinearSystem(data53; offsets=[1, 3, 6], coloffsets=[1, 4])) == (5, 3)
+end
+
+@testset "symmetrifyfull! tiled copy (M7)" begin
+    for n in (1, 2, 5, 31, 32, 33, 64, 70, 100)
+        A = randn(n, n)
+        L = tril(A)
+        expected = L + tril(A, -1)'
+        sys = DenseBlockLinearSystem{Float64}(copy(A), fill(1, n))
+        result = symmetrifyfull!(sys)
+        @test result === sys.data
+        @test result == expected
+        @test result == result'
+        sys2 = DenseBlockLinearSystem{Float64}(copy(A), fill(1, n))
+        @test symmetrifyfull(sys2) == expected
+        @test sys2.data == A        # symmetrifyfull does not modify its argument
+    end
+end
+
+@testset "Clear errors at the edges (M8)" begin
+    # Empty layouts are valid and give an empty system
+    empty_dense = DenseBlockLinearSystem{Float64}(Int[])
+    @test size(empty_dense) == (0, 0)
+    @test nblocks(empty_dense) == (0, 0)
+    @test size(SparseBlockLinearSystem{Float64}(Tuple{Int, Int}[], Int[])) == (0, 0)
+    # Unsorted, repeated and oversized offsets give an ArgumentError (not an InexactError)
+    @test_throws ArgumentError DenseBlockLinearSystem{Float64}(BlockOffsets([1, 3, 2]))
+    @test_throws ArgumentError DenseBlockLinearSystem{Float64}(BlockOffsets([1, 3, 3]))
+    @test_throws ArgumentError DenseBlockLinearSystem{Float64}(BlockOffsets([1, 400]))
+    @test_throws ArgumentError DenseBlockLinearSystem{Float64}(BlockOffsets([1, 3, 7]), BlockOffsets([1, 2, 2]))
+    @test_throws ArgumentError DenseBlockLinearSystem(zeros(5, 5), BlockOffsets([1, 4, 3, 6]))
+    err = try DenseBlockLinearSystem{Float64}(BlockOffsets([1, 3, 2])); nothing catch e; e end
+    @test occursin("strictly increasing", sprint(showerror, err))
 end

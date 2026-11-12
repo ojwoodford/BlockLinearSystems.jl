@@ -2,6 +2,12 @@ using Static, StaticArrays, SparseArrays, LinearAlgebra
 
 SR(first, last) = StaticArrays.SUnitRange(dynamic(first), dynamic(last))
 
+# Range of `len` indices starting at `first`. A static length gives a statically sized range (its type
+# carries the length); a run-time length must give a plain `UnitRange`, since an `SUnitRange` with a
+# run-time length would create a new type on every call (type-unstable, allocating).
+blockrange(first, len::StaticInt) = SR(0, len - static(1)) .+ first
+blockrange(first, len::Integer) = dynamic(first):(dynamic(first) + Int(len) - 1)
+
 zero!(aa::AbstractArray) = fill!(aa, zero(eltype(aa)))
 
 """
@@ -47,13 +53,29 @@ function computestartindices(blocksizes)
     return startind
 end
 
+# Offsets vector (length nblocks + 1, starting at 1) of a block layout; valid for an empty layout too
+function blockoffsets(sizes)
+    offsets = computestartindices(sizes)
+    push!(offsets, isempty(offsets) ? 1 : offsets[end] + Int(sizes[end]))
+    return offsets
+end
+
+# Block sizes from start offsets, with a descriptive error for unsorted / empty / oversized blocks
+function blocksizes_from_offsets(offsets::AbstractVector{<:Integer}, what::AbstractString="Block")
+    @inbounds for i in 1:length(offsets)-1
+        d = offsets[i+1] - offsets[i]
+        1 <= d <= 255 || throw(ArgumentError("$what offsets must be strictly increasing with block sizes between 1 and 255, but block $i spans offsets $(offsets[i]) to $(offsets[i+1]) (size $d)"))
+    end
+    return BlockRLE(diff(offsets))
+end
+
 function block_sparse_nnz(sparsity, blocksizes)
     # Compute the number of non-zeros in a block sparse matrix
     nnz = 0
     for col in 1:size(sparsity, 2)
-        @inbounds bc = blocksizes[col]
+        @inbounds bc = Int(blocksizes[col])
         for r in nzrange(sparsity, col)
-            nnz += bc * @inbounds blocksizes[rowvals(sparsity)[r]]
+            nnz += bc * Int(@inbounds blocksizes[rowvals(sparsity)[r]])
         end
     end
     return nnz

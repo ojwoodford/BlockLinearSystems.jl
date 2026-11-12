@@ -21,8 +21,7 @@ struct SparseBlockLinearSystem{T}
     n::Int                                                      # Number of columns of the represented matrix
 
     function SparseBlockLinearSystem{T}(nnzvals::Integer, indicestransposed::SparseArrays.SparseMatrixCSC{Int, Int}, rowblocksizes::BlockRLE{UInt8, Int}, colblocksizes::BlockRLE{UInt8, Int}=rowblocksizes) where T
-        all(i -> 0 < i <= 255, rowblocksizes) || throw(ArgumentError("Row block dimensions must be between 1 and 255"))
-        all(i -> 0 < i <= 255, colblocksizes) || throw(ArgumentError("Column block dimensions must be between 1 and 255"))
+        # Block sizes are already validated (1-255) by the BlockRLE constructor
         sumrbs = Int(sum(rowblocksizes))
         sumcbs = rowblocksizes === colblocksizes ? sumrbs : Int(sum(colblocksizes))
         size(indicestransposed) == (length(colblocksizes), length(rowblocksizes)) || throw(DimensionMismatch("Size of indicestransposed must be ($(length(colblocksizes)), $(length(rowblocksizes))), got $(size(indicestransposed))"))
@@ -92,12 +91,19 @@ copy_structure(bsm::SparseBlockLinearSystem{T}) where T =
 
 function uniformscaling!(M::SparseBlockLinearSystem, k)
     M.rowblocksizes == M.columnblocksizes || throw(ArgumentError("SparseBlockLinearSystem must be block-square for uniformscaling!"))
-    for (i, blocksz) in enumerate(M.rowblocksizes)
-        @inbounds ind = M.indicestransposed[i, i]
-        ind > 0 || throw(ArgumentError("Diagonal block ($i, $i) is missing in SparseBlockLinearSystem"))
-        bs = Int(blocksz)
-        for j in ind:(bs + 1):(ind + bs^2 - 1)
-            @inbounds M.data[j] += k
+    rle = M.rowblocksizes
+    i = 1
+    for (len, bs_val) in zip(rle.runlengths, rle.blocksizes)
+        bs = Int(bs_val)
+        stride = bs + 1
+        span = bs * bs
+        for _ in 1:len
+            @inbounds ind = M.indicestransposed[i, i]
+            ind > 0 || throw(ArgumentError("Diagonal block ($i, $i) is missing in SparseBlockLinearSystem"))
+            for j in ind:stride:(ind + span - 1)
+                @inbounds M.data[j] += k
+            end
+            i += 1
         end
     end
     return M
@@ -122,7 +128,8 @@ end
 
 @inline function block(bsm::SparseBlockLinearSystem, i::Integer, j::Integer, rows::Integer, cols::Integer)
     @boundscheck checkblock(bsm, i, j, rows, cols)
-    return @inbounds reshape(view(bsm.data, SR(0, rows*cols-1) .+ bsm.indicestransposed[j, i]), (rows, cols))
+    r, c = Int(rows), Int(cols)
+    return @inbounds reshape(view(bsm.data, blockrange(bsm.indicestransposed[j, i], r * c)), (r, c))
 end
 
 @inline function block(bsm::SparseBlockLinearSystem, i::Integer, j::Integer, ::StaticInt{rows}, cols::Integer) where rows
@@ -172,21 +179,6 @@ nblocks(sys::Union{DenseBlockLinearSystem, SparseBlockLinearSystem}) =
 
 blockdata(sys::DenseBlockLinearSystem) = sys.data
 blockdata(sys::SparseBlockLinearSystem) = sys.data
-
-blockrange(sys::DenseBlockLinearSystem, dim::Integer, idx::Integer) =
-    dim == 1 ? (sys.rowblockoffsets[idx]:sys.rowblockoffsets[idx+1]-1) :
-    dim == 2 ? (sys.columnblockoffsets[idx]:sys.columnblockoffsets[idx+1]-1) :
-    throw(ArgumentError("Dimension out of range: must be 1 or 2"))
-
-function blockrange(sys::SparseBlockLinearSystem, dim::Integer, idx::Integer)
-    sizes = blocksizes(sys, dim)
-    (1 <= idx <= length(sizes)) || throw(BoundsError(sizes, idx))
-    start = 1
-    for k in 1:idx-1
-        start += Int(sizes[k])
-    end
-    return start:(start + Int(sizes[idx]) - 1)
-end
 
 # eachstoredblock iterator
 struct EachStoredBlockIterator{S}
@@ -320,9 +312,9 @@ function symmetrifyfull!(mat::AbstractMatrix{T}, bsm::SparseBlockLinearSystem{T}
             return nothing
         end
         all(b -> 1 <= b <= length(bsm.rowblocksizes), block_indices) || throw(BoundsError(bsm.rowblocksizes, block_indices))
-        lengths = zeros(UInt, length(bsm.rowblocksizes))
+        lengths = zeros(Int, length(bsm.rowblocksizes))
         lengths[block_indices] .= bsm.rowblocksizes[block_indices]
-        starts = zeros(UInt, length(bsm.rowblocksizes))
+        starts = zeros(Int, length(bsm.rowblocksizes))
         starts[block_indices] .= cumsum(vcat(1, bsm.rowblocksizes[block_indices[1:end-1]]))
     end
     m = sum(lengths)
@@ -373,9 +365,9 @@ end
 function Base.Matrix(bsm::SparseBlockLinearSystem{T}) where T
     # Allocate the output
     rowstarts = cumsum(bsm.rowblocksizes)
-    pushfirst!(rowstarts, UInt(0))
+    pushfirst!(rowstarts, 0)
     colstarts = cumsum(bsm.columnblocksizes)
-    pushfirst!(colstarts, UInt(0))
+    pushfirst!(colstarts, 0)
     output = zeros(T, rowstarts[end], colstarts[end])
     # Copy blocks into the output
     for (c, r, index) in zip(SparseArrays.findnz(bsm.indicestransposed)...)
