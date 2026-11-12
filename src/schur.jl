@@ -296,6 +296,25 @@ end
     @inbounds W_scratch[1, r_idx] * E_data[e_off] + W_scratch[2, r_idx] * E_data[e_off + 1] + W_scratch[3, r_idx] * E_data[e_off + 2]
 end
 
+# Threading helper. `@threads` allocates tasks on every call and has scheduling overhead, so loops run
+# serially unless there is more than one thread available *and* enough work to be worth splitting.
+const SCHUR_THREAD_MIN_WORK = Ref(4096)
+
+@inline use_threads(nitems::Integer, work::Integer=nitems) = nitems > 1 && work >= SCHUR_THREAD_MIN_WORK[] && Threads.nthreads() > 1
+
+@inline function foreach_index(f::F, n::Int, threaded::Bool) where F
+    if threaded
+        Threads.@threads for i in 1:n
+            f(i)
+        end
+    else
+        for i in 1:n
+            f(i)
+        end
+    end
+    return nothing
+end
+
 """
     reduce_schur_dense_group!(S_chunk, gS_chunk, C_inv_data, z_data, W_scratch, failed_landmark,
                               structure, C_data, E_data, b_p, scaling_p, lambda, p_chunk, ::StaticInt{Dp})
@@ -597,6 +616,7 @@ function reduce_schur_dense!(
     C_data::Vector{T}, E_data::Vector{T}, ws::SchurReductionWorkspace{T}
 ) where T
     nchunks = length(ws.W_scratch)
+    threaded = use_threads(nchunks, length(structure.cpblock))
 
     for (g_idx, p_range) in enumerate(structure.p_groups)
         dp = structure.p_sizes[g_idx]
@@ -604,15 +624,15 @@ function reduce_schur_dense!(
 
         # Function barrier outside thread loop
         if dp == 3
-            Threads.@threads for k in 1:nchunks
+            foreach_index(nchunks, threaded) do k
                 reduce_schur_dense_group!(ws.thread_dense_S[k], ws.thread_g_S[k], ws.C_inv_data, ws.z_data, ws.W_scratch[k], ws.failed_landmark, structure, C_data, E_data, b_p, scaling_p, lambda, chunks[k], static(3))
             end
         elseif dp == 1
-            Threads.@threads for k in 1:nchunks
+            foreach_index(nchunks, threaded) do k
                 reduce_schur_dense_group!(ws.thread_dense_S[k], ws.thread_g_S[k], ws.C_inv_data, ws.z_data, ws.W_scratch[k], ws.failed_landmark, structure, C_data, E_data, b_p, scaling_p, lambda, chunks[k], static(1))
             end
         elseif dp == 2
-            Threads.@threads for k in 1:nchunks
+            foreach_index(nchunks, threaded) do k
                 reduce_schur_dense_group!(ws.thread_dense_S[k], ws.thread_g_S[k], ws.C_inv_data, ws.z_data, ws.W_scratch[k], ws.failed_landmark, structure, C_data, E_data, b_p, scaling_p, lambda, chunks[k], static(2))
             end
         else
@@ -632,17 +652,17 @@ function merge_dense_S!(
     copyto!(g_S, b_c)
     nchunks = length(thread_g_S)
 
-    # Parallelize column-wise over upper triangle
-    Threads.@threads for j in 1:nc
+    # Column-wise over the upper triangle, in parallel only when there is enough work
+    foreach_index(nc, use_threads(nc, nc * nc * nchunks)) do j
         for k in 1:nchunks
-            g_S[j] -= thread_g_S[k][j]
+            @inbounds g_S[j] -= thread_g_S[k][j]
         end
         for i in 1:j
             val = zero(T)
             for k in 1:nchunks
-                val += thread_dense_S[k][i, j]
+                @inbounds val += thread_dense_S[k][i, j]
             end
-            S[i, j] += val
+            @inbounds S[i, j] += val
         end
     end
     return nothing
@@ -663,21 +683,22 @@ function reduce_schur_sparse!(
     ws::SchurReductionWorkspace{T}
 ) where {T, Ti}
     nchunks = length(ws.W_scratch)
+    threaded = use_threads(nchunks, length(structure.cpblock))
 
     for (g_idx, p_range) in enumerate(structure.p_groups)
         dp = structure.p_sizes[g_idx]
         chunks = structure.chunks[g_idx]
 
         if dp == 3
-            Threads.@threads for k in 1:nchunks
+            foreach_index(nchunks, threaded) do k
                 reduce_schur_sparse_group!(ws.thread_nzvals[k], ws.thread_g_S[k], ws.C_inv_data, ws.z_data, ws.W_scratch[k], ws.failed_landmark, structure, C_data, E_data, S.colptr, block_colptr, block_rowval, block_row_offsets, col_heights, b_p, scaling_p, lambda, chunks[k], static(3))
             end
         elseif dp == 1
-            Threads.@threads for k in 1:nchunks
+            foreach_index(nchunks, threaded) do k
                 reduce_schur_sparse_group!(ws.thread_nzvals[k], ws.thread_g_S[k], ws.C_inv_data, ws.z_data, ws.W_scratch[k], ws.failed_landmark, structure, C_data, E_data, S.colptr, block_colptr, block_rowval, block_row_offsets, col_heights, b_p, scaling_p, lambda, chunks[k], static(1))
             end
         elseif dp == 2
-            Threads.@threads for k in 1:nchunks
+            foreach_index(nchunks, threaded) do k
                 reduce_schur_sparse_group!(ws.thread_nzvals[k], ws.thread_g_S[k], ws.C_inv_data, ws.z_data, ws.W_scratch[k], ws.failed_landmark, structure, C_data, E_data, S.colptr, block_colptr, block_rowval, block_row_offsets, col_heights, b_p, scaling_p, lambda, chunks[k], static(2))
             end
         else
@@ -697,17 +718,17 @@ function merge_sparse_S!(
     copyto!(g_S, b_c)
     nchunks = length(thread_g_S)
 
-    Threads.@threads for j in 1:nc
+    foreach_index(nc, use_threads(nc, nc * nchunks)) do j
         for k in 1:nchunks
-            g_S[j] -= thread_g_S[k][j]
+            @inbounds g_S[j] -= thread_g_S[k][j]
         end
     end
-    Threads.@threads for i in eachindex(nzval)
+    foreach_index(length(nzval), use_threads(length(nzval), length(nzval) * nchunks)) do i
         val = zero(T)
         for k in 1:nchunks
-            val += thread_nzvals[k][i]
+            @inbounds val += thread_nzvals[k][i]
         end
-        nzval[i] += val
+        @inbounds nzval[i] += val
     end
     return nothing
 end
@@ -730,7 +751,7 @@ function backsubstitute!(
     p_dims = structure.p_dims
     c_dims = structure.c_dims
 
-    Threads.@threads for l in 1:structure.npblocks
+    foreach_index(structure.npblocks, use_threads(structure.npblocks, length(structure.cpblock))) do l
         dp = Int(p_dims[l])
         p_off = boffsets_p[l]
         p_data_off = structure.ppoffsets[l]

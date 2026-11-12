@@ -328,3 +328,45 @@ end
         @test SecondOrderOptimization.quadratic_model_reduction(ls, dx) ≈ expected rtol = 1e-12
     end
 end
+
+@testset "Schur solve is serial and allocation free for small problems; threading matches (B11)" begin
+    p = standard_problem()
+    n = length(p.b)
+    x_ref = reference_solve(p, 0.4, ones(n))
+    for kind in (:dense, :sparse)
+        ls = make_schur_ls(kind, p; nchunks=1)
+        SecondOrderOptimization.dampen!(ls, 0.4)
+        SecondOrderOptimization.solve!(ls)
+        @test norm(ls.x - x_ref) <= 1e-10 * norm(x_ref)
+        H = ls.H
+        ws = ls.workspace
+        # The reduction and back-substitution kernels allocate nothing when serial
+        if kind === :dense
+            run_reduce() = reduce_schur_dense!(ls.S, ls.g_S, ls.b_c, ls.b_p, ls.scaling_p, ls.lambda, H.structure, H.C_data, H.E_data, ws)
+            @test run_reduce()
+            @test (@allocated run_reduce()) == 0
+        else
+            run_reduce_s() = reduce_schur_sparse!(ls.S, ls.g_S, ls.b_c, ls.b_p, ls.scaling_p, ls.lambda, H.structure, H.C_data, H.E_data,
+                ls.block_colptr, ls.block_rowval, ls.block_row_offsets, ls.col_heights, ws)
+            @test run_reduce_s()
+            @test (@allocated run_reduce_s()) == 0
+        end
+        run_back() = backsubstitute!(ls.x_p, ls.x_c, H.structure, H.E_data, ws.C_inv_data, ws.z_data)
+        run_back()
+        @test (@allocated run_back()) == 0
+    end
+
+    # Force the threaded code paths (they only engage with more than one thread) and compare
+    old = BlockLinearSystems.SCHUR_THREAD_MIN_WORK[]
+    try
+        BlockLinearSystems.SCHUR_THREAD_MIN_WORK[] = 0
+        for kind in (:dense, :sparse), nchunks in (1, 3)
+            ls = make_schur_ls(kind, p; nchunks)
+            SecondOrderOptimization.dampen!(ls, 0.4)
+            @test SecondOrderOptimization.solve!(ls) == SecondOrderOptimization.Success
+            @test norm(ls.x - x_ref) <= 1e-10 * norm(x_ref)
+        end
+    finally
+        BlockLinearSystems.SCHUR_THREAD_MIN_WORK[] = old
+    end
+end
