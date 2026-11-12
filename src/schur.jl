@@ -1026,13 +1026,7 @@ function build_b_to_s_map(B_sparse::SparseMatrixCSC, S_sparse::SparseMatrixCSC)
     for j in 1:B_sparse.n
         for k in B_sparse.colptr[j]:(B_sparse.colptr[j + 1] - 1)
             i = B_sparse.rowval[k]
-            s_k = 0
-            for idx in S_sparse.colptr[j]:(S_sparse.colptr[j + 1] - 1)
-                if S_sparse.rowval[idx] == i
-                    s_k = idx
-                    break
-                end
-            end
+            s_k = find_in_column(S_sparse, i, j)
             @assert s_k != 0 "B entry ($i, $j) not present in S sparsity pattern"
             push!(b_to_s, s_k)
         end
@@ -1040,10 +1034,19 @@ function build_b_to_s_map(B_sparse::SparseMatrixCSC, S_sparse::SparseMatrixCSC)
     return b_to_s
 end
 
+# Index of `row` in column `j` of the sorted-pattern CSC matrix `S` (0 if absent), by binary search
+@inline function find_in_column(S::SparseMatrixCSC, row::Integer, j::Integer)
+    lo = Int(S.colptr[j])
+    hi = Int(S.colptr[j + 1]) - 1
+    idx = lo + searchsortedfirst(view(S.rowval, lo:hi), row) - 1
+    return (idx <= hi && S.rowval[idx] == row) ? idx : 0
+end
+
 """
     build_b_to_s_map(B_sys::SparseBlockLinearSystem, S_sparse::SparseMatrixCSC, boffsets_c::Vector{Int}) -> Vector{Int}
 
 Build mapping vector from B_sys.data to S_sparse.nzval for symmetric upper-triangle reduction.
+Entries of `B_sys.data` that are not mapped (the strict lower triangle of diagonal blocks) are 0.
 """
 function build_b_to_s_map(B_sys::SparseBlockLinearSystem, S_sparse::SparseMatrixCSC, boffsets_c::Vector{Int})
     b_to_s = zeros(Int, length(B_sys.data))
@@ -1056,13 +1059,7 @@ function build_b_to_s_map(B_sys::SparseBlockLinearSystem, S_sparse::SparseMatrix
                 scol = boffsets_c[r] + col - 1
                 for row in 1:col
                     srow = boffsets_c[r] + row - 1
-                    s_k = 0
-                    for idx in S_sparse.colptr[scol]:(S_sparse.colptr[scol + 1] - 1)
-                        if S_sparse.rowval[idx] == srow
-                            s_k = idx
-                            break
-                        end
-                    end
+                    s_k = find_in_column(S_sparse, srow, scol)
                     @assert s_k != 0 "Missing diagonal entry ($srow, $scol) in S"
                     b_to_s[data_start + (col - 1)*dr + row - 1] = s_k
                 end
@@ -1072,16 +1069,44 @@ function build_b_to_s_map(B_sys::SparseBlockLinearSystem, S_sparse::SparseMatrix
                 srow = boffsets_c[c] + col - 1
                 for row in 1:dr
                     scol = boffsets_c[r] + row - 1
-                    s_k = 0
-                    for idx in S_sparse.colptr[scol]:(S_sparse.colptr[scol + 1] - 1)
-                        if S_sparse.rowval[idx] == srow
-                            s_k = idx
-                            break
-                        end
-                    end
+                    s_k = find_in_column(S_sparse, srow, scol)
                     @assert s_k != 0 "Missing entry ($srow, $scol) in S"
                     b_to_s[data_start + (col - 1)*dr + row - 1] = s_k
                 end
+            end
+        end
+    end
+    return b_to_s
+end
+
+"""
+    build_b_to_s_map(B_sys::SparseBlockLinearSystem, covis, boffsets_c::Vector{Int}) -> Vector{Int}
+
+As above, but using the block-level pattern in `covis` (the result of [`build_schur_covisibility`](@ref)):
+one block-level search per stored block, then the scalar position follows from `block_row_offsets` and
+`col_heights` with integer arithmetic.
+"""
+function build_b_to_s_map(B_sys::SparseBlockLinearSystem, covis::NamedTuple, boffsets_c::Vector{Int})
+    S_colptr = covis.S_sparse.colptr
+    b_to_s = zeros(Int, length(B_sys.data))
+    for (c, r, data_start) in zip(SparseArrays.findnz(B_sys.indicestransposed)...)
+        r >= c || continue   # only lower-triangle blocks are stored in B
+        dr = Int(B_sys.rowblocksizes[r])
+        dc = Int(B_sys.columnblocksizes[c])
+        # Block (c, r) of the upper-triangle pattern: block column r, block row c
+        rng = covis.block_colptr[r]:(covis.block_colptr[r + 1] - 1)
+        k = searchsortedfirst(view(covis.block_rowval, rng), c)
+        (k <= length(rng) && covis.block_rowval[rng[k]] == c) || throw(AssertionError("Block ($c, $r) of B is not present in the pattern of S"))
+        row_offset = covis.block_row_offsets[rng[k]]
+        base = S_colptr[boffsets_c[r]] + row_offset
+        stride = covis.col_heights[r]
+        if r == c
+            for col in 1:dc, row in 1:col
+                b_to_s[data_start + (col - 1)*dr + row - 1] = base + (col - 1) * stride + row - 1
+            end
+        else
+            for col in 1:dc, row in 1:dr
+                b_to_s[data_start + (col - 1)*dr + row - 1] = base + (row - 1) * stride + col - 1
             end
         end
     end

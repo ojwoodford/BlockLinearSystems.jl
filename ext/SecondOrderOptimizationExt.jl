@@ -117,7 +117,7 @@ function SparseSchurLinearSystem(
     Ti = eltype(covis.block_rowval)
 
     # 2. Map B to S
-    b_to_s_map = build_b_to_s_map(H.B, S, H.structure.boffsets_c)
+    b_to_s_map = build_b_to_s_map(H.B, covis, H.structure.boffsets_c)
 
     # 3. Pre-analyze CHOLMOD symbolic factor and LDLFactorizations symbolic factor
     S_factor = SparseArrays.CHOLMOD.analyze(SparseArrays.CHOLMOD.Sparse(Symmetric(S, :U)))

@@ -465,3 +465,26 @@ end
     H2d = SMatrix{2, 2, Float64, 4}(1, 1, 1, 1 + 1e-6)
     @test inv_sym_block(H2d, 0.0, SVector{2, Float64}(1, 1)).success
 end
+
+@testset "build_b_to_s_map: block-level and scalar-level searches agree (M6)" begin
+    for p in (standard_problem(), coupled_groups_problem())
+        H = sparse_schur_matrix(p)
+        covis = build_schur_covisibility(H.structure; extra_blocks=retained_block_pairs(H.B))
+        boffsets = H.structure.boffsets_c
+        m_scalar = build_b_to_s_map(H.B, covis.S_sparse, boffsets)
+        m_block = build_b_to_s_map(H.B, covis, boffsets)
+        @test m_block == m_scalar
+        # Mapped entries are unique and land on upper-triangle slots
+        mapped = filter(>(0), m_block)
+        @test allunique(mapped)
+        S = covis.S_sparse
+        rows = rowvals(S)
+        cols = [j for j in 1:size(S, 2) for _ in nzrange(S, j)]
+        @test all(rows[k] <= cols[k] for k in mapped)
+    end
+    # Missing block gives an assertion rather than a wrong slot
+    p = coupled_groups_problem()
+    H = sparse_schur_matrix(p)
+    plain = build_schur_covisibility(H.structure)
+    @test_throws AssertionError build_b_to_s_map(H.B, plain, H.structure.boffsets_c)
+end
