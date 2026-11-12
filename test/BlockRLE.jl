@@ -155,3 +155,16 @@
     @test BlockLinearSystems.as_block_rle(rle_i32) isa BlockRLE{UInt8, Int}
     @test BlockLinearSystems.as_block_rle(rle_int) isa BlockRLE{UInt8, Int}
 end
+
+@testset "BlockRLE size accessors return Int (B7)" begin
+    rle = BlockRLE([3, 2], [16, 20])
+    @test rle isa AbstractVector{Int}
+    @test rle[1] isa Int
+    @test runblocksize(rle, 2) isa Int
+    @test first(eachrun(rle)).blocksize isa Int
+    @test collect(rle) isa Vector{Int}
+    # The product of two stored UInt8 sizes would wrap; the accessors must not
+    @test rle[1] * rle[4] == 320
+    @test runblocksize(rle, 1) * runblocksize(rle, 2) == 320
+    @test sum(rle) == 3 * 16 + 2 * 20
+end

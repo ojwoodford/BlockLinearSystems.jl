@@ -1,6 +1,8 @@
 using Static, StaticArrays
 
-struct BlockRLE{T<:Integer, L<:Integer} <: AbstractVector{T}
+# Block sizes are *stored* compactly as `T` (normally `UInt8`, hence the 1-255 limit), but every accessor
+# returns `Int` so that products such as `rows * cols` can never wrap around in the storage type.
+struct BlockRLE{T<:Integer, L<:Integer} <: AbstractVector{Int}
     runlengths::Vector{L}
     blocksizes::Vector{T}
     cumblocks::Vector{L}
@@ -109,7 +111,7 @@ Base.IndexStyle(::Type{<:BlockRLE}) = IndexLinear()
     @boundscheck checkbounds(rle, i)
     # Binary search to find run index
     run_idx = searchsortedlast(rle.cumblocks, i)
-    return @inbounds rle.blocksizes[run_idx]
+    return @inbounds Int(rle.blocksizes[run_idx])
 end
 
 # Fast reductions
@@ -117,11 +119,11 @@ Base.sum(rle::BlockRLE) = rle.cummatrixdims[end] - 1
 
 Base.copy(rle::BlockRLE{T, L}) where {T, L} = BlockRLE{T, L}(copy(rle.runlengths), copy(rle.blocksizes))
 
-function Base.collect(rle::BlockRLE{T}) where T
-    out = Vector{T}(undef, length(rle))
+function Base.collect(rle::BlockRLE)
+    out = Vector{Int}(undef, length(rle))
     idx = 1
     for k in 1:nruns(rle)
-        sz = rle.blocksizes[k]
+        sz = Int(rle.blocksizes[k])
         len = rle.runlengths[k]
         fill!(view(out, idx:(idx + len - 1)), sz)
         idx += len
@@ -129,7 +131,7 @@ function Base.collect(rle::BlockRLE{T}) where T
     return out
 end
 
-Base.Vector(rle::BlockRLE{T}) where T = collect(rle)
+Base.Vector(rle::BlockRLE) = collect(rle)
 Base.Vector{T}(rle::BlockRLE) where T = convert(Vector{T}, collect(rle))
 Base.convert(::Type{Vector{T}}, rle::BlockRLE) where T = convert(Vector{T}, collect(rle))
 Base.convert(::Type{Vector}, rle::BlockRLE) = collect(rle)
@@ -149,7 +151,7 @@ end
 # RLE Specific API
 nruns(rle::BlockRLE) = length(rle.runlengths)
 runlength(rle::BlockRLE, k::Integer) = rle.runlengths[k]
-runblocksize(rle::BlockRLE, k::Integer) = rle.blocksizes[k]
+runblocksize(rle::BlockRLE, k::Integer) = Int(rle.blocksizes[k])
 matrixdimension(rle::BlockRLE) = rle.cummatrixdims[end] - 1
 
 @inline function runblockrange(rle::BlockRLE, k::Integer)
@@ -183,7 +185,7 @@ function eachrun(rle::BlockRLE)
     return (
         (run = k,
          blockrange = runblockrange(rle, k),
-         blocksize = rle.blocksizes[k],
+         blocksize = Int(rle.blocksizes[k]),
          matrixrange = runmatrixrange(rle, k))
         for k in 1:nruns(rle)
     )

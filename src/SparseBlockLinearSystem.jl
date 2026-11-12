@@ -312,9 +312,9 @@ function symmetrifyfull!(mat::AbstractMatrix{T}, bsm::SparseBlockLinearSystem{T}
             return nothing
         end
         all(b -> 1 <= b <= length(bsm.rowblocksizes), block_indices) || throw(BoundsError(bsm.rowblocksizes, block_indices))
-        lengths = zeros(UInt, length(bsm.rowblocksizes))
+        lengths = zeros(Int, length(bsm.rowblocksizes))
         lengths[block_indices] .= bsm.rowblocksizes[block_indices]
-        starts = zeros(UInt, length(bsm.rowblocksizes))
+        starts = zeros(Int, length(bsm.rowblocksizes))
         starts[block_indices] .= cumsum(vcat(1, bsm.rowblocksizes[block_indices[1:end-1]]))
     end
     m = sum(lengths)
@@ -365,9 +365,9 @@ end
 function Base.Matrix(bsm::SparseBlockLinearSystem{T}) where T
     # Allocate the output
     rowstarts = cumsum(bsm.rowblocksizes)
-    pushfirst!(rowstarts, UInt(0))
+    pushfirst!(rowstarts, 0)
     colstarts = cumsum(bsm.columnblocksizes)
-    pushfirst!(colstarts, UInt(0))
+    pushfirst!(colstarts, 0)
     output = zeros(T, rowstarts[end], colstarts[end])
     # Copy blocks into the output
     for (c, r, index) in zip(SparseArrays.findnz(bsm.indicestransposed)...)

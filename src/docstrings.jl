@@ -333,7 +333,7 @@ sparse_with_map
     BlockRLE(vec::AbstractVector{<:Integer})
 
 Run-Length Encoded (RLE) block layout metadata capturing contiguous runs of uniform block sizes.
-Subtypes `AbstractVector{UInt8}` for transparent interop with all linear systems while providing
+Subtypes `AbstractVector{Int}` (storing the sizes compactly, normally as `UInt8`, but always returning `Int`) for transparent interop with all linear systems while providing
 \$O(1)\$ matrix dimension lookup, \$O(1)\$ run indexing, and \$O(\\log R)\$ block-to-coordinate mapping.
 
 # Fields
@@ -368,7 +368,7 @@ Returns the number of blocks in run `k`.
 runlength
 
 """
-    runblocksize(rle::BlockRLE, k::Integer) -> UInt8
+    runblocksize(rle::BlockRLE, k::Integer) -> Int
 
 Returns the block dimension for blocks in run `k`.
 """
