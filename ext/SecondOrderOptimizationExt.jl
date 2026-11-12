@@ -59,11 +59,11 @@ function DenseSchurLinearSystem(
 end
 
 """
-    SparseSchurLinearSystem{T, Ti, TL, TF} <: AbstractLinearSystem
+    SparseSchurLinearSystem{T, Ti, TL, TF, TC} <: AbstractLinearSystem
 
 Linear system solving bipartite normal equations via sparse Schur reduction, CHOLMOD sparse Cholesky, and LDL factorizations.
 """
-mutable struct SparseSchurLinearSystem{T, Ti, TL, TF} <: AbstractLinearSystem
+mutable struct SparseSchurLinearSystem{T, Ti, TL, TF, TC} <: AbstractLinearSystem
     H::SchurBlockMatrix{T, SparseBlockLinearSystem{T}}
     b::Vector{T}
     x::Vector{T}
@@ -75,6 +75,7 @@ mutable struct SparseSchurLinearSystem{T, Ti, TL, TF} <: AbstractLinearSystem
     S::SparseMatrixCSC{T, Ti}
     S_factor::TF                      # CHOLMOD.Factor (its type parameters differ between Julia versions)
     S_factor_ldl::TL
+    S_chol::TC                        # CHOLMOD.Sparse copy of S, refreshed in place before each factorization
     b_to_s_map::Vector{Int}
     diag_inds::Vector{Int}
     block_rowval::Vector{Ti}
@@ -120,7 +121,8 @@ function SparseSchurLinearSystem(
     b_to_s_map = build_b_to_s_map(H.B, covis, H.structure.boffsets_c)
 
     # 3. Pre-analyze CHOLMOD symbolic factor and LDLFactorizations symbolic factor
-    S_factor = SparseArrays.CHOLMOD.analyze(SparseArrays.CHOLMOD.Sparse(Symmetric(S, :U)))
+    S_chol = SparseArrays.CHOLMOD.Sparse(Symmetric(S, :U))
+    S_factor = SparseArrays.CHOLMOD.analyze(S_chol)
     S_factor_ldl = ldl_analyze(Symmetric(S, :U))
 
     g_S = zeros(T, nc)
@@ -128,8 +130,8 @@ function SparseSchurLinearSystem(
     K = nchunks > 0 ? nchunks : (isempty(H.structure.chunks) ? 1 : length(H.structure.chunks[1]))
     ws = SchurReductionWorkspace{T}(H.structure, K; is_dense=false, nnz_S=nnz(S))
 
-    return SparseSchurLinearSystem{T, Ti, typeof(S_factor_ldl), typeof(S_factor)}(
-        H, b, x, b_c, b_p, x_c, x_p, g_S, S, S_factor, S_factor_ldl,
+    return SparseSchurLinearSystem{T, Ti, typeof(S_factor_ldl), typeof(S_factor), typeof(S_chol)}(
+        H, b, x, b_c, b_p, x_c, x_p, g_S, S, S_factor, S_factor_ldl, S_chol,
         b_to_s_map, covis.diag_inds,
         covis.block_rowval, covis.block_colptr, covis.block_row_offsets, covis.col_heights,
         zero(T), scaling, scaling_c, scaling_p, ws
@@ -275,11 +277,30 @@ function build_reduced!(ls::DenseSchurLinearSystem)
     )
 end
 
+# Same test as SecondOrderOptimization.is_indefinite(::BunchKaufman), but materialises bk.D once rather
+# than inside the loop (O(n^3) on Julia 1.10, O(n^2) allocations later).
+function bk_indefinite(bk::BunchKaufman, tol=1e-6)
+    D = bk.D
+    n = length(bk.ipiv)
+    k = 1
+    @inbounds while k <= n
+        if bk.ipiv[k] < 0
+            d11, d22, d12 = D[k, k], D[k+1, k+1], D[k, k+1]
+            (d11 * d22 - d12 * d12 < -tol || d11 + d22 < -tol) && return true
+            k += 2
+        else
+            D[k, k] < -tol && return true
+            k += 1
+        end
+    end
+    return false
+end
+
 function solve_bunchkaufman!(ls::DenseSchurLinearSystem)
     bk = bunchkaufman!(Symmetric(ls.S, :U); check=false)
     issuccess(bk) || return NotPositiveDefinite
     ldiv!(ls.x_c, bk, ls.g_S)
-    is_indefinite(bk) && return Indefinite
+    bk_indefinite(bk) && return Indefinite
     return Success
 end
 
@@ -307,6 +328,17 @@ function SecondOrderOptimization.solve!(ls::DenseSchurLinearSystem, solver_opt::
 end
 SecondOrderOptimization.solve!(ls::DenseSchurLinearSystem, s::Symbol) = SecondOrderOptimization.solve!(ls, static(s))
 SecondOrderOptimization.solve!(ls::DenseSchurLinearSystem, s::OptimizationLinearSolver) = SecondOrderOptimization.solve!(ls, static(SecondOrderOptimization.linsolver_symbol(s)))
+
+# Copy the values of S into the persistent CHOLMOD.Sparse in place. Its pattern (upper triangle of S, same
+# order as S.nzval) never changes, so this avoids rebuilding a CHOLMOD.Sparse (pattern and values) per solve.
+function refresh_cholmod!(C::SparseArrays.CHOLMOD.Sparse, S::SparseMatrixCSC)
+    cs = unsafe_load(pointer(C))
+    cs.nzmax == length(S.nzval) || error("CHOLMOD.Sparse pattern does not match S")
+    GC.@preserve C begin
+        copyto!(unsafe_wrap(Array, Ptr{eltype(S)}(cs.x), cs.nzmax), S.nzval)
+    end
+    return C
+end
 
 # `ldiv!(x, ::CHOLMOD.Factor, b)` only exists from Julia 1.12; earlier versions need the allocating `\\`.
 @static if VERSION >= v"1.12"
@@ -339,7 +371,8 @@ function SecondOrderOptimization.solve!(ls::SparseSchurLinearSystem, solver_opt:
             return Indefinite
         end
     else
-        LinearAlgebra.cholesky!(ls.S_factor, Symmetric(ls.S, :U); check=false)
+        refresh_cholmod!(ls.S_chol, ls.S)
+        LinearAlgebra.cholesky!(ls.S_factor, ls.S_chol; check=false)
         if !LinearAlgebra.issuccess(ls.S_factor)
             F = ldl_factorize!(Symmetric(ls.S, :U), ls.S_factor_ldl)
             if !factorized(F)
@@ -391,7 +424,7 @@ function SecondOrderOptimization.copy_structure(ls::DenseSchurLinearSystem{T}) w
 end
 
 
-function SecondOrderOptimization.copy_structure(ls::SparseSchurLinearSystem{T, Ti, TL, TF}) where {T, Ti, TL, TF}
+function SecondOrderOptimization.copy_structure(ls::SparseSchurLinearSystem{T, Ti, TL, TF, TC}) where {T, Ti, TL, TF, TC}
     # New storage for the Hessian and gradient (the original is kept for retries); x is shared
     nc = ls.H.structure.nc
     b = copy(ls.b)
@@ -406,11 +439,11 @@ function SecondOrderOptimization.copy_structure(ls::SparseSchurLinearSystem{T, T
         ls.workspace.thread_nzvals,
         Base.Threads.Atomic{Int}(0)
     )
-    return SparseSchurLinearSystem{T, Ti, TL, TF}(
+    return SparseSchurLinearSystem{T, Ti, TL, TF, TC}(
         BlockLinearSystems.copy_structure(ls.H), b, x,
         view(b, 1:nc), view(b, nc+1:length(b)),
         view(x, 1:nc), view(x, nc+1:length(x)),
-        similar(ls.g_S), copy(ls.S), ls.S_factor, ls.S_factor_ldl,
+        similar(ls.g_S), copy(ls.S), ls.S_factor, ls.S_factor_ldl, copy(ls.S_chol),
         ls.b_to_s_map, ls.diag_inds,
         ls.block_rowval, ls.block_colptr, ls.block_row_offsets, ls.col_heights,
         ls.lambda, scaling,
@@ -436,15 +469,15 @@ function SecondOrderOptimization.sharex(ls::DenseSchurLinearSystem{T}, from) whe
     )
 end
 
-function SecondOrderOptimization.sharex(ls::SparseSchurLinearSystem{T, Ti, TL, TF}, from) where {T, Ti, TL, TF}
+function SecondOrderOptimization.sharex(ls::SparseSchurLinearSystem{T, Ti, TL, TF, TC}, from) where {T, Ti, TL, TF, TC}
     ls.x === from.x && return ls
     nc = ls.H.structure.nc
     x = from.x
-    return SparseSchurLinearSystem{T, Ti, TL, TF}(
+    return SparseSchurLinearSystem{T, Ti, TL, TF, TC}(
         ls.H, ls.b, x,
         ls.b_c, ls.b_p,
         view(x, 1:nc), view(x, nc+1:length(x)),
-        ls.g_S, ls.S, ls.S_factor, ls.S_factor_ldl,
+        ls.g_S, ls.S, ls.S_factor, ls.S_factor_ldl, ls.S_chol,
         ls.b_to_s_map, ls.diag_inds,
         ls.block_rowval, ls.block_colptr, ls.block_row_offsets, ls.col_heights,
         ls.lambda, ls.scaling,

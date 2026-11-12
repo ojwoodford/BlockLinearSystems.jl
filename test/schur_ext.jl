@@ -577,3 +577,25 @@ end
         @test (@allocated run1()) == 0
     end
 end
+
+@testset "Persistent CHOLMOD matrix and Bunch-Kaufman indefinite check (B5)" begin
+    p = standard_problem()
+    n = length(p.b)
+    ls = make_schur_ls(:sparse, p)
+    @test ls.S_chol isa SparseArrays.CHOLMOD.Sparse
+    S_chol_before = ls.S_chol
+    for lambda in (0.2, 0.9)
+        SecondOrderOptimization.dampen!(ls, lambda)
+        @test SecondOrderOptimization.solve!(ls) == SecondOrderOptimization.Success
+        x_ref = reference_solve(p, lambda, ones(n))
+        @test norm(ls.x - x_ref) <= 1e-10 * norm(x_ref)
+    end
+    @test ls.S_chol === S_chol_before          # refreshed in place, not rebuilt
+    tr = SecondOrderOptimization.copy_structure(ls)
+    @test tr.S_chol !== ls.S_chol
+    # bk_indefinite agrees with SecondOrderOptimization.is_indefinite
+    for A in (let M = randn(Random.Xoshiro(1), 8, 8); Symmetric(M * M' + I) end, Symmetric(randn(Random.Xoshiro(2), 8, 8)))
+        bk = bunchkaufman(A)
+        @test SOOExt.bk_indefinite(bk) == SecondOrderOptimization.is_indefinite(bk)
+    end
+end
