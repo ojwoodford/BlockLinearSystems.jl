@@ -13,7 +13,7 @@ StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 
 [compat]
 Aqua = "0.8"
-FastNorm = "0.2"
+FastNorm = "0.2, 0.3"
 HybridArrays = "0.4"
 JET = "0.9, 0.10, 0.11, 0.12, 0.13"
 LinearAlgebra = "1.10"
