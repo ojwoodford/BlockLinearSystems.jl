@@ -176,7 +176,7 @@ function schur_solve(H::SchurBlockMatrix{T}, b, scaling, lambda; nchunks=1) wher
                              covis.block_colptr, covis.block_rowval, covis.block_row_offsets, covis.col_heights, ws) || return (zeros(T, n), false)
     end
     x = zeros(T, n)
-    x_c = cholesky(Symmetric(S, :U)) \ g
+    x_c = T.(cholesky(Symmetric(S, :U)) \ g)   # CHOLMOD may return Float64 for Float32 input
     x[1:nc] .= x_c
     backsubstitute!(view(x, nc+1:n), x_c, st, H.E_data, ws.C_inv_data, ws.z_data)
     return (x, true)
