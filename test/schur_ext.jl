@@ -149,3 +149,50 @@ end
         end
     end
 end
+
+# Copy the numerical content of `src` (a SchurBlockMatrix) into `dst`
+function copy_content!(dst::SchurBlockMatrix, src::SchurBlockMatrix)
+    dst.B isa Matrix ? copyto!(dst.B, src.B) : copyto!(dst.B.data, src.B.data)
+    copyto!(dst.C_data, src.C_data)
+    copyto!(dst.E_data, src.E_data)
+    return dst
+end
+
+@testset "SecondOrderOptimization extension: copy_structure gives an independent trial system (B1)" begin
+    p1 = standard_problem(1)
+    p2 = standard_problem(2)
+    n = length(p1.b)
+    for kind in (:dense, :sparse)
+        @testset "$kind" begin
+            ls = make_schur_ls(kind, p1)
+            trial = SecondOrderOptimization.copy_structure(ls)
+
+            # New storage for the Hessian and gradient, shared x
+            @test trial.H !== ls.H
+            @test trial.H.B !== ls.H.B
+            @test trial.H.C_data !== ls.H.C_data
+            @test trial.H.E_data !== ls.H.E_data
+            @test trial.b !== ls.b
+            @test trial.x === ls.x
+            @test SecondOrderOptimization.getA(trial) === trial.H
+
+            # Linearize the trial at a different point: this must not touch the current system
+            SecondOrderOptimization.zero!(trial)
+            copy_content!(trial.H, make_schur_ls(kind, p2).H)
+            trial.b .= p2.b
+            # Reject the trial; retry on the current system with different damping, twice
+            for lambda in (0.1, 2.0)
+                SecondOrderOptimization.dampen!(ls, lambda)
+                @test SecondOrderOptimization.solve!(ls) == SecondOrderOptimization.Success
+                x_ref = reference_solve(p1, lambda, ones(n))
+                @test norm(ls.x - x_ref) <= 1e-10 * norm(x_ref)
+            end
+
+            # And the trial system solves its own problem, writing into the shared x
+            SecondOrderOptimization.dampen!(trial, 0.1)
+            @test SecondOrderOptimization.solve!(trial) == SecondOrderOptimization.Success
+            x_ref2 = reference_solve(p2, 0.1, ones(n))
+            @test norm(trial.x - x_ref2) <= 1e-10 * norm(x_ref2)
+        end
+    end
+end

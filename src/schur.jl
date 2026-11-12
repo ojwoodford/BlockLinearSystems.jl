@@ -263,6 +263,17 @@ function zero!(H::SchurBlockMatrix)
     return H
 end
 
+"""
+    copy_structure(H::SchurBlockMatrix)
+
+Return a new `SchurBlockMatrix` with the same structure but freshly allocated, zeroed storage for
+`B`, `C_data` and `E_data`. Nothing is shared with `H` except the immutable `SchurStructure`.
+"""
+function copy_structure(H::SchurBlockMatrix{T}) where T
+    B = H.B isa AbstractMatrix ? zeros(T, size(H.B)) : copy_structure(H.B)
+    return SchurBlockMatrix(H.structure, B, zeros(T, length(H.C_data)), zeros(T, length(H.E_data)))
+end
+
 function update_marquardt_scaling! end
 
 @inline make_svec(arr::AbstractVector{T}, off::Int, ::StaticInt{1}) where T = SVector{1, T}(arr[off])

@@ -443,9 +443,10 @@ function SecondOrderOptimization.quadratic_model_reduction(ls::SparseSchurLinear
 end
 
 function SecondOrderOptimization.copy_structure(ls::DenseSchurLinearSystem{T}) where T
+    # New storage for the Hessian and gradient (the original is kept for retries); x is shared
     nc = ls.H.structure.nc
     b = copy(ls.b)
-    x = copy(ls.x)
+    x = ls.x
     scaling = copy(ls.scaling)
     ws_trial = SchurReductionWorkspace{T}(
         ls.workspace.W_scratch,
@@ -457,7 +458,7 @@ function SecondOrderOptimization.copy_structure(ls::DenseSchurLinearSystem{T}) w
         Base.Threads.Atomic{Int}(0)
     )
     return DenseSchurLinearSystem{T}(
-        ls.H, b, x,
+        BlockLinearSystems.copy_structure(ls.H), b, x,
         view(b, 1:nc), view(b, nc+1:length(b)),
         view(x, 1:nc), view(x, nc+1:length(x)),
         similar(ls.g_S), similar(ls.S), ls.lambda, scaling,
@@ -468,9 +469,10 @@ end
 
 
 function SecondOrderOptimization.copy_structure(ls::SparseSchurLinearSystem{T, Ti, TL}) where {T, Ti, TL}
+    # New storage for the Hessian and gradient (the original is kept for retries); x is shared
     nc = ls.H.structure.nc
     b = copy(ls.b)
-    x = copy(ls.x)
+    x = ls.x
     scaling = copy(ls.scaling)
     ws_trial = SchurReductionWorkspace{T}(
         ls.workspace.W_scratch,
@@ -482,7 +484,7 @@ function SecondOrderOptimization.copy_structure(ls::SparseSchurLinearSystem{T, T
         Base.Threads.Atomic{Int}(0)
     )
     return SparseSchurLinearSystem{T, Ti, TL}(
-        ls.H, b, x,
+        BlockLinearSystems.copy_structure(ls.H), b, x,
         view(b, 1:nc), view(b, nc+1:length(b)),
         view(x, 1:nc), view(x, nc+1:length(x)),
         similar(ls.g_S), copy(ls.S), ls.S_factor, ls.S_factor_ldl,
