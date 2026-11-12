@@ -7,6 +7,7 @@ struct BlockRLE{T<:Integer, L<:Integer} <: AbstractVector{Int}
     blocksizes::Vector{T}
     cumblocks::Vector{L}
     cummatrixdims::Vector{Int}
+    flat::Vector{T}          # per-block sizes, one entry per block: O(1) getindex (and checked block access)
 
     function BlockRLE{T, L}(runlengths::Vector{L}, blocksizes::Vector{T}) where {T<:Integer, L<:Integer}
         length(runlengths) == length(blocksizes) || throw(DimensionMismatch("runlengths and blocksizes must have identical length"))
@@ -38,7 +39,12 @@ struct BlockRLE{T<:Integer, L<:Integer} <: AbstractVector{Int}
             cummatrixdims[i + 1] = cummatrixdims[i] + Int(merged_rl[i]) * Int(merged_bs[i])
         end
 
-        return new{T, L}(merged_rl, merged_bs, cumblocks, cummatrixdims)
+        flat = Vector{T}(undef, Int(cumblocks[end]) - 1)
+        for i in eachindex(merged_rl)
+            fill!(view(flat, Int(cumblocks[i]):Int(cumblocks[i + 1]) - 1), merged_bs[i])
+        end
+
+        return new{T, L}(merged_rl, merged_bs, cumblocks, cummatrixdims, flat)
     end
 end
 
@@ -113,9 +119,7 @@ Base.IndexStyle(::Type{<:BlockRLE}) = IndexLinear()
 
 @inline function Base.getindex(rle::BlockRLE, i::Int)
     @boundscheck checkbounds(rle, i)
-    # Binary search to find run index
-    run_idx = searchsortedlast(rle.cumblocks, i)
-    return @inbounds Int(rle.blocksizes[run_idx])
+    return @inbounds Int(rle.flat[i])
 end
 
 # Fast reductions
