@@ -479,6 +479,10 @@ end
     end
 end
 
+# Measured inside functions: @allocated at a testset's top level counts spurious boxing on Julia 1.10
+allocs_fast_bAb(H, dx) = @allocated BlockLinearSystems.fast_bAb(H, dx)
+allocs_zero!(H) = @allocated zero!(H)
+
 @testset "SchurBlockMatrix carries an optional pattern (A1)" begin
     for make in (dense_schur_matrix, sparse_schur_matrix)
         H0 = make(standard_problem())
@@ -509,10 +513,10 @@ end
         @test isconcretetype(fieldtype(typeof(H), :B))
         @test isconcretetype(fieldtype(typeof(H), :C_data)) && isconcretetype(fieldtype(typeof(H), :E_data))
         dx = randn(st.nc + sum(st.p_dims))
-        BlockLinearSystems.fast_bAb(H, dx)
-        @test (@allocated BlockLinearSystems.fast_bAb(H, dx)) == 0
+        allocs_fast_bAb(H, dx); allocs_zero!(H)   # compile
+        @test allocs_fast_bAb(H, dx) == 0
+        @test allocs_zero!(H) == 0
         zero!(H)
-        @test (@allocated zero!(H)) == 0
         @test all(iszero, H.C_data) && all(iszero, H.E_data)
     end
 end
