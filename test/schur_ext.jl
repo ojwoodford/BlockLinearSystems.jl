@@ -401,7 +401,8 @@ end
     ok = SchurStructure([6, 6], [3, 3], [[1, 2], [2]])
     @test ok.npblocks == 2
     @test_throws DimensionMismatch SchurStructure([6, 6], [3, 3], [[1, 2]])
-    @test_throws ArgumentError SchurStructure([6, 6], [3, 4], [[1, 2], [2]])      # eliminated block too large
+    @test_throws ArgumentError SchurStructure([6, 6], [3, 256], [[1, 2], [2]])    # eliminated block over 255
+    @test SchurStructure([6, 6], [4, 255], [[1, 2], [2]]).npblocks == 2            # any size up to 255 is supported
     @test_throws ArgumentError SchurStructure([6, 6], [3, 0], [[1, 2], [2]])      # empty eliminated block
     @test_throws ArgumentError SchurStructure([6, 0], [3, 3], [[1, 2], [2]])      # empty retained block
     @test_throws ArgumentError SchurStructure([6, 300], [3, 3], [[1, 2], [2]])    # retained block over 255
@@ -487,4 +488,92 @@ end
     H = sparse_schur_matrix(p)
     plain = build_schur_covisibility(H.structure)
     @test_throws AssertionError build_b_to_s_map(H.B, plain, H.structure.boffsets_c)
+end
+
+# Eliminated blocks of every size class: tiny closed forms (1-3), the generic static tier (4..D_STATIC)
+# and the dynamic tier above D_STATIC
+function mixed_dims_problem(seed=11)
+    rng = Random.Xoshiro(seed)
+    c_dims = [6, 3, 9, 6]
+    p_dims = [12, 12, 9, 9, 8, 8, 5, 5, 4, 4, 3, 3, 2, 2, 1, 1]
+    cams = 1:4
+    observations = [sort(unique([rand(rng, cams) for _ in 1:3])) for _ in p_dims]
+    return SchurTestProblem(rng, c_dims, p_dims, observations)
+end
+
+@testset "Eliminated blocks of any size (M5)" begin
+    @test BlockLinearSystems.D_STATIC < 12
+    p = mixed_dims_problem()
+    n = length(p.b)
+    scalings = ("I" => ones(n), "D'D" => abs.(diag(p.H)))
+    for kind in (:dense, :sparse), nchunks in (1, 3), (sname, scaling) in scalings, lambda in (0.0, 0.5)
+        @testset "$kind, K=$nchunks, $sname, lambda=$lambda" begin
+            ls = make_schur_ls(kind, p, scaling; nchunks)
+            SecondOrderOptimization.dampen!(ls, lambda)
+            @test SecondOrderOptimization.solve!(ls) == SecondOrderOptimization.Success
+            x_ref = reference_solve(p, lambda, scaling)
+            @test norm(ls.x - x_ref) <= 1e-9 * norm(x_ref)
+        end
+    end
+
+    # Each size alone, including the largest allowed (255) and sizes at the tier boundaries
+    for dp in (1, 3, 4, 5, 7, 8, 9, 10, 20)
+        rng = Random.Xoshiro(dp)
+        q = SchurTestProblem(rng, [6, 6], [dp, dp], [[1, 2], [1]])
+        for kind in (:dense, :sparse)
+            ls = make_schur_ls(kind, q)
+            SecondOrderOptimization.dampen!(ls, 0.2)
+            @test SecondOrderOptimization.solve!(ls) == SecondOrderOptimization.Success
+            x_ref = reference_solve(q, 0.2, ones(length(q.b)))
+            @test norm(ls.x - x_ref) <= 1e-9 * norm(x_ref)
+        end
+    end
+
+    # A single 255-dimensional eliminated block
+    rng = Random.Xoshiro(255)
+    big = SchurTestProblem(rng, [3, 3], [255], [[1, 2]])
+    for kind in (:dense, :sparse)
+        ls = make_schur_ls(kind, big)
+        SecondOrderOptimization.dampen!(ls, 0.1)
+        @test SecondOrderOptimization.solve!(ls) == SecondOrderOptimization.Success
+        x_ref = reference_solve(big, 0.1, ones(length(big.b)))
+        @test norm(ls.x - x_ref) <= 1e-8 * norm(x_ref)
+    end
+end
+
+@testset "Large eliminated blocks: singular blocks are reported, kernels do not allocate (M5)" begin
+    for dp in (6, 12)   # generic static tier and dynamic tier
+        rng = Random.Xoshiro(dp)
+        q = SchurTestProblem(rng, [6, 6], [dp, dp], [[1, 2], [1, 2]])
+        H = dense_schur_matrix(q)
+        # Make eliminated block 2 rank deficient: an outer product of one vector
+        st = H.structure
+        po = st.ppoffsets[2]
+        v = randn(rng, dp)
+        H.C_data[po:po+dp^2-1] .= vec(v * v')
+        ls = SOOExt.DenseSchurLinearSystem(H, copy(q.b), zeros(length(q.b)))
+        SecondOrderOptimization.dampen!(ls, 0.0)
+        @test SecondOrderOptimization.solve!(ls) == SecondOrderOptimization.NotPositiveDefinite
+        @test ls.workspace.failed_landmark[] == 2
+        # Damping repairs it
+        SecondOrderOptimization.dampen!(ls, 1.0)
+        @test SecondOrderOptimization.solve!(ls) == SecondOrderOptimization.Success
+    end
+
+    q = SchurTestProblem(Random.Xoshiro(3), [6, 6], [12, 12, 5, 5], [[1, 2], [1], [2], [1, 2]])
+    for kind in (:dense, :sparse)
+        ls = make_schur_ls(kind, q; nchunks=1)
+        SecondOrderOptimization.dampen!(ls, 0.3)
+        SecondOrderOptimization.solve!(ls)
+        H, ws = ls.H, ls.workspace
+        run1 = if kind === :dense
+            () -> reduce_schur_dense!(ls.S, ls.g_S, ls.b_c, ls.b_p, ls.scaling_p, ls.lambda, H.structure, H.C_data, H.E_data, ws)
+        else
+            () -> reduce_schur_sparse!(ls.S, ls.g_S, ls.b_c, ls.b_p, ls.scaling_p, ls.lambda, H.structure, H.C_data, H.E_data,
+                ls.block_colptr, ls.block_rowval, ls.block_row_offsets, ls.col_heights, ws)
+        end
+        @test run1()
+        # The reduction, including the dynamic-dimension blocks, does not allocate
+        @test (@allocated run1()) == 0
+    end
 end

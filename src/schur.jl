@@ -62,6 +62,21 @@ end
     return (invH = invH, success = true)
 end
 
+@inline function inv_sym_block(H::SMatrix{D, D, T}, lambda::T, scale::SVector{D, T}) where {D, T}
+    Hd = H + lambda * SMatrix{D, D, T}(Diagonal(scale))
+    chol = cholesky(Symmetric(Hd, :U); check=false)
+    ok = issuccess(chol)
+    if ok
+        # Every pivot must be safely positive relative to its damped diagonal entry. (A determinant
+        # test, as for the closed-form 1-3 dimensional blocks, would underflow for large blocks.)
+        U = chol.U
+        min_ratio = minimum(i -> abs2(U[i, i]) / Hd[i, i], ntuple(identity, Val(D)))
+        ok = min_ratio > singular_tol(T) && isfinite(min_ratio)
+    end
+    ok || return (invH = zeros(SMatrix{D, D, T, D * D}), success = false)
+    return (invH = SMatrix{D, D, T, D * D}(chol \ one(SMatrix{D, D, T})), success = true)
+end
+
 """
     SchurStructure
 
@@ -86,7 +101,7 @@ struct SchurStructure
 end
 
 # Largest supported dimension of an eliminated block
-const MAX_ELIMINATED_DIM = 3
+const MAX_ELIMINATED_DIM = 255
 
 function SchurStructure(
     c_dims::AbstractVector{<:Integer},
@@ -217,7 +232,7 @@ end
 Pre-allocated scratch memory and caches for parallel Schur reduction and back-substitution.
 """
 struct SchurReductionWorkspace{T}
-    W_scratch::Vector{Matrix{T}}          # length nchunks, each (max_Dp, max_obs_dim)
+    W_scratch::Vector{Matrix{T}}          # length nchunks, each (max_Dp, max_obs_dim [+ max_Dp spare columns if max_Dp > D_STATIC])
     C_inv_data::Vector{T}                 # Cached C_l(lambda)^-1: length sum_l d_l^2
     z_data::Vector{T}                     # Cached z_l = C_inv * g_p,l: length sum_l d_l
     thread_g_S::Vector{Vector{T}}         # length nchunks, each length nc
@@ -233,7 +248,9 @@ function SchurReductionWorkspace{T}(
     max_Dp = maximum(structure.p_sizes; init=3)
     max_obs = max(structure.max_obs_dim, 1)
 
-    W_scratch = [Matrix{T}(undef, max_Dp, max_obs) for _ in 1:nchunks]
+    # Blocks above D_STATIC are inverted in a dp x dp scratch matrix kept in max_Dp spare columns after the W columns
+    spare = max_Dp > D_STATIC ? max_Dp : 0
+    W_scratch = [Matrix{T}(undef, max_Dp, max_obs + spare) for _ in 1:nchunks]
     
     total_c_size = sum(Int(d)^2 for d in structure.p_dims; init=0)
     total_p_scalars = sum(Int(d) for d in structure.p_dims; init=0)
@@ -298,26 +315,40 @@ function copy_structure(H::SchurBlockMatrix{T}) where T
     return SchurBlockMatrix(H.structure, B, zeros(T, length(H.C_data)), zeros(T, length(H.E_data)))
 end
 
-@inline make_svec(arr::AbstractVector{T}, off::Int, ::StaticInt{1}) where T = SVector{1, T}(arr[off])
-@inline make_svec(arr::AbstractVector{T}, off::Int, ::StaticInt{2}) where T = SVector{2, T}(arr[off], arr[off+1])
-@inline make_svec(arr::AbstractVector{T}, off::Int, ::StaticInt{3}) where T = SVector{3, T}(arr[off], arr[off+1], arr[off+2])
+# Block dimensions up to D_STATIC use statically sized (register) arithmetic, dispatched on StaticInt;
+# larger ones use a dynamic path with a per-chunk scratch matrix. StaticArrays' Cholesky stops beating
+# LAPACK at around this size, and every extra static size costs compile time.
+const D_STATIC = 8
 
-@inline make_smat(arr::AbstractVector{T}, off::Int, ::StaticInt{1}) where T = SMatrix{1, 1, T, 1}(arr[off])
-@inline make_smat(arr::AbstractVector{T}, off::Int, ::StaticInt{2}) where T = SMatrix{2, 2, T, 4}(arr[off], arr[off+1], arr[off+2], arr[off+3])
-@inline make_smat(arr::AbstractVector{T}, off::Int, ::StaticInt{3}) where T = SMatrix{3, 3, T, 9}(
-    arr[off], arr[off+1], arr[off+2],
-    arr[off+3], arr[off+4], arr[off+5],
-    arr[off+6], arr[off+7], arr[off+8]
-)
+# Block dimension as an Int, from either a StaticInt or an Int
+@inline dimval(::StaticInt{D}) where D = D
+@inline dimval(d::Int) = d
 
-@inline function dot_W_E(W_scratch::Matrix{T}, r_idx::Int, E_data::Vector{T}, e_off::Int, ::StaticInt{1}) where T
-    @inbounds W_scratch[1, r_idx] * E_data[e_off]
+@inline make_svec(arr::AbstractVector{T}, off::Int, ::StaticInt{D}) where {T, D} =
+    SVector{D, T}(ntuple(i -> @inbounds(arr[off + i - 1]), Val(D)))
+
+@inline make_smat(arr::AbstractVector{T}, off::Int, ::StaticInt{D}) where {T, D} =
+    SMatrix{D, D, T, D * D}(ntuple(i -> @inbounds(arr[off + i - 1]), Val(D * D)))
+
+@inline function dot_W_E(W_scratch::Matrix{T}, r_idx::Int, E_data::Vector{T}, e_off::Int, s_dp::Union{StaticInt, Int}) where T
+    acc = zero(T)
+    @inbounds for i in 1:dimval(s_dp)
+        acc += W_scratch[i, r_idx] * E_data[e_off + i - 1]
+    end
+    return acc
 end
-@inline function dot_W_E(W_scratch::Matrix{T}, r_idx::Int, E_data::Vector{T}, e_off::Int, ::StaticInt{2}) where T
-    @inbounds W_scratch[1, r_idx] * E_data[e_off] + W_scratch[2, r_idx] * E_data[e_off + 1]
-end
-@inline function dot_W_E(W_scratch::Matrix{T}, r_idx::Int, E_data::Vector{T}, e_off::Int, ::StaticInt{3}) where T
-    @inbounds W_scratch[1, r_idx] * E_data[e_off] + W_scratch[2, r_idx] * E_data[e_off + 1] + W_scratch[3, r_idx] * E_data[e_off + 2]
+
+# Call `f(s_dp)` with the block dimension `dp` as a StaticInt when `dp <= D_STATIC`, else as an Int
+@inline function dispatch_dim(f::F, dp::Int) where F
+    dp == 1 && return f(static(1))
+    dp == 2 && return f(static(2))
+    dp == 3 && return f(static(3))
+    dp == 4 && return f(static(4))
+    dp == 5 && return f(static(5))
+    dp == 6 && return f(static(6))
+    dp == 7 && return f(static(7))
+    dp == 8 && return f(static(8))
+    return f(dp)
 end
 
 # Threading helper. `@threads` allocates tasks on every call and has scheduling overhead, so loops run
@@ -344,6 +375,125 @@ const SCHUR_THREAD_MIN_WORK = Ref(4096)
 end
 
 """
+    factor_landmark!(C_inv_data, z_data, W_scratch, gS_chunk, structure, C_data, E_data, b_p, scaling_p, lambda, l, s_dp)
+
+Steps shared by the dense and sparse reduction kernels for eliminated block `l`:
+invert `C_l + lambda * diag(scaling)`, cache `C_inv` and `z_l = C_inv * g_p,l`, fill `W_scratch` with
+`C_inv * E_cl'` for every observing retained block, and update the chunk-local `g_S`.
+Returns `false` if the damped block is numerically singular or not positive definite.
+
+`s_dp` is a `StaticInt` for blocks of up to `D_STATIC` dimensions (register arithmetic), otherwise the
+`Int` dimension, which uses a LAPACK Cholesky on a scratch matrix held in the spare columns of `W_scratch`
+(O(d^3) per eliminated block plus O(d^2) per coupling row; no allocation).
+"""
+@inline function factor_landmark!(
+    C_inv_data::Vector{T}, z_data::Vector{T}, W_scratch::Matrix{T}, gS_chunk::Vector{T},
+    structure::SchurStructure, C_data::Vector{T}, E_data::Vector{T},
+    b_p::AbstractVector{T}, scaling_p::AbstractVector{T}, lambda::T, l::Int, s_dp::StaticInt{Dp}
+) where {T, Dp}
+    po = structure.ppoffsets[l]
+    sc_off = structure.boffsets_p[l]
+
+    res = inv_sym_block(make_smat(C_data, po, s_dp), lambda, make_svec(scaling_p, sc_off, s_dp))
+    res.success || return false
+    C_inv = res.invH
+    @inbounds for i in 1:(Dp * Dp)
+        C_inv_data[po + i - 1] = C_inv[i]
+    end
+
+    z_l = C_inv * make_svec(b_p, sc_off, s_dp)
+    @inbounds for i in 1:Dp
+        z_data[sc_off + i - 1] = z_l[i]
+    end
+
+    row_cursor = 0
+    @inbounds for e in structure.cpptr[l]:(structure.cpptr[l + 1] - 1)
+        c = structure.cpblock[e]
+        eo = structure.cpoffsets[e]
+        dc = Int(structure.c_dims[c])
+        co = structure.boffsets_c[c]
+        for r in 1:dc
+            row_E = make_svec(E_data, eo + (r - 1) * Dp, s_dp)
+            w_r = C_inv * row_E
+            for i in 1:Dp
+                W_scratch[i, row_cursor + r] = w_r[i]
+            end
+            gS_chunk[co + r - 1] += dot(row_E, z_l)
+        end
+        row_cursor += dc
+    end
+    return true
+end
+
+@inline function factor_landmark!(
+    C_inv_data::Vector{T}, z_data::Vector{T}, W_scratch::Matrix{T}, gS_chunk::Vector{T},
+    structure::SchurStructure, C_data::Vector{T}, E_data::Vector{T},
+    b_p::AbstractVector{T}, scaling_p::AbstractVector{T}, lambda::T, l::Int, dp::Int
+) where T
+    po = structure.ppoffsets[l]
+    sc_off = structure.boffsets_p[l]
+
+    # dp x dp scratch matrix in the last dp columns of W_scratch (the workspace reserves max_Dp spare
+    # columns after the max_obs_dim columns used for W)
+    ncols = size(W_scratch, 2)
+    M = view(W_scratch, 1:dp, (ncols - dp + 1):ncols)
+    @inbounds for j in 1:dp, i in 1:dp
+        M[i, j] = C_data[po + (j - 1) * dp + i - 1]
+    end
+    @inbounds for i in 1:dp
+        M[i, i] += lambda * scaling_p[sc_off + i - 1]
+    end
+    # Cholesky; every pivot must be safely positive relative to its (damped) diagonal entry. The damped
+    # diagonal entry is recomputed from the inputs.
+    _, info = LinearAlgebra.LAPACK.potrf!('U', M)
+    info == 0 || return false
+    @inbounds for i in 1:dp
+        hii = C_data[po + (i - 1) * (dp + 1)] + lambda * scaling_p[sc_off + i - 1]
+        ratio = abs2(M[i, i]) / hii
+        (isfinite(ratio) && ratio > singular_tol(T)) || return false
+    end
+    LinearAlgebra.LAPACK.potri!('U', M)
+
+    # Store the full symmetric inverse
+    @inbounds for j in 1:dp, i in 1:j
+        v = M[i, j]
+        C_inv_data[po + (j - 1) * dp + i - 1] = v
+        C_inv_data[po + (i - 1) * dp + j - 1] = v
+    end
+
+    @inbounds for i in 1:dp
+        acc = zero(T)
+        for j in 1:dp
+            acc += C_inv_data[po + (j - 1) * dp + i - 1] * b_p[sc_off + j - 1]
+        end
+        z_data[sc_off + i - 1] = acc
+    end
+
+    row_cursor = 0
+    @inbounds for e in structure.cpptr[l]:(structure.cpptr[l + 1] - 1)
+        c = structure.cpblock[e]
+        eo = structure.cpoffsets[e]
+        dc = Int(structure.c_dims[c])
+        co = structure.boffsets_c[c]
+        for r in 1:dc
+            row_off = eo + (r - 1) * dp
+            g = zero(T)
+            for i in 1:dp
+                acc = zero(T)
+                for j in 1:dp
+                    acc += C_inv_data[po + (j - 1) * dp + i - 1] * E_data[row_off + j - 1]
+                end
+                W_scratch[i, row_cursor + r] = acc
+                g += E_data[row_off + i - 1] * z_data[sc_off + i - 1]
+            end
+            gS_chunk[co + r - 1] += g
+        end
+        row_cursor += dc
+    end
+    return true
+end
+
+"""
     reduce_schur_dense_group!(S_chunk, gS_chunk, C_inv_data, z_data, W_scratch, failed_landmark,
                               structure, C_data, E_data, b_p, scaling_p, lambda, p_chunk, ::StaticInt{Dp})
 
@@ -355,8 +505,8 @@ function reduce_schur_dense_group!(
     W_scratch::Matrix{T}, failed_landmark::Base.Threads.Atomic{Int},
     structure::SchurStructure, C_data::Vector{T}, E_data::Vector{T},
     b_p::V, scaling_p::V, lambda::T,
-    p_chunk::UnitRange{Int}, s_dp::StaticInt{Dp}
-) where {T, Dp, V<:AbstractVector{T}}
+    p_chunk::UnitRange{Int}, s_dp::D
+) where {T, D<:Union{StaticInt, Int}, V<:AbstractVector{T}}
     ppoffsets = structure.ppoffsets
     boffsets_p = structure.boffsets_p
     boffsets_c = structure.boffsets_c
@@ -364,19 +514,13 @@ function reduce_schur_dense_group!(
     cpptr = structure.cpptr
     cpblock = structure.cpblock
     cpoffsets = structure.cpoffsets
+    Dp = dimval(s_dp)
 
     @inbounds for l in p_chunk
         failed_landmark[] != 0 && return false
 
-        # 1. Invert C_l(lambda) in registers
-        po = ppoffsets[l]
-        H_blk = make_smat(C_data, po, s_dp)
-        
-        sc_off = boffsets_p[l]
-        scale_blk = make_svec(scaling_p, sc_off, s_dp)
-        
-        res = inv_sym_block(H_blk, lambda, scale_blk)
-        if !res.success
+        # 1-3. Invert C_l(lambda), cache C_inv and z_l, compute W_cl and update the chunk g_S
+        if !factor_landmark!(C_inv_data, z_data, W_scratch, gS_chunk, structure, C_data, E_data, b_p, scaling_p, lambda, l, s_dp)
             old = failed_landmark[]
             while (old == 0 || l < old)
                 old_val = Threads.atomic_cas!(failed_landmark, old, l)
@@ -385,42 +529,9 @@ function reduce_schur_dense_group!(
             end
             return false
         end
-        C_inv = res.invH
 
-        for i in 1:(Dp * Dp)
-            C_inv_data[po + i - 1] = C_inv[i]
-        end
-
-        # 2. Compute and cache z_l = C_inv * g_p,l
-        g_pl = make_svec(b_p, sc_off, s_dp)
-        z_l = C_inv * g_pl
-        for i in 1:Dp
-            z_data[sc_off + i - 1] = z_l[i]
-        end
-
-        # 3. Process observing cameras: compute W_cl and update thread g_S
         e_start = cpptr[l]
         e_end = cpptr[l + 1] - 1
-        
-        row_cursor = 0
-        for e in e_start:e_end
-            c = cpblock[e]
-            eo = cpoffsets[e]
-            dc = Int(c_dims[c])
-            co = boffsets_c[c]
-
-            for r in 1:dc
-                row_E = make_svec(E_data, eo + (r - 1)*Dp, s_dp)
-                w_r = C_inv * row_E
-                for i in 1:Dp
-                    W_scratch[i, row_cursor + r] = w_r[i]
-                end
-                
-                # Accumulate into chunk-local g_S: += E_cl * z_l
-                gS_chunk[co + r - 1] += dot(row_E, z_l)
-            end
-            row_cursor += dc
-        end
 
         # 4. Upper-Triangle S Accumulation (c1 <= c2 guaranteed by sorted cpblock)
         r_cursor = 0
@@ -477,8 +588,8 @@ function reduce_schur_sparse_group!(
     S_colptr::Vector{Ti}, block_colptr::Vector{Ti}, block_rowval::Vector{Ti},
     block_row_offsets::Vector{Int}, col_heights::Vector{Int},
     b_p::V, scaling_p::V, lambda::T,
-    p_chunk::UnitRange{Int}, s_dp::StaticInt{Dp}
-) where {T, Ti, Dp, V<:AbstractVector{T}}
+    p_chunk::UnitRange{Int}, s_dp::D
+) where {T, Ti, D<:Union{StaticInt, Int}, V<:AbstractVector{T}}
     ppoffsets = structure.ppoffsets
     boffsets_p = structure.boffsets_p
     boffsets_c = structure.boffsets_c
@@ -486,18 +597,13 @@ function reduce_schur_sparse_group!(
     cpptr = structure.cpptr
     cpblock = structure.cpblock
     cpoffsets = structure.cpoffsets
+    Dp = dimval(s_dp)
 
     @inbounds for l in p_chunk
         failed_landmark[] != 0 && return false
 
-        # 1. Invert C_l(lambda)
-        po = ppoffsets[l]
-        H_blk = make_smat(C_data, po, s_dp)
-        sc_off = boffsets_p[l]
-        scale_blk = make_svec(scaling_p, sc_off, s_dp)
-        
-        res = inv_sym_block(H_blk, lambda, scale_blk)
-        if !res.success
+        # 1-3. Invert C_l(lambda), cache C_inv and z_l, compute W_cl and update the chunk g_S
+        if !factor_landmark!(C_inv_data, z_data, W_scratch, gS_chunk, structure, C_data, E_data, b_p, scaling_p, lambda, l, s_dp)
             old = failed_landmark[]
             while (old == 0 || l < old)
                 old_val = Threads.atomic_cas!(failed_landmark, old, l)
@@ -506,31 +612,9 @@ function reduce_schur_sparse_group!(
             end
             return false
         end
-        C_inv = res.invH
-        for i in 1:(Dp * Dp); C_inv_data[po + i - 1] = C_inv[i]; end
 
-        # 2. Compute z_l
-        g_pl = make_svec(b_p, sc_off, s_dp)
-        z_l = C_inv * g_pl
-        for i in 1:Dp; z_data[sc_off + i - 1] = z_l[i]; end
-
-        # 3. Compute W_cl and update g_S
         e_start = cpptr[l]
         e_end = cpptr[l + 1] - 1
-        row_cursor = 0
-        for e in e_start:e_end
-            c = cpblock[e]
-            eo = cpoffsets[e]
-            dc = Int(c_dims[c])
-            co = boffsets_c[c]
-            for r in 1:dc
-                row_E = make_svec(E_data, eo + (r - 1)*Dp, s_dp)
-                w_r = C_inv * row_E
-                for i in 1:Dp; W_scratch[i, row_cursor + r] = w_r[i]; end
-                gS_chunk[co + r - 1] += dot(row_E, z_l)
-            end
-            row_cursor += dc
-        end
 
         # 4. Monotone Merge-Walk into Sparse S
         for e2 in e_start:e_end
@@ -654,21 +738,11 @@ function reduce_schur_dense!(
         dp = structure.p_sizes[g_idx]
         chunks = structure.chunks[g_idx]
 
-        # Function barrier outside thread loop
-        if dp == 3
+        # Function barrier on the block dimension (static up to D_STATIC)
+        dispatch_dim(dp) do s_dp
             foreach_index(nchunks, threaded) do k
-                reduce_schur_dense_group!(chunk_buffer(S, ws.thread_dense_S, k), ws.thread_g_S[k], ws.C_inv_data, ws.z_data, ws.W_scratch[k], ws.failed_landmark, structure, C_data, E_data, b_p, scaling_p, lambda, chunks[k], static(3))
+                reduce_schur_dense_group!(chunk_buffer(S, ws.thread_dense_S, k), ws.thread_g_S[k], ws.C_inv_data, ws.z_data, ws.W_scratch[k], ws.failed_landmark, structure, C_data, E_data, b_p, scaling_p, lambda, chunks[k], s_dp)
             end
-        elseif dp == 1
-            foreach_index(nchunks, threaded) do k
-                reduce_schur_dense_group!(chunk_buffer(S, ws.thread_dense_S, k), ws.thread_g_S[k], ws.C_inv_data, ws.z_data, ws.W_scratch[k], ws.failed_landmark, structure, C_data, E_data, b_p, scaling_p, lambda, chunks[k], static(1))
-            end
-        elseif dp == 2
-            foreach_index(nchunks, threaded) do k
-                reduce_schur_dense_group!(chunk_buffer(S, ws.thread_dense_S, k), ws.thread_g_S[k], ws.C_inv_data, ws.z_data, ws.W_scratch[k], ws.failed_landmark, structure, C_data, E_data, b_p, scaling_p, lambda, chunks[k], static(2))
-            end
-        else
-            error("Unsupported landmark dimension $dp")
         end
         ws.failed_landmark[] != 0 && return false
     end
@@ -725,20 +799,10 @@ function reduce_schur_sparse!(
         dp = structure.p_sizes[g_idx]
         chunks = structure.chunks[g_idx]
 
-        if dp == 3
+        dispatch_dim(dp) do s_dp
             foreach_index(nchunks, threaded) do k
-                reduce_schur_sparse_group!(chunk_buffer(S.nzval, ws.thread_nzvals, k), ws.thread_g_S[k], ws.C_inv_data, ws.z_data, ws.W_scratch[k], ws.failed_landmark, structure, C_data, E_data, S.colptr, block_colptr, block_rowval, block_row_offsets, col_heights, b_p, scaling_p, lambda, chunks[k], static(3))
+                reduce_schur_sparse_group!(chunk_buffer(S.nzval, ws.thread_nzvals, k), ws.thread_g_S[k], ws.C_inv_data, ws.z_data, ws.W_scratch[k], ws.failed_landmark, structure, C_data, E_data, S.colptr, block_colptr, block_rowval, block_row_offsets, col_heights, b_p, scaling_p, lambda, chunks[k], s_dp)
             end
-        elseif dp == 1
-            foreach_index(nchunks, threaded) do k
-                reduce_schur_sparse_group!(chunk_buffer(S.nzval, ws.thread_nzvals, k), ws.thread_g_S[k], ws.C_inv_data, ws.z_data, ws.W_scratch[k], ws.failed_landmark, structure, C_data, E_data, S.colptr, block_colptr, block_rowval, block_row_offsets, col_heights, b_p, scaling_p, lambda, chunks[k], static(1))
-            end
-        elseif dp == 2
-            foreach_index(nchunks, threaded) do k
-                reduce_schur_sparse_group!(chunk_buffer(S.nzval, ws.thread_nzvals, k), ws.thread_g_S[k], ws.C_inv_data, ws.z_data, ws.W_scratch[k], ws.failed_landmark, structure, C_data, E_data, S.colptr, block_colptr, block_rowval, block_row_offsets, col_heights, b_p, scaling_p, lambda, chunks[k], static(2))
-            end
-        else
-            error("Unsupported landmark dimension $dp")
         end
         ws.failed_landmark[] != 0 && return false
     end
@@ -787,20 +851,10 @@ function backsubstitute!(
         dp = structure.p_sizes[g_idx]
         chunks = structure.chunks[g_idx]
         # Function barrier on the (static) block dimension
-        if dp == 3
+        dispatch_dim(dp) do s_dp
             foreach_index(length(chunks), threaded) do k
-                backsubstitute_group!(x_p, x_c, structure, E_data, C_inv_data, z_data, chunks[k], static(3))
+                backsubstitute_group!(x_p, x_c, structure, E_data, C_inv_data, z_data, chunks[k], s_dp)
             end
-        elseif dp == 1
-            foreach_index(length(chunks), threaded) do k
-                backsubstitute_group!(x_p, x_c, structure, E_data, C_inv_data, z_data, chunks[k], static(1))
-            end
-        elseif dp == 2
-            foreach_index(length(chunks), threaded) do k
-                backsubstitute_group!(x_p, x_c, structure, E_data, C_inv_data, z_data, chunks[k], static(2))
-            end
-        else
-            error("Unsupported landmark dimension $dp")
         end
     end
     return nothing
@@ -838,6 +892,41 @@ function backsubstitute_group!(
         x_l = make_svec(z_data, p_off, s_dp) - make_smat(C_inv_data, ppoffsets[l], s_dp) * t
         for i in 1:Dp
             x_p[p_off + i - 1] = x_l[i]
+        end
+    end
+    return nothing
+end
+
+# Blocks above D_STATIC dimensions: same computation with run-time loops and one small temporary per call
+function backsubstitute_group!(
+    x_p::AbstractVector{T}, x_c::AbstractVector{T},
+    structure::SchurStructure, E_data::Vector{T},
+    C_inv_data::Vector{T}, z_data::Vector{T},
+    p_chunk::UnitRange{Int}, dp::Int
+) where T
+    t = Vector{T}(undef, dp)
+    @inbounds for l in p_chunk
+        p_off = structure.boffsets_p[l]
+        po = structure.ppoffsets[l]
+        fill!(t, zero(T))
+        for e in structure.cpptr[l]:(structure.cpptr[l + 1] - 1)
+            c = structure.cpblock[e]
+            dc = Int(structure.c_dims[c])
+            co = structure.boffsets_c[c]
+            eo = structure.cpoffsets[e]
+            for r in 1:dc
+                xc = x_c[co + r - 1]
+                for i in 1:dp
+                    t[i] += E_data[eo + (r - 1) * dp + i - 1] * xc
+                end
+            end
+        end
+        for i in 1:dp
+            acc = z_data[p_off + i - 1]
+            for j in 1:dp
+                acc -= C_inv_data[po + (j - 1) * dp + i - 1] * t[j]
+            end
+            x_p[p_off + i - 1] = acc
         end
     end
     return nothing
