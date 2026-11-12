@@ -351,8 +351,9 @@ end
     return f(dp)
 end
 
-# Threading helper. `@threads` allocates tasks on every call and has scheduling overhead, so loops run
-# serially unless there is more than one thread available *and* enough work to be worth splitting.
+# Threading helper. Polyester (the same mechanism NLLSModel.jl uses for assembly, so the two never compete
+# for threads) has low per-call overhead, but loops still run serially unless more than one thread is
+# available *and* there is enough work to be worth splitting.
 const SCHUR_THREAD_MIN_WORK = Ref(4096)
 
 @inline use_threads(nitems::Integer, work::Integer=nitems) = nitems > 1 && work >= SCHUR_THREAD_MIN_WORK[] && Threads.nthreads() > 1
@@ -361,11 +362,17 @@ const SCHUR_THREAD_MIN_WORK = Ref(4096)
 # own buffers, which are merged in afterwards. With a single chunk no extra memory is needed at all.
 @inline chunk_buffer(target::AbstractArray, extra::Vector, k::Int) = k == 1 ? target : @inbounds(extra[k - 1])
 
+# Kept out of line so that the serial path does not pay for the closure Polyester builds
+@noinline function batch_foreach(f::F, n::Int) where F
+    Polyester.@batch for i in 1:n
+        f(i)
+    end
+    return nothing
+end
+
 @inline function foreach_index(f::F, n::Int, threaded::Bool) where F
     if threaded
-        Threads.@threads for i in 1:n
-            f(i)
-        end
+        batch_foreach(f, n)
     else
         for i in 1:n
             f(i)

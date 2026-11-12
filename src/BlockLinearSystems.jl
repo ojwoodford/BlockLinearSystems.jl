@@ -1,6 +1,6 @@
 module BlockLinearSystems
 
-using Static, StaticArrays, HybridArrays, SparseArrays, LinearAlgebra
+using Static, StaticArrays, HybridArrays, SparseArrays, LinearAlgebra, Polyester
 
 export SparseBlockLinearSystem, DenseBlockLinearSystem, TransposedPattern, BlockOffsets
 export BlockRLE, nruns, runlength, runblocksize, matrixdimension, runblockrange, runmatrixrange, eachrun, sort_blocks_hierarchical
