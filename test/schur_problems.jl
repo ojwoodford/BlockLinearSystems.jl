@@ -374,7 +374,9 @@ end
             H = kind === :dense ? dense_schur_matrix(p) : sparse_schur_matrix(p)
             @test BlockLinearSystems.fast_bAb(H, dx) ≈ expected rtol = 1e-12
             BlockLinearSystems.fast_bAb(H, dx)
-            kind === :sparse && @test (@allocated BlockLinearSystems.fast_bAb(H, dx)) == 0
+            # No allocation that scales with the problem. (Julia 1.10 allocates a ~100 byte closure for the
+            # per-group static-dimension dispatch; newer versions allocate nothing.)
+            kind === :sparse && @test (@allocated BlockLinearSystems.fast_bAb(H, dx)) <= 256
         end
     end
 end
@@ -457,4 +459,20 @@ end
     @test all(covis.block_rowval[k] <= c for c in 1:ncam for k in covis.block_colptr[c]:covis.block_colptr[c+1]-1)
     @test nnz(covis.block_covis) <= ncam * 4
 
+end
+
+@testset "fast_bAb: any element type, and eliminated blocks of every size class (M13)" begin
+    for p in (standard_problem(), mixed_dims_problem())
+        n = length(p.b)
+        dx = randn(Random.Xoshiro(8), n)
+        expected = dot(dx, p.H * dx)
+        for make in (dense_schur_matrix, sparse_schur_matrix)
+            H = make(p)
+            @test fast_bAb(H, dx) ≈ expected rtol = 1e-12
+            @test fast_bAb(H, view(dx, 1:n)) ≈ expected rtol = 1e-12          # AbstractVector
+            @test fast_bAb(H, Float32.(dx)) ≈ dot(Float32.(dx), p.H * Float32.(dx)) rtol = 1e-4
+            @test fast_bAb(H, Float32.(dx)) isa Float64                      # promoted element type
+            @test fast_bAb(H, ComplexF64.(dx)) ≈ expected rtol = 1e-12       # (real part of a real-quadratic form)
+        end
+    end
 end
