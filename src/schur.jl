@@ -756,49 +756,71 @@ end
 """
     backsubstitute!(x_p, x_c, structure, E_data, C_inv_data, z_data)
 
-Recover step Delta x_p for all eliminable blocks independently using cached C_inv and z.
+Recover step Delta x_p for all eliminable blocks independently using cached C_inv and z:
+`x_p,l = z_l - C_inv,l * (sum_c E_cl' x_c,c)`. The coupling sum is accumulated first and `C_inv` is
+applied once per eliminable block.
 """
 function backsubstitute!(
     x_p::AbstractVector{T}, x_c::AbstractVector{T},
     structure::SchurStructure, E_data::Vector{T},
     C_inv_data::Vector{T}, z_data::Vector{T}
 ) where T
+    threaded = use_threads(structure.npblocks, length(structure.cpblock))
+    for (g_idx, p_range) in enumerate(structure.p_groups)
+        dp = structure.p_sizes[g_idx]
+        chunks = structure.chunks[g_idx]
+        # Function barrier on the (static) block dimension
+        if dp == 3
+            foreach_index(length(chunks), threaded) do k
+                backsubstitute_group!(x_p, x_c, structure, E_data, C_inv_data, z_data, chunks[k], static(3))
+            end
+        elseif dp == 1
+            foreach_index(length(chunks), threaded) do k
+                backsubstitute_group!(x_p, x_c, structure, E_data, C_inv_data, z_data, chunks[k], static(1))
+            end
+        elseif dp == 2
+            foreach_index(length(chunks), threaded) do k
+                backsubstitute_group!(x_p, x_c, structure, E_data, C_inv_data, z_data, chunks[k], static(2))
+            end
+        else
+            error("Unsupported landmark dimension $dp")
+        end
+    end
+    return nothing
+end
+
+function backsubstitute_group!(
+    x_p::AbstractVector{T}, x_c::AbstractVector{T},
+    structure::SchurStructure, E_data::Vector{T},
+    C_inv_data::Vector{T}, z_data::Vector{T},
+    p_chunk::UnitRange{Int}, s_dp::StaticInt{Dp}
+) where {T, Dp}
     cpptr = structure.cpptr
     cpblock = structure.cpblock
     cpoffsets = structure.cpoffsets
     boffsets_c = structure.boffsets_c
     boffsets_p = structure.boffsets_p
-    p_dims = structure.p_dims
+    ppoffsets = structure.ppoffsets
     c_dims = structure.c_dims
 
-    foreach_index(structure.npblocks, use_threads(structure.npblocks, length(structure.cpblock))) do l
-        dp = Int(p_dims[l])
+    @inbounds for l in p_chunk
         p_off = boffsets_p[l]
-        p_data_off = structure.ppoffsets[l]
 
-        for i in 1:dp
-            x_p[p_off + i - 1] = z_data[p_off + i - 1]
-        end
-
-        e_start = cpptr[l]
-        e_end = cpptr[l + 1] - 1
-        
-        for e in e_start:e_end
+        # t = sum over observing retained blocks of E_cl' * x_c,c
+        t = zero(SVector{Dp, T})
+        for e in cpptr[l]:(cpptr[l + 1] - 1)
             c = cpblock[e]
             dc = Int(c_dims[c])
             co = boffsets_c[c]
             eo = cpoffsets[e]
-
             for r in 1:dc
-                xc_val = x_c[co + r - 1]
-                for i in 1:dp
-                    e_val = E_data[eo + (r - 1)*dp + i - 1]
-                    for j in 1:dp
-                        inv_val = C_inv_data[p_data_off + (j - 1)*dp + i - 1]
-                        x_p[p_off + j - 1] -= inv_val * e_val * xc_val
-                    end
-                end
+                t += make_svec(E_data, eo + (r - 1) * Dp, s_dp) * x_c[co + r - 1]
             end
+        end
+
+        x_l = make_svec(z_data, p_off, s_dp) - make_smat(C_inv_data, ppoffsets[l], s_dp) * t
+        for i in 1:Dp
+            x_p[p_off + i - 1] = x_l[i]
         end
     end
     return nothing
