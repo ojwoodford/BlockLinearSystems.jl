@@ -77,7 +77,7 @@ fast_bAb
 ```@docs
 build_schur_pattern
 retained_block_pairs
-build_b_to_s_map
+build_r_to_s_map
 ```
 
 ### Variable Ordering

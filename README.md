@@ -99,11 +99,11 @@ symmetrifyfull!(H_sub, bsm, [1, 2])
 ```julia
 st = SchurStructure([6, 6, 6], [3, 3, 3, 1], [[1, 2], [1, 2, 3], [2, 3], [3]])  # retained block dims, eliminated block dims, retained blocks coupled to each eliminated block
 ws = SchurReductionWorkspace{Float64}(st, 1)
-# ... fill B, C_data, E_data in a SchurBlockMatrix, then:
-reset_schur_dense!(S, B, scaling_c, lambda, ws)
-reduce_schur_dense!(S, g, b_c, b_p, scaling_p, lambda, st, C_data, E_data, ws)   # false if a block is singular
-# solve S x_c = g, then recover the eliminated variables:
-backsubstitute!(x_p, x_c, st, E_data, ws.C_inv_data, ws.z_data)
+# ... fill R, E_data, C_data in a SchurBlockMatrix, then:
+reset_schur_dense!(S, R, scaling_r, lambda, ws)
+reduce_schur_dense!(S, g, b_r, b_e, scaling_e, lambda, st, E_data, C_data, ws)   # false if a block is singular
+# solve S x_r = g, then recover the eliminated variables:
+backsubstitute!(x_e, x_r, st, C_data, ws.E_inv_data, ws.z_data)
 ```
 
 See the [Schur reduction tutorial](https://ojwoodford.github.io/BlockLinearSystems.jl/dev/tutorials/schur_reduction/) for a complete, runnable example.
