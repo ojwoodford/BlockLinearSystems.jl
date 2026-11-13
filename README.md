@@ -111,5 +111,7 @@ See the [Schur reduction tutorial](https://ojwoodford.github.io/BlockLinearSyste
 ### Use with SecondOrderOptimization.jl
 
 Loading `BlockLinearSystems` together with [SecondOrderOptimization.jl](https://github.com/ojwoodford/SecondOrderOptimization.jl)
-activates an extension (defined in that package) with `DenseSchurLinearSystem` and `SparseSchurLinearSystem`,
-selected with `linsolver = :schur`, `:dense_schur` or `:sparse_schur`.
+activates an extension (defined in that package) with `DenseSchurLinearSystem` and `SparseSchurLinearSystem`.
+Passing a `SchurBlockMatrix` as the Hessian prototype selects elimination; there is no option to set.
+Whether the reduced system is dense or sparse follows the storage of `R` (a `Matrix` or a `SparseBlockLinearSystem`),
+and `linsolver` names the solver applied to the reduced system (`:auto`, `:cholesky` or `:ldl`).
