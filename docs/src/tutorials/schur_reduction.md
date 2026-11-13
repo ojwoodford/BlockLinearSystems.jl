@@ -133,5 +133,9 @@ the immutable structure (and the read-only `pattern`, if any), and [`trial_works
 ## Using it with SecondOrderOptimization.jl
 
 Loading both `BlockLinearSystems` and `SecondOrderOptimization` activates an extension that wraps all of this
-in `DenseSchurLinearSystem` and `SparseSchurLinearSystem` (selected with `linsolver = :schur`, `:dense_schur`
-or `:sparse_schur`), for use with its Levenberg–Marquardt, dogleg and Newton iterators.
+in `DenseSchurLinearSystem` and `SparseSchurLinearSystem`, for use with its Levenberg–Marquardt, dogleg and Newton
+iterators. Passing a [`SchurBlockMatrix`](@ref) as the Hessian prototype `H` (for example
+`HessianObjective(f, fdf!; H)`, then `optimize!(x0, obj, options)`) is what selects elimination; there is no option
+to set. Whether the reduced system is dense or sparse follows the storage of `R` (a `Matrix` or a
+[`SparseBlockLinearSystem`](@ref)), and `linsolver` names the solver applied to the reduced system: `:auto`,
+`:cholesky` or `:ldl`.
