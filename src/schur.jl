@@ -438,10 +438,6 @@ const SCHUR_THREAD_MIN_WORK = Ref(4096)
 
 @inline use_threads(nitems::Integer, work::Integer=nitems) = nitems > 1 && work >= SCHUR_THREAD_MIN_WORK[] && Threads.nthreads() > 1
 
-# Chunk 1 accumulates straight into the reduced system (`S` or `S.nzval`); only chunks 2..K need their
-# own buffers, which are merged in afterwards. With a single chunk no extra memory is needed at all.
-@inline chunk_buffer(target::AbstractArray, extra::Vector, k::Int) = k == 1 ? target : @inbounds(extra[k - 1])
-
 # Kept out of line so that the serial path does not pay for the closure Polyester builds
 @noinline function batch_foreach(f::F, n::Int) where F
     Polyester.@batch for i in 1:n
