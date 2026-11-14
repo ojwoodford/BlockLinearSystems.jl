@@ -9,5 +9,6 @@ using Random, BlockLinearSystems, SparseArrays, StaticArrays, Static, HybridArra
     include("helpers.jl")
     include("schur.jl")
     include("schur_problems.jl")
+    include("schur_jacobian.jl")
     include("zero.jl")
 end

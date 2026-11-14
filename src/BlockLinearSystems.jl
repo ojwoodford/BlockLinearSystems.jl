@@ -14,12 +14,14 @@ export expand_block_perm, sort_schur_blocks, build_schur_pattern, build_r_to_s_m
 export inv_sym_block, reduce_schur_dense!, reduce_schur_sparse!
 export reset_schur_dense!, reset_schur_sparse!, backsubstitute!
 export fast_bAb
+export SchurJacobianStructure, SchurBlockJacobian, schur_jacobian_bytes, coupling_block, eliminated_block, residual_block, coupling_entry
 
 include("utils.jl")
 include("BlockRLE.jl")
 include("DenseBlockLinearSystem.jl")
 include("SparseBlockLinearSystem.jl")
 include("schur.jl")
+include("schur_jacobian.jl")
 include("docstrings.jl")
 
 end # module BlockLinearSystems
