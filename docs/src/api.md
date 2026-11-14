@@ -1,3 +1,7 @@
+```@meta
+CurrentModule = BlockLinearSystems
+```
+
 # API Reference
 
 ## Linear System Types
@@ -6,7 +10,6 @@
 SparseBlockLinearSystem
 DenseBlockLinearSystem
 TransposedPattern
-BlockOffsets
 ```
 
 ## Block Indexing & Accessors
@@ -26,7 +29,6 @@ uniformscaling!
 ```@docs
 symmetrifyfull
 symmetrifyfull!
-makesparseindices
 sparse_with_map
 ```
 
@@ -34,6 +36,13 @@ sparse_with_map
 
 ```@docs
 block_sparse_nnz
+```
+
+## Index Utilities
+
+```@docs
+computestartindices
+find_diag_inds
 ```
 
 ## Run-Length Encoded Block Layouts
@@ -57,7 +66,7 @@ reset_schur_sparse!
 reduce_schur_dense!
 reduce_schur_sparse!
 backsubstitute!
-fast_bAb
+LinearAlgebra.dot(::AbstractVector{<:Real}, ::SchurBlockMatrix{<:Real}, ::AbstractVector{<:Real})
 retained_block
 ```
 
@@ -101,4 +110,5 @@ reduced_normal_sparse!
 reduced_diagonal_blocks!
 jtr!
 jtj_diag!
+jtj_quadform
 ```

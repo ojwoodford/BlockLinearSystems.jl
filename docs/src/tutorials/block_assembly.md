@@ -18,9 +18,9 @@ bdm = DenseBlockLinearSystem{Float64}([2, 3, 2])
 bdm_rect = DenseBlockLinearSystem{Float64}([2, 3], [3, 2])
 ```
 
-If you already have precomputed 1-based start offsets, you can pass the explicit `offsets` keyword or wrapper:
+If you already have precomputed 1-based start offsets, you can pass the explicit `offsets` keyword:
 ```julia
-bdm_offsets = DenseBlockLinearSystem{Float64}(; offsets=BlockOffsets([1, 3, 6, 8]))
+bdm_offsets = DenseBlockLinearSystem{Float64}(; offsets=[1, 3, 6, 8])
 ```
 
 ## Constructing a `SparseBlockLinearSystem`

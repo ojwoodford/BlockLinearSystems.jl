@@ -165,7 +165,7 @@ S_qr[diagind(S_qr)] .+= lambda .* s_r
   `S = J̃ᵀJ̃`. This gives the same system as the Schur route and squares the condition number again.
 
 The gradient `Jᵀr`, the column norms `diag(JᵀJ)` and the model term `‖J v‖²` of the full problem come from
-[`jtr!`](@ref), [`jtj_diag!`](@ref) and [`fast_bAb`](@ref), on the raw tables or the factored ones (`Q` is
+[`jtr!`](@ref), [`jtj_diag!`](@ref) and [`jtj_quadform`](@ref), on the raw tables or the factored ones (`Q` is
 orthogonal). The factored tables hold the damped Jacobian, so for `λ > 0` their eliminated column norms
 include `λ s_e` and `‖J v‖²` includes `λ Σ s_e v_e²`; the raw tables are always kept.
 

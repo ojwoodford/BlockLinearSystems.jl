@@ -199,7 +199,7 @@ end
             v = randn(rng, T, n)
             g_raw, g_fac = jtr!(zeros(T, n), J), jtr!(zeros(T, n), ws)
             d_raw, d_fac = jtj_diag!(zeros(T, n), J), jtj_diag!(zeros(T, n), ws)
-            q_raw, q_fac = fast_bAb(J, v), fast_bAb(ws, v)
+            q_raw, q_fac = jtj_quadform(J, v), jtj_quadform(ws, v)
             # The raw tables against the dense problem
             @test relerr(g_raw, p.Jf' * p.rf) <= tol
             @test relerr(d_raw, vec(sum(abs2, p.Jf; dims=1))) <= tol
@@ -212,7 +212,7 @@ end
             if lambda == 0
                 @test relerr(d_fac, d_raw) <= tol
             end
-            @test fast_bAb(J, Float32.(v)) isa promote_type(T, Float32)
+            @test jtj_quadform(J, Float32.(v)) isa promote_type(T, Float32)
         end
     end
 end
@@ -260,7 +260,7 @@ qr_backsub_allocs(x_e, x_r, ws) = @allocated backsubstitute!(x_e, x_r, ws)
 qr_normal_allocs(S, g, ws) = @allocated reduced_normal_dense!(S, g, ws)
 qr_snormal_allocs(S, g, ws, pat) = @allocated reduced_normal_sparse!(S, g, ws, pat)
 qr_misc_allocs(rt, D, d, gg, ws, J, v) = @allocated begin
-    reduced_residual!(rt, ws); reduced_diagonal_blocks!(D, ws); jtj_diag!(d, J); jtr!(gg, ws); fast_bAb(ws, v)
+    reduced_residual!(rt, ws); reduced_diagonal_blocks!(D, ws); jtj_diag!(d, J); jtr!(gg, ws); jtj_quadform(ws, v)
 end
 
 @testset "Kernels of the reduced problem: no allocation, type stable (E4)" begin
@@ -305,8 +305,8 @@ end
         @inferred backsubstitute!(x_e, v, ws)
         @inferred reduced_normal_dense!(S, gS, ws)
         @inferred reduced_normal_sparse!(Ssp, gS, ws, pat)
-        @test @inferred(fast_bAb(ws, vf)) isa T
-        @test @inferred(fast_bAb(J, vf)) isa T
+        @test @inferred(jtj_quadform(ws, vf)) isa T
+        @test @inferred(jtj_quadform(J, vf)) isa T
         @inferred jtr!(gg, J)
         @inferred jtj_diag!(d, ws)
     end

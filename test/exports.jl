@@ -1,14 +1,14 @@
-using Test, BlockLinearSystems
+using Test, BlockLinearSystems, LinearAlgebra
 
 # The public API rule: a name is either public (exported, with a docstring and an entry in the API reference)
 # or internal (not exported, not in the API reference). Adding or dropping an export must change this list.
 const PUBLIC_API = sort([
-    :BlockOffsets, :BlockRLE, :DenseBlockLinearSystem, :QRReductionWorkspace, :SchurBlockJacobian,
+    :BlockRLE, :DenseBlockLinearSystem, :QRReductionWorkspace, :SchurBlockJacobian,
     :SchurBlockMatrix, :SchurJacobianStructure, :SchurReductionWorkspace, :SchurStructure,
     :SparseBlockLinearSystem, :TransposedPattern,
     :backsubstitute!, :block, :block_sparse_nnz, :blockrange, :blocksizes, :build_r_to_s_map,
-    :build_schur_pattern, :copy_structure, :coupling_block, :coupling_entry, :eliminated_block, :fast_bAb,
-    :free_block_pairs, :jtj_diag!, :jtr!, :makesparseindices, :nblocks, :reduce_qr!, :reduce_schur_dense!,
+    :build_schur_pattern, :copy_structure, :coupling_block, :coupling_entry, :computestartindices, :eliminated_block, :find_diag_inds,
+    :free_block_pairs, :jtj_diag!, :jtj_quadform, :jtr!, :nblocks, :reduce_qr!, :reduce_schur_dense!,
     :reduce_schur_sparse!, :reduced_diagonal_blocks!, :reduced_jacobian!, :reduced_mul!,
     :reduced_normal_dense!, :reduced_normal_sparse!, :reduced_nrows, :reduced_residual!, :reduced_tmul!,
     :reset_schur_dense!, :reset_schur_sparse!, :residual_block, :retained_block, :retained_block_pairs,
@@ -31,13 +31,19 @@ const PUBLIC_API = sort([
             entry = strip(line)
             isempty(entry) || push!(listed, Symbol(entry))
         end
-        @test sort(unique(listed)) == PUBLIC_API
+        # ... apart from methods added to other packages' functions, listed qualified (rules.md 7)
+        qualified = filter(e -> occursin('.', string(e)), listed)
+        @test qualified == [Symbol("LinearAlgebra.dot(::AbstractVector{<:Real}, ::SchurBlockMatrix{<:Real}, ::AbstractVector{<:Real})")]
+        @test sort(unique(setdiff(listed, qualified))) == PUBLIC_API
     end
     # Internal names stay defined (qualified access), and the old alias is gone
     for name in (:copyto!, :inv_sym_block, :expand_block_perm, :validblock, :symmetrifysparse, :blockdata,
                  :eachstoredblock, :nruns, :runlength, :runblocksize, :matrixdimension, :runblockrange,
-                 :runmatrixrange, :eachrun, :sort_blocks_hierarchical)
+                 :runmatrixrange, :eachrun, :sort_blocks_hierarchical, :BlockOffsets, :makesparseindices)
         @test isdefined(BlockLinearSystems, name) && !(name in exported)
     end
     @test !isdefined(BlockLinearSystems, :SchurBlockStructure)
+    # fast_bAb is gone (D1): dot(v, H, v) for a SchurBlockMatrix, jtj_quadform for the QR tables
+    @test !isdefined(BlockLinearSystems, :fast_bAb)
+    @test hasmethod(LinearAlgebra.dot, Tuple{Vector{Float64}, SchurBlockMatrix{Float64, Matrix{Float64}}, Vector{Float64}})
 end

@@ -729,14 +729,31 @@ damped Jacobian `[J; √(λ s_e)]`, so the eliminated entries include `λ * s_e`
 jtj_diag!
 
 """
-    fast_bAb(src::Union{SchurBlockJacobian, QRReductionWorkspace}, v) -> Real
+    jtj_quadform(src::Union{SchurBlockJacobian, QRReductionWorkspace}, v) -> Real
 
 `‖J v‖² = vᵀ(JᵀJ)v` for `v = [v_r; v_e]`, from the tables, without forming anything: the analogue of
-[`fast_bAb`](@ref)`(::SchurBlockMatrix, dx)` for the Hessian `JᵀJ`. From the factored tables the damped
-Jacobian is used, so the result includes `λ * Σ s_e v_e²` (equal at `λ = 0`). Any element type of `v`;
+`dot(v, H, v)` for a [`SchurBlockMatrix`](@ref) holding the Hessian `H = JᵀJ`. From the factored tables
+the damped Jacobian is used, so the result includes `λ * Σ s_e v_e²` (equal at `λ = 0`). Any element type of `v`;
 the result has the promoted type.
 """
-fast_bAb(::Union{SchurBlockJacobian, QRReductionWorkspace}, ::AbstractVector)
+jtj_quadform
+
+"""
+    dot(x::AbstractVector{<:Real}, H::SchurBlockMatrix{<:Real}, y::AbstractVector{<:Real}) -> Real
+
+The bilinear form `xᵀ H y`, with `x` and `y` over `[retained; eliminated]` (length `nr + sum(e_dims)`), in
+O(N) operations without materializing `H`. The result has the promoted element type of `H`, `x` and `y`. A
+`DimensionMismatch` is thrown if a length is wrong. Real element types only.
+
+`H` is symmetric: one triangle of a dense `R` is read, and the stored blocks of a sparse `R`.
+
+When `x === y` this is the quadratic form `xᵀ H x`, computed by a faster kernel that reads each term once and
+doubles the off-diagonal and coupling terms. The eliminated part (`E` and the couplings `C`), where nearly all
+the work is, is processed per group of eliminated blocks of uniform dimension with that dimension known
+statically (3.4x faster than per-block run-time sizes on a bundle-adjustment-like benchmark with 200 retained
+and 20000 eliminated blocks). Pass the same vector twice to get it.
+"""
+LinearAlgebra.dot(::AbstractVector{<:Real}, ::SchurBlockMatrix{<:Real}, ::AbstractVector{<:Real})
 
 """
     retained_block(H::SchurBlockMatrix, i, j[, rows, cols])

@@ -479,9 +479,9 @@ function jtj_diag!(dg::AbstractVector, src::SchurTables)
     return dg
 end
 
-# fast_bAb(src::Union{SchurBlockJacobian, QRReductionWorkspace}, v) -> Real
+# jtj_quadform(src::Union{SchurBlockJacobian, QRReductionWorkspace}, v) -> Real
 # `‖J v‖² = vᵀ(JᵀJ)v` for `v = [v_r; v_e]`, from the tables.
-function fast_bAb(src::SchurTables{T}, v::AbstractVector) where T
+function jtj_quadform(src::SchurTables{T}, v::AbstractVector) where T
     jst = src.structure
     st = jst.schur
     D = table_data(src)

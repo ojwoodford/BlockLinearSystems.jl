@@ -366,20 +366,24 @@ end
     @test inv_sym_block(SMatrix{2, 2, Float64, 4}(1, 1, 1, 1 + 1e-6), 0.0, SVector{2, Float64}(1, 1)).success
 end
 
-@testset "fast_bAb equals the full quadratic form (B6)" begin
+# Measured inside a function: @allocated at a testset's top level counts spurious boxing on Julia 1.10
+allocs_dot(x, H, y) = @allocated dot(x, H, y)
+
+@testset "dot(v, H, v) equals the full quadratic form (B6)" begin
     for p in (standard_problem(), coupled_groups_problem())
         n = length(p.b)
         dx = randn(Random.Xoshiro(5), n)
         expected = dot(dx, p.H * dx)
         for kind in (:dense, :sparse)
             H = kind === :dense ? dense_schur_matrix(p) : sparse_schur_matrix(p)
-            @test BlockLinearSystems.fast_bAb(H, dx) ≈ expected rtol = 1e-12
-            BlockLinearSystems.fast_bAb(H, dx)
+            @test dot(dx, H, dx) ≈ expected rtol = 1e-12
             # Type stable (a captured `Type` was once widened to DataType on Julia 1.10, which made the
             # result `Any` and boxed it on every call) and allocation free, for both kinds of R
-            @test @inferred(BlockLinearSystems.fast_bAb(H, dx)) isa Float64
-            @test @inferred(BlockLinearSystems.fast_bAb(H, Float32.(dx))) isa Float64
-            @test (@allocated BlockLinearSystems.fast_bAb(H, dx)) == 0
+            @test @inferred(dot(dx, H, dx)) isa Float64
+            dx32 = Float32.(dx)
+            @test @inferred(dot(dx32, H, dx32)) isa Float64
+            allocs_dot(dx, H, dx)   # compile
+            @test allocs_dot(dx, H, dx) == 0
         end
     end
 end
@@ -464,24 +468,82 @@ end
 
 end
 
-@testset "fast_bAb: any element type, and eliminated blocks of every size class (M13)" begin
+@testset "dot(v, H, v): any real element type, and eliminated blocks of every size class (M13)" begin
     for p in (standard_problem(), mixed_dims_problem())
         n = length(p.b)
         dx = randn(Random.Xoshiro(8), n)
         expected = dot(dx, p.H * dx)
         for make in (dense_schur_matrix, sparse_schur_matrix)
             H = make(p)
-            @test fast_bAb(H, dx) ≈ expected rtol = 1e-12
-            @test fast_bAb(H, view(dx, 1:n)) ≈ expected rtol = 1e-12          # AbstractVector
-            @test fast_bAb(H, Float32.(dx)) ≈ dot(Float32.(dx), p.H * Float32.(dx)) rtol = 1e-4
-            @test fast_bAb(H, Float32.(dx)) isa Float64                      # promoted element type
-            @test fast_bAb(H, ComplexF64.(dx)) ≈ expected rtol = 1e-12       # (real part of a real-quadratic form)
+            @test dot(dx, H, dx) ≈ expected rtol = 1e-12
+            vdx = view(dx, 1:n)
+            @test dot(vdx, H, vdx) ≈ expected rtol = 1e-12                    # AbstractVector
+            dx32 = Float32.(dx)
+            @test dot(dx32, H, dx32) ≈ dot(dx32, p.H * dx32) rtol = 1e-4
+            @test dot(dx32, H, dx32) isa Float64                              # promoted element type
         end
     end
 end
 
+@testset "dot(x, H, y) is the bilinear form xᵀHy, for any x and y (D1)" begin
+    rng = Random.Xoshiro(31)
+    # mixed_dims_problem has eliminated blocks on both sides of D_STATIC (static and run-time kernels);
+    # coupled_groups_problem has retained-retained blocks with no eliminated variable
+    @test any(>(BlockLinearSystems.D_STATIC), mixed_dims_problem().e_dims)
+    @test any(<=(BlockLinearSystems.D_STATIC), mixed_dims_problem().e_dims)
+    for p in (standard_problem(), coupled_groups_problem(), mixed_dims_problem())
+        n = length(p.b)
+        for make in (dense_schur_matrix, sparse_schur_matrix)
+            H = make(p)
+            x, y = randn(rng, n), randn(rng, n)
+            tol = 1e-12 * opnorm(p.H) * norm(x) * norm(y)
+            # Against the dense form, for independent x and y
+            @test abs(dot(x, H, y) - x' * p.H * y) <= tol
+            # Symmetric
+            @test abs(dot(x, H, y) - dot(y, H, x)) <= tol
+            # The fast path is taken for x === y, and not for an equal copy; both give the quadratic form
+            xc = copy(x)
+            @test dot(x, H, x) === BlockLinearSystems.schur_quadform(H, x)
+            @test dot(x, H, xc) === BlockLinearSystems.schur_bilinear(H, x, xc)
+            @test dot(x, H, x) ≈ dot(x, H, xc) rtol = 1e-12
+            @test dot(x, H, x) ≈ dot(x, p.H * x) rtol = 1e-12
+            # Mixed element types promote
+            x32, yi = Float32.(x), rand(rng, -3:3, n)
+            @test @inferred(dot(x32, H, yi)) isa Float64
+            @test abs(dot(x32, H, yi) - Float64.(x32)' * p.H * yi) <= tol * norm(yi) / norm(y)
+            @test @inferred(dot(x32, H, x32)) isa Float64
+            # Views
+            xbig = [0.0; x; 0.0]
+            @test dot(view(xbig, 2:n+1), H, y) ≈ dot(x, H, y) rtol = 1e-14
+            @test dot(view(xbig, 2:n+1), H, view(xbig, 2:n+1)) ≈ dot(x, H, x) rtol = 1e-14
+            # Type stable and allocation free
+            @test @inferred(dot(x, H, y)) isa Float64
+            allocs_dot(x, H, y)   # compile
+            @test allocs_dot(x, H, y) == 0
+            # Wrong lengths are rejected; complex vectors are not supported
+            @test_throws DimensionMismatch dot(x, H, randn(rng, n + 1))
+            @test_throws DimensionMismatch dot(randn(rng, n - 1), H, y)
+            @test_throws DimensionMismatch dot(x[1:n-1], H, x[1:n-1])
+            @test_throws MethodError dot(ComplexF64.(x), H, y)
+        end
+    end
+    # A Float32 H with Float64 vectors promotes too
+    p = mixed_dims_problem()
+    n = length(p.b)
+    H = sparse_schur_matrix(p)
+    R32 = SparseBlockLinearSystem{Float32}(Float32.(H.R.data), H.R.indices, H.R.indicestransposed, H.R.rowblocksizes, H.R.columnblocksizes, H.R.m, H.R.n)
+    H32 = SchurBlockMatrix(H.structure, R32, Float32.(H.E_data), Float32.(H.C_data))
+    Hd32 = SchurBlockMatrix(H.structure, Float32.(dense_schur_matrix(p).R), Float32.(H.E_data), Float32.(H.C_data))
+    x, y = randn(rng, n), randn(rng, n)
+    for Hk in (H32, Hd32)
+        @test @inferred(dot(x, Hk, y)) isa Float64
+        @test dot(x, Hk, y) ≈ dot(x, H, y) rtol = 1e-5
+        @test dot(x, Hk, x) ≈ dot(x, H, x) rtol = 1e-5
+    end
+    @test !isdefined(BlockLinearSystems, :fast_bAb)
+end
+
 # Measured inside functions: @allocated at a testset's top level counts spurious boxing on Julia 1.10
-allocs_fast_bAb(H, dx) = @allocated BlockLinearSystems.fast_bAb(H, dx)
 allocs_zero!(H) = @allocated zero!(H)
 
 @testset "SchurBlockMatrix carries an optional pattern (A1)" begin
@@ -514,8 +576,8 @@ allocs_zero!(H) = @allocated zero!(H)
         @test isconcretetype(fieldtype(typeof(H), :R))
         @test isconcretetype(fieldtype(typeof(H), :E_data)) && isconcretetype(fieldtype(typeof(H), :C_data))
         dx = randn(st.nr + sum(st.e_dims))
-        allocs_fast_bAb(H, dx); allocs_zero!(H)   # compile
-        @test allocs_fast_bAb(H, dx) == 0
+        allocs_dot(dx, H, dx); allocs_zero!(H)   # compile
+        @test allocs_dot(dx, H, dx) == 0
         @test allocs_zero!(H) == 0
         zero!(H)
         @test all(iszero, H.E_data) && all(iszero, H.C_data)
