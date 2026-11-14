@@ -17,6 +17,7 @@ In nonlinear least squares (NLS), bundle adjustment (BA), and SLAM, optimization
 - **Zero-Allocation Views**: Accessing blocks with static dimensions (`static(N)` or `Val(N)`) returns stack-allocated `SizedMatrix` or `HybridArray` views, enabling unrolled SIMD addition with StaticArrays (`.+=`).
 - **Zero-Allocation Solver Scatter**: In iterative solvers, `sparse_with_map` precomputes the CSC pattern and an integer scatter map once during setup. In each iteration, `copyto!(csc_mat, bsm, scatter_map)` updates the sparse solver matrix with **zero allocations**.
 - **Schur Complement Reduction**: `SchurStructure`, `SchurBlockMatrix` and the parallel `reduce_schur_dense!` / `reduce_schur_sparse!` kernels eliminate blocks (any dimension, 1–255) from bipartite systems, with dense or sparse reduced systems. `symmetrifyfull!(dest, bsm, blocks)` extracts principal block submatrices in-place.
+- **QR Elimination (Jacobian path)**: `SchurJacobianStructure`, `SchurBlockJacobian` and `reduce_qr!` eliminate the same blocks from a tall least-squares problem `min ‖J x − r‖²` by QR, without forming `JᵀJ`, so the elimination works at the condition number of `J` rather than its square.
 - **Thread-Local Clones**: `copy_structure(sys)` creates a lightweight thread-local accumulator sharing index structures, reduced after assembly via a fast BLAS vector addition (`sys.data .+= thread_sys.data`).
 
 ### Design Scope: Accumulators, Not General Matrices
@@ -107,6 +108,30 @@ backsubstitute!(x_e, x_r, st, C_data, ws.E_inv_data, ws.z_data)
 ```
 
 See the [Schur reduction tutorial](https://ojwoodford.github.io/BlockLinearSystems.jl/dev/tutorials/schur_reduction/) for a complete, runnable example.
+
+### 5. QR Elimination (Jacobian Path)
+
+The same partition, with residuals and a Jacobian instead of a Hessian: one dense table `[J_r | J_e | r]` per
+eliminated block, with the rows that involve it. `reduce_qr!` applies the Householder QR of each table's
+eliminated columns to the whole table; the remaining rows of every table form the reduced problem
+`min ‖J̃ x_r − r̃‖²`, with `J̃ᵀJ̃` equal to the Schur complement of `JᵀJ`.
+
+```julia
+jst = SchurJacobianStructure([6, 6, 6], [3, 3, 3, 1], [[1, 2], [1, 2, 3], [2, 3], [3]], [8, 10, 6, 3])  # ..., rows per eliminated block
+J = SchurBlockJacobian{Float64}(jst)
+# ... fill through coupling_block(J, u, row, nrows), eliminated_block(J, e, ...), residual_block(J, t, ...), then:
+ws = QRReductionWorkspace(J)
+reduce_qr!(ws, J, scaling_e, lambda)          # false if a block is rank deficient (e.g. too few rows, undamped)
+reduced_jacobian!(Jt, rt, ws)                 # dense J̃ and r̃; or reduced_mul! / reduced_tmul! for LSMR,
+x_r = qr(Jt) \ rt                             # or reduced_normal_dense! / _sparse! for J̃ᵀJ̃ and Cholesky
+backsubstitute!(x_e, x_r, ws)
+```
+
+**Memory caveat:** each table is dense in every retained block coupled to its eliminated block, so its size
+is (rows + d_e) × (coupled retained dimension + d_e + 1), stored twice (raw and factored). For eliminated
+blocks seen by many residuals this is far more than the Schur route needs. `schur_jacobian_bytes(jst)`
+reports it from the structure alone, before anything is allocated. See the
+[QR elimination tutorial](https://ojwoodford.github.io/BlockLinearSystems.jl/dev/tutorials/qr_elimination/).
 
 ### Use with SecondOrderOptimization.jl
 

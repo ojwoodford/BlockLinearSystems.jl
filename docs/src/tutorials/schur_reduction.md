@@ -71,6 +71,16 @@ Hs = SchurBlockMatrix(st, R, E_data, C_data)
 nothing # hide
 ```
 
+Instead of computing offsets into `E_data` and `C_data`, the blocks can be written through sized views:
+[`retained_block`](@ref)`(Hs, i, j)`, [`eliminated_block`](@ref)`(Hs, e)` and
+[`coupling_block`](@ref)`(Hs, c)` (with `c` the coupling entry, from [`coupling_entry`](@ref)`(st, e, r)`),
+statically sized when the sizes are passed as `StaticInt`:
+
+```@example schur
+e, r = 2, 3
+coupling_block(Hs, coupling_entry(st, e, r)) == H[st.nr .+ st.boffsets_e[e] .+ (0:2), st.boffsets_r[r] .+ (0:5)]
+```
+
 Reduce, solve the small system, and back-substitute. `lambda` and `scaling` add Levenberg–Marquardt damping
 `lambda * diag(scaling)` to the whole system (the scaling is the damping diagonal itself, e.g. `abs.(diag(H))`
 for Marquardt scaling):

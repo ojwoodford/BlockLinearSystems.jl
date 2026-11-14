@@ -19,6 +19,7 @@ makedocs(
             "Block Linear System Assembly & Indexing" => "tutorials/block_assembly.md",
             "Symmetrification & CSC Scatter" => "tutorials/symmetrification_and_schur.md",
             "Schur Complement Reduction" => "tutorials/schur_reduction.md",
+            "QR Elimination (Jacobian Path)" => "tutorials/qr_elimination.md",
         ],
     ]
 )

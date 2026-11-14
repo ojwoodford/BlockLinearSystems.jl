@@ -70,6 +70,7 @@ reduce_schur_dense!
 reduce_schur_sparse!
 backsubstitute!
 fast_bAb
+retained_block
 ```
 
 ### Reduced-System Sparsity
@@ -85,6 +86,34 @@ build_r_to_s_map
 ```@docs
 sort_schur_blocks
 expand_block_perm
+```
+
+## QR Elimination (Jacobian Path)
+
+The Jacobian-path counterpart of the Schur reduction: elimination of the same blocks from a tall
+least-squares problem `min ‖J x - r‖²` by QR. See the [QR elimination tutorial](tutorials/qr_elimination.md).
+
+```@docs
+SchurJacobianStructure
+SchurBlockJacobian
+schur_jacobian_bytes
+coupling_block
+eliminated_block
+residual_block
+coupling_entry
+QRReductionWorkspace
+reduce_qr!
+reduced_nrows
+free_block_pairs
+reduced_mul!
+reduced_tmul!
+reduced_residual!
+reduced_jacobian!
+reduced_normal_dense!
+reduced_normal_sparse!
+reduced_diagonal_blocks!
+jtr!
+jtj_diag!
 ```
 
 ## Internal Utilities
