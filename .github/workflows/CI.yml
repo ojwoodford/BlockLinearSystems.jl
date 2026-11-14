@@ -15,7 +15,7 @@ concurrency:
   cancel-in-progress: ${{ startsWith(github.ref, 'refs/pull/') }}
 jobs:
   test:
-    name: Julia ${{ matrix.version }} - ${{ matrix.os }} - ${{ matrix.arch }} - ${{ github.event_name }}
+    name: Julia ${{ matrix.version }} - ${{ matrix.threads }} thread(s) - ${{ matrix.os }} - ${{ matrix.arch }} - ${{ github.event_name }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -27,6 +27,16 @@ jobs:
           - ubuntu-latest
         arch:
           - x64
+        threads:
+          - '1'
+        include:
+          # The threaded kernels only take their threaded paths with more than one thread
+          - version: '1'
+            os: ubuntu-latest
+            arch: x64
+            threads: '4'
+    env:
+      JULIA_NUM_THREADS: ${{ matrix.threads }}
     steps:
       - uses: actions/checkout@v7
       - uses: julia-actions/setup-julia@v3

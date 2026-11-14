@@ -8,6 +8,7 @@ makedocs(
     modules = [BlockLinearSystems],
     remotes = nothing,
     warnonly = false,
+    checkdocs = :exports,   # internal names keep their docstrings as developer notes, outside the API reference
     format = Documenter.HTML(
         prettyurls = get(ENV, "CI", nothing) == "true",
         sidebar_sitename = true,
@@ -19,6 +20,7 @@ makedocs(
             "Block Linear System Assembly & Indexing" => "tutorials/block_assembly.md",
             "Symmetrification & CSC Scatter" => "tutorials/symmetrification_and_schur.md",
             "Schur Complement Reduction" => "tutorials/schur_reduction.md",
+            "QR Elimination (Jacobian Path)" => "tutorials/qr_elimination.md",
         ],
     ]
 )

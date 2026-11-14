@@ -1,3 +1,5 @@
+using BlockLinearSystems
+using BlockLinearSystems: blockdata, eachstoredblock, symmetrifysparse, validblock   # internal names
 # Helper to verify zero allocations in inner block accumulation
 function test_block_alloc(b)
     val = @SMatrix [1.0 2.0; 3.0 4.0; 5.0 6.0]

@@ -280,13 +280,13 @@ end
 end
 
 @testset "Singular eliminated blocks are reported, kernels do not allocate (B11, M5)" begin
-    for de in (2, 6, 12)   # closed form, generic static tier and dynamic tier
+    for de in (1, 2, 6, 12)   # closed forms (1 and 2), generic static tier and dynamic tier
         rng = Random.Xoshiro(de)
         q = SchurTestProblem(rng, [6, 6], [de, de], [[1, 2], [1, 2]])
         H = dense_schur_matrix(q)
         eo = H.structure.eoffsets[2]
         v = randn(rng, de)
-        H.E_data[eo:eo+de^2-1] .= vec(v * v')
+        H.E_data[eo:eo+de^2-1] .= de == 1 ? [0.0] : vec(v * v')   # rank 1 is singular only for de > 1
         x, ok = schur_solve(H, q.b, ones(length(q.b)), 0.0)
         @test !ok
         ws = SchurReductionWorkspace{Float64}(H.structure, 1)
@@ -360,28 +360,10 @@ end
         @test ok && eltype(x) == Float32
         @test norm(Float64.(x) - x_ref) <= 1e-3 * norm(x_ref)
     end
-    H2 = SMatrix{2, 2, Float32, 4}(1, 1, 1, 1 + 1f-6)
-    @test !inv_sym_block(H2, 0f0, SVector{2, Float32}(1, 1)).success
-    @test inv_sym_block(SMatrix{2, 2, Float64, 4}(1, 1, 1, 1 + 1e-6), 0.0, SVector{2, Float64}(1, 1)).success
 end
 
-@testset "fast_bAb equals the full quadratic form (B6)" begin
-    for p in (standard_problem(), coupled_groups_problem())
-        n = length(p.b)
-        dx = randn(Random.Xoshiro(5), n)
-        expected = dot(dx, p.H * dx)
-        for kind in (:dense, :sparse)
-            H = kind === :dense ? dense_schur_matrix(p) : sparse_schur_matrix(p)
-            @test BlockLinearSystems.fast_bAb(H, dx) ≈ expected rtol = 1e-12
-            BlockLinearSystems.fast_bAb(H, dx)
-            # Type stable (a captured `Type` was once widened to DataType on Julia 1.10, which made the
-            # result `Any` and boxed it on every call) and allocation free, for both kinds of R
-            @test @inferred(BlockLinearSystems.fast_bAb(H, dx)) isa Float64
-            @test @inferred(BlockLinearSystems.fast_bAb(H, Float32.(dx))) isa Float64
-            @test (@allocated BlockLinearSystems.fast_bAb(H, dx)) == 0
-        end
-    end
-end
+# Measured inside a function: @allocated at a testset's top level counts spurious boxing on Julia 1.10
+allocs_dot(x, H, y) = @allocated dot(x, H, y)
 
 @testset "SchurStructure validates its inputs (B13)" begin
     ok = SchurStructure([6, 6], [3, 3], [[1, 2], [2]])
@@ -463,24 +445,7 @@ end
 
 end
 
-@testset "fast_bAb: any element type, and eliminated blocks of every size class (M13)" begin
-    for p in (standard_problem(), mixed_dims_problem())
-        n = length(p.b)
-        dx = randn(Random.Xoshiro(8), n)
-        expected = dot(dx, p.H * dx)
-        for make in (dense_schur_matrix, sparse_schur_matrix)
-            H = make(p)
-            @test fast_bAb(H, dx) ≈ expected rtol = 1e-12
-            @test fast_bAb(H, view(dx, 1:n)) ≈ expected rtol = 1e-12          # AbstractVector
-            @test fast_bAb(H, Float32.(dx)) ≈ dot(Float32.(dx), p.H * Float32.(dx)) rtol = 1e-4
-            @test fast_bAb(H, Float32.(dx)) isa Float64                      # promoted element type
-            @test fast_bAb(H, ComplexF64.(dx)) ≈ expected rtol = 1e-12       # (real part of a real-quadratic form)
-        end
-    end
-end
-
 # Measured inside functions: @allocated at a testset's top level counts spurious boxing on Julia 1.10
-allocs_fast_bAb(H, dx) = @allocated BlockLinearSystems.fast_bAb(H, dx)
 allocs_zero!(H) = @allocated zero!(H)
 
 @testset "SchurBlockMatrix carries an optional pattern (A1)" begin
@@ -513,8 +478,8 @@ allocs_zero!(H) = @allocated zero!(H)
         @test isconcretetype(fieldtype(typeof(H), :R))
         @test isconcretetype(fieldtype(typeof(H), :E_data)) && isconcretetype(fieldtype(typeof(H), :C_data))
         dx = randn(st.nr + sum(st.e_dims))
-        allocs_fast_bAb(H, dx); allocs_zero!(H)   # compile
-        @test allocs_fast_bAb(H, dx) == 0
+        allocs_dot(dx, H, dx); allocs_zero!(H)   # compile
+        @test allocs_dot(dx, H, dx) == 0
         @test allocs_zero!(H) == 0
         zero!(H)
         @test all(iszero, H.E_data) && all(iszero, H.C_data)

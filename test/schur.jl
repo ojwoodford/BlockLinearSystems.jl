@@ -1,4 +1,5 @@
 using Test, LinearAlgebra, SparseArrays, StaticArrays, Static, BlockLinearSystems
+using BlockLinearSystems: expand_block_perm   # internal names
 
 @testset "Schur-Complement Linear Solver: Pure-Data Kernels & Equivalence" begin
     # --------------------------------------------------------------------------
@@ -485,7 +486,7 @@ using Test, LinearAlgebra, SparseArrays, StaticArrays, Static, BlockLinearSystem
     @test b_map == r_to_s_map
 
     # --------------------------------------------------------------------------
-    # 11. SchurBlockMatrix & fast_bAb Equivalence Test
+    # 11. SchurBlockMatrix & dot(v, H, v) Equivalence Test
     # --------------------------------------------------------------------------
     H_dense_block = SchurBlockMatrix(R, E_data, C_data, structure_K1)
     # Undamped H_full
@@ -503,6 +504,6 @@ using Test, LinearAlgebra, SparseArrays, StaticArrays, Static, BlockLinearSystem
 
     dx_test = randn(nr + ne)
     quad_exact = dot(dx_test, H_full_undamped * dx_test)
-    quad_fast = fast_bAb(H_dense_block, dx_test)
+    quad_fast = dot(dx_test, H_dense_block, dx_test)
     @test isapprox(quad_fast, quad_exact; atol=1e-10)
 end
