@@ -10,5 +10,6 @@ using Random, BlockLinearSystems, SparseArrays, StaticArrays, Static, HybridArra
     include("schur.jl")
     include("schur_problems.jl")
     include("schur_jacobian.jl")
+    include("qr_reduction.jl")
     include("zero.jl")
 end

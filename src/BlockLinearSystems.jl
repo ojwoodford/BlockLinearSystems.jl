@@ -15,6 +15,7 @@ export inv_sym_block, reduce_schur_dense!, reduce_schur_sparse!
 export reset_schur_dense!, reset_schur_sparse!, backsubstitute!
 export fast_bAb
 export SchurJacobianStructure, SchurBlockJacobian, schur_jacobian_bytes, coupling_block, eliminated_block, residual_block, coupling_entry
+export QRReductionWorkspace, reduce_qr!
 
 include("utils.jl")
 include("BlockRLE.jl")
@@ -22,6 +23,7 @@ include("DenseBlockLinearSystem.jl")
 include("SparseBlockLinearSystem.jl")
 include("schur.jl")
 include("schur_jacobian.jl")
+include("qr_reduction.jl")
 include("docstrings.jl")
 
 end # module BlockLinearSystems
