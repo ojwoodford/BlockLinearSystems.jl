@@ -576,14 +576,17 @@ function factor_eliminated_group!(
     e_chunk::UnitRange{Int}, s_de::Union{StaticInt, Int}
 ) where T
     @inbounds for e in e_chunk
-        failed_block[] != 0 && return false
+        fb = failed_block[]                  # a lower failure elsewhere: no block above it can be the lowest
+        fb != 0 && e > fb && return false
         if !factor_eliminated!(E_inv_data, z_data, W_data, scratch, structure, E_data, C_data, b_e, scaling_e, lambda, e, s_de)
             old = failed_block[]
             while (old == 0 || e < old)
                 old_val = Threads.atomic_cas!(failed_block, old, e)
                 old_val == old && break
-                old = failed_block[]
-            end
+                # Retry only when another thread changed failed_block between the read and the CAS: a race that no
+                # deterministic test can force, so these two lines are excluded from coverage.
+                old = failed_block[]  # COV_EXCL_LINE
+            end  # COV_EXCL_LINE
             return false
         end
     end

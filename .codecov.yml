@@ -3,7 +3,7 @@ coverage:
     project:
       default:
         target: auto
-        threshold: 1%
+        threshold: 0%   # any drop in project coverage fails the check
     patch:
       default:
         target: auto

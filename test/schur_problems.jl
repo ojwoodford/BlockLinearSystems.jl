@@ -281,13 +281,13 @@ end
 end
 
 @testset "Singular eliminated blocks are reported, kernels do not allocate (B11, M5)" begin
-    for de in (2, 6, 12)   # closed form, generic static tier and dynamic tier
+    for de in (1, 2, 6, 12)   # closed forms (1 and 2), generic static tier and dynamic tier
         rng = Random.Xoshiro(de)
         q = SchurTestProblem(rng, [6, 6], [de, de], [[1, 2], [1, 2]])
         H = dense_schur_matrix(q)
         eo = H.structure.eoffsets[2]
         v = randn(rng, de)
-        H.E_data[eo:eo+de^2-1] .= vec(v * v')
+        H.E_data[eo:eo+de^2-1] .= de == 1 ? [0.0] : vec(v * v')   # rank 1 is singular only for de > 1
         x, ok = schur_solve(H, q.b, ones(length(q.b)), 0.0)
         @test !ok
         ws = SchurReductionWorkspace{Float64}(H.structure, 1)

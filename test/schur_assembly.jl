@@ -74,6 +74,9 @@ allocs_sab_dynamic(H, e, c) = @allocated sab_dynamic(H, e, c)
         @test eliminated_block(H, e, Val(3), Val(3)) isa SizedMatrix{3, 3, Float64}
         @test coupling_block(H, c, static(3), static(6)) isa SizedMatrix{3, 6, Float64}
         @test coupling_block(H, c, static(3), 6) isa HybridArray
+        @test coupling_block(H, c, 3, static(6)) isa HybridArray
+        @test coupling_block(H, c, static(3), 6) == coupling_block(H, c, 3, static(6)) == coupling_block(H, c)
+        @test eliminated_block(H, e, 3, static(3)) == eliminated_block(H, e)
         @test retained_block(H, 1, 1, static(6), static(6)) isa SizedMatrix{6, 6, Float64}
         @inferred eliminated_block(H, e)
         @inferred coupling_block(H, c, static(3), static(6))

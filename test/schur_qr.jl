@@ -375,3 +375,41 @@ end
         @test !reduce_qr!(QRReductionWorkspace(p.J), p.J, sc[13:end], 0)     # and it fails undamped
     end
 end
+
+@testset "The lowest failing block is reported under threads (C1)" begin
+    # Eight chunks of 50 blocks each, threaded whatever the work: a chunk must not stop at a failure recorded
+    # by another chunk while it still has lower blocks to check. Repeated, since the interleaving varies.
+    ne = 400
+    jst = SchurJacobianStructure(fill(6, 4), fill(3, ne), [[mod1(e, 4)] for e in 1:ne], fill(5, ne); nchunks=8)
+    st = jst.schur
+    J = SchurBlockJacobian{Float64}(jst)
+    E_data, C_data = zeros(9ne), zeros(18 * length(st.entry_retained))
+    R = Matrix(1.0I(24))
+    qws, sws = QRReductionWorkspace(J), SchurReductionWorkspace{Float64}(st, 8)
+    S, g = zeros(24, 24), zeros(24)
+    rng = Random.Xoshiro(5)
+    old = BlockLinearSystems.SCHUR_THREAD_MIN_WORK[]
+    try
+        BlockLinearSystems.SCHUR_THREAD_MIN_WORK[] = 0
+        # Every block fails (all zero, undamped), then only blocks 57, 150, 230 and 390 do
+        for failing in (1:ne, [57, 150, 230, 390])
+            for e in 1:ne
+                ok = !(e in failing)
+                eliminated_block(J, e) .= ok ? randn(rng, 5, 3) : zeros(5, 3)
+                E_data[st.eoffsets[e] .+ (0:8)] .= ok ? vec(Matrix(1.0I(3))) : zeros(9)
+            end
+            qr_found, schur_found = Set{Int}(), Set{Int}()
+            for _ in 1:200
+                reduce_qr!(qws, J, ones(3ne), 0.0)
+                push!(qr_found, qws.failed_block[])
+                reset_schur_dense!(S, R, ones(24), 0.0, sws)
+                reduce_schur_dense!(S, g, zeros(24), zeros(3ne), ones(3ne), 0.0, st, E_data, C_data, sws)
+                push!(schur_found, sws.failed_block[])
+            end
+            @test qr_found == Set(first(failing))
+            @test schur_found == Set(first(failing))
+        end
+    finally
+        BlockLinearSystems.SCHUR_THREAD_MIN_WORK[] = old
+    end
+end
