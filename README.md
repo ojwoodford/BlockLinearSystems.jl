@@ -1,6 +1,7 @@
 # BlockLinearSystems.jl
 
-[![Documentation](https://img.shields.io/badge/docs-dev-blue.svg)](https://ojwoodford.github.io/BlockLinearSystems.jl/dev/)
+[![docs-stable](https://img.shields.io/badge/docs-stable-blue.svg)](https://ojwoodford.github.io/BlockLinearSystems.jl/stable/)
+[![docs-dev](https://img.shields.io/badge/docs-dev-blue.svg)](https://ojwoodford.github.io/BlockLinearSystems.jl/dev/)
 [![Build Status](https://github.com/ojwoodford/BlockLinearSystems.jl/actions/workflows/CI.yml/badge.svg?branch=main)](https://github.com/ojwoodford/BlockLinearSystems.jl/actions/workflows/CI.yml?query=branch%3Amain)
 [![codecov](https://codecov.io/gh/ojwoodford/BlockLinearSystems.jl/branch/main/graph/badge.svg)](https://codecov.io/gh/ojwoodford/BlockLinearSystems.jl)
 
