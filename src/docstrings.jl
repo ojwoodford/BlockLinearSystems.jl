@@ -738,3 +738,41 @@ Jacobian is used, so the result includes `λ * Σ s_e v_e²` (equal at `λ = 0`)
 the result has the promoted type.
 """
 fast_bAb(::Union{SchurBlockJacobian, QRReductionWorkspace}, ::AbstractVector)
+
+"""
+    retained_block(H::SchurBlockMatrix, i, j[, rows, cols])
+
+Mutable view of block `(i, j)` of `R`, `d_i × d_j`. For a dense `R` (a `Matrix`) any block may be
+viewed; for a sparse `R` (a [`SparseBlockLinearSystem`](@ref)) only stored blocks (the lower triangle,
+`i >= j`), else `ArgumentError`. `rows` and `cols` may be `Int`, `StaticInt` or `Val` and must equal the
+block's size (`DimensionMismatch` otherwise); static sizes give a `SizedMatrix`, as for [`block`](@ref).
+
+With [`eliminated_block`](@ref)`(H, e)` and [`coupling_block`](@ref)`(H, c)` this lets a caller assemble a
+[`SchurBlockMatrix`](@ref) without offset arithmetic. All forms are type stable and allocation free.
+"""
+retained_block
+
+"""
+    eliminated_block(H::SchurBlockMatrix, e[, rows, cols])
+
+Mutable view of the eliminated block `E_e` (`d_e × d_e`, column-major in `H.E_data`). Sizes and errors
+as for [`retained_block`](@ref).
+"""
+eliminated_block(::SchurBlockMatrix, ::Integer)
+
+"""
+    coupling_block(H::SchurBlockMatrix, c[, rows, cols])
+
+Mutable view of the coupling block `C_er` (`d_e × d_r`, column-major in `H.C_data`) of coupling entry `c`
+(an index into `H.structure.entry_retained`; [`coupling_entry`](@ref)`(H.structure, e, r)` finds it).
+Sizes and errors as for [`retained_block`](@ref).
+"""
+coupling_block(::SchurBlockMatrix, ::Integer)
+
+"""
+    coupling_entry(structure::SchurStructure, e, r) -> Int
+
+Index of the coupling entry of retained block `r` in eliminated block `e` (binary search). Throws
+`ArgumentError` if `r` is not coupled to `e`, `BoundsError` for an unknown eliminated block.
+"""
+coupling_entry(::SchurStructure, ::Integer, ::Integer)

@@ -70,6 +70,7 @@ reduce_schur_dense!
 reduce_schur_sparse!
 backsubstitute!
 fast_bAb
+retained_block
 ```
 
 ### Reduced-System Sparsity
