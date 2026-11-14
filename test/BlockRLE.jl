@@ -1,3 +1,5 @@
+using BlockLinearSystems
+using BlockLinearSystems: eachrun, matrixdimension, nruns, runblockrange, runblocksize, runlength, runmatrixrange, sort_blocks_hierarchical   # internal names
 @testset "BlockRLE" begin
     # Construction from run lengths and block sizes
     rle = BlockRLE([10, 50], [6, 3])

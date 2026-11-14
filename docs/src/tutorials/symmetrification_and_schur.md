@@ -4,9 +4,7 @@ During Gauss-Newton or second-order optimization, only the block-lower triangle 
 
 ## Zero-Allocation Scatter into `SparseMatrixCSC`
 
-Calling [`symmetrifysparse(bsm)`](@ref symmetrifysparse) constructs a new symmetric `SparseMatrixCSC` in a single call.
-
-In iterative optimization loops where the sparsity pattern is fixed across iterations, precompute the solver matrix and scatter map once using [`sparse_with_map`](@ref), and scatter `bsm.data` into `H_csc` with **zero allocations** in each step:
+When the sparsity pattern is fixed across iterations, precompute the solver matrix and scatter map once using [`sparse_with_map`](@ref), and scatter `bsm.data` into `H_csc` with **zero allocations** in each step:
 
 ```julia
 using BlockLinearSystems, SparseArrays

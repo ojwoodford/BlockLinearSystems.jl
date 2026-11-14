@@ -8,6 +8,7 @@ makedocs(
     modules = [BlockLinearSystems],
     remotes = nothing,
     warnonly = false,
+    checkdocs = :exports,   # internal names keep their docstrings as developer notes, outside the API reference
     format = Documenter.HTML(
         prettyurls = get(ENV, "CI", nothing) == "true",
         sidebar_sitename = true,

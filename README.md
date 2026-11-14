@@ -111,6 +111,8 @@ See the [Schur reduction tutorial](https://ojwoodford.github.io/BlockLinearSyste
 
 ### 5. QR Elimination (Jacobian Path)
 
+This API is new in this release and may change in the next minor version.
+
 The same partition, with residuals and a Jacobian instead of a Hessian: one dense table `[J_r | J_e | r]` per
 eliminated block, with the rows that involve it. `reduce_qr!` applies the Householder QR of each table's
 eliminated columns to the whole table; the remaining rows of every table form the reduced problem

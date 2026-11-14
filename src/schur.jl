@@ -1,5 +1,9 @@
 using Static, StaticArrays, SparseArrays, LinearAlgebra
 
+# Relative tolerance used to declare a damped block numerically singular: 1e-12 for Float64, scaled
+# with the precision of T.
+@inline singular_tol(::Type{T}) where T = 4504 * eps(T)
+
 """
     inv_sym_block(H::SMatrix{P, P, T}, lambda::T, scale::SVector{P, T}) where {P, T}
 
@@ -7,10 +11,6 @@ Invert a symmetric positive semi-definite block `H` with diagonal Levenberg-Marq
 `H + lambda * diag(scale)` (`scale` is the damping diagonal itself, e.g. `|diag(H)|` for Marquardt scaling) in registers.
 Returns `(invH, success)` where `success` is false if the block is numerically rank-deficient.
 """
-# Relative tolerance used to declare a damped block numerically singular: 1e-12 for Float64, scaled
-# with the precision of T.
-@inline singular_tol(::Type{T}) where T = 4504 * eps(T)
-
 @inline function inv_sym_block(H::SMatrix{1, 1, T, 1}, lambda::T, scale::SVector{1, T}) where T
     h11 = H[1, 1] + lambda * scale[1]
     if h11 <= eps(T) * abs(H[1, 1]) || !isfinite(h11)
@@ -326,8 +326,6 @@ trial_workspace(ws::SchurReductionWorkspace{T}) where T = SchurReductionWorkspac
     ws.W_scratch, ws.W_data, similar(ws.E_inv_data), similar(ws.z_data),
     ws.retained_ptr, ws.retained_entry, ws.entry_eliminated, ws.col_chunks, Base.Threads.Atomic{Int}(0)
 )
-
-const SchurBlockStructure = SchurStructure
 
 """
     SchurBlockMatrix(structure, R, E_data, C_data; pattern=nothing)

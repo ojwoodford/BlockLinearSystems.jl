@@ -184,7 +184,7 @@ symmetrifysparse
 """
     makesparseindices(bsm::SparseBlockLinearSystem, symmetrify::Bool=false) -> SparseMatrixCSC{Int, Int}
 
-Precomputes a `SparseMatrixCSC{Int, Int}` whose `nzval` holds the 1-based indices into `bsm.data` for every scalar non-zero entry of `sparse(bsm)` (or `symmetrifysparse(bsm)` when `symmetrify=true`).
+Precomputes a `SparseMatrixCSC{Int, Int}` whose `nzval` holds the 1-based indices into `bsm.data` for every scalar non-zero entry of `sparse(bsm)` (or of its symmetric completion when `symmetrify=true`).
 
 This enables zero-allocation copying from `bsm.data` into an existing `SparseMatrixCSC` via `H.nzval[i] = bsm.data[sparseindices.nzval[i]]`.
 
@@ -347,8 +347,7 @@ Subtypes `AbstractVector{Int}` (storing the sizes compactly, normally as `UInt8`
 # 100 blocks of dimension 6 followed by 50,000 blocks of dimension 3:
 rle = BlockRLE([100, 50_000], [6, 3])
 length(rle)            # 50100
-matrixdimension(rle)   # 150600
-nruns(rle)             # 2
+sum(rle)               # 150600, the matrix dimension
 ```
 """
 BlockRLE

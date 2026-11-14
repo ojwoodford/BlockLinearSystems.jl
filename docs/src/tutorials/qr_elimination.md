@@ -6,6 +6,9 @@ eliminated from the least-squares problem itself, by QR, without forming `H = Já
 Demmel, Sommer, Cremers and Usenko, "Square Root Bundle Adjustment for Large-Scale Reconstruction"
 (CVPR 2021). Nothing here is specific to bundle adjustment.
 
+!!! note "New API"
+    The QR-elimination API is new in this release and may change in the next minor version.
+
 ## Conventions
 
 The same as for the Schur systems, so that the two routes give the same numbers:

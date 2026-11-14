@@ -14,11 +14,8 @@ BlockOffsets
 ```@docs
 block
 blockrange
-validblock
 blocksizes
 nblocks
-blockdata
-eachstoredblock
 zero!
 copy_structure
 uniformscaling!
@@ -29,7 +26,6 @@ uniformscaling!
 ```@docs
 symmetrifyfull
 symmetrifyfull!
-symmetrifysparse
 makesparseindices
 sparse_with_map
 ```
@@ -40,18 +36,10 @@ sparse_with_map
 block_sparse_nnz
 ```
 
-## Run-Length Encoded Block Arrangements
+## Run-Length Encoded Block Layouts
 
 ```@docs
 BlockRLE
-nruns
-runlength
-runblocksize
-matrixdimension
-runblockrange
-runmatrixrange
-eachrun
-sort_blocks_hierarchical
 ```
 
 ## Schur Complement Reduction
@@ -85,7 +73,6 @@ build_r_to_s_map
 
 ```@docs
 sort_schur_blocks
-expand_block_perm
 ```
 
 ## QR Elimination (Jacobian Path)
@@ -114,22 +101,4 @@ reduced_normal_sparse!
 reduced_diagonal_blocks!
 jtr!
 jtj_diag!
-```
-
-## Internal Utilities
-
-```@docs
-BlockLinearSystems.computestartindices
-BlockLinearSystems.find_diag_inds
-BlockLinearSystems.inplacecumsum!
-```
-
-### Schur Reduction Kernels
-
-```@docs
-BlockLinearSystems.factor_eliminated!
-BlockLinearSystems.factor_eliminated_group!
-BlockLinearSystems.accumulate_dense_columns!
-BlockLinearSystems.accumulate_sparse_columns!
-BlockLinearSystems.partition_columns
 ```

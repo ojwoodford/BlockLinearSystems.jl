@@ -2,6 +2,7 @@ using Random, BlockLinearSystems, SparseArrays, StaticArrays, Static, HybridArra
 
 @testset "BlockLinearSystems.jl" begin
     include("aqua.jl")
+    include("exports.jl")
     include("SparseBlockLinearSystem.jl")
     include("DenseBlockLinearSystem.jl")
     include("BlockRLE.jl")

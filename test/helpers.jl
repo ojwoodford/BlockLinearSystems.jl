@@ -1,3 +1,5 @@
+using BlockLinearSystems
+using BlockLinearSystems: validblock   # internal names
 @testset "Helper Functions" begin
     # block_sparse_nnz (exported)
     sparsity = sparse([true true; false true])

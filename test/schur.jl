@@ -1,4 +1,5 @@
 using Test, LinearAlgebra, SparseArrays, StaticArrays, Static, BlockLinearSystems
+using BlockLinearSystems: expand_block_perm   # internal names
 
 @testset "Schur-Complement Linear Solver: Pure-Data Kernels & Equivalence" begin
     # --------------------------------------------------------------------------

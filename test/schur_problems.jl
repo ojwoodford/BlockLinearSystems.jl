@@ -1,4 +1,5 @@
 using Random, LinearAlgebra, SparseArrays, StaticArrays, Static, Test, BlockLinearSystems
+using BlockLinearSystems: inv_sym_block   # internal names
 
 # Schur-complement data structures and kernels, tested with the public API only (no optimizer needed).
 # The linear systems that plug these into SecondOrderOptimization are tested in that package.

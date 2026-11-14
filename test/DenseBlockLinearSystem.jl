@@ -1,3 +1,5 @@
+using BlockLinearSystems
+using BlockLinearSystems: blockdata, eachstoredblock, validblock   # internal names
 @testset "DenseBlockLinearSystem" begin
     # Construct using block sizes [2, 2]
     bdm = DenseBlockLinearSystem{Float64}([2, 2])

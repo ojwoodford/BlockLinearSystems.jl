@@ -1,4 +1,5 @@
 using Random, LinearAlgebra, SparseArrays, StaticArrays, Static, HybridArrays, Test, BlockLinearSystems
+using BlockLinearSystems: validblock   # internal names
 
 # Sized views into SchurBlockMatrix storage (E5). Uses SchurTestProblem and the matrix builders of schur_problems.jl.
 
