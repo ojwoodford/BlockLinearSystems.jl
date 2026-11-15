@@ -382,7 +382,7 @@ end
     ne = 400
     jst = SchurJacobianStructure(fill(6, 4), fill(3, ne), [[mod1(e, 4)] for e in 1:ne], fill(5, ne); nchunks=8)
     st = jst.schur
-    J = SchurBlockJacobian{Float64}(jst)
+    J = SchurBlockJacobian{Float64, Matrix{Float64}}(jst)
     E_data, C_data = zeros(9ne), zeros(18 * length(st.entry_retained))
     R = Matrix(1.0I(24))
     qws, sws = QRReductionWorkspace(J), SchurReductionWorkspace{Float64}(st, 8)

@@ -86,7 +86,7 @@ end
     p = qr_problems(Float64)[2]
     n_e = size(p.Jf, 2) - p.J.structure.schur.nr
     ws = QRReductionWorkspace(p.J)
-    other = SchurBlockJacobian{Float64}(SchurJacobianStructure(p.J.structure.schur, p.J.structure.e_rows))
+    other = SchurBlockJacobian{Float64, Matrix{Float64}}(SchurJacobianStructure(p.J.structure.schur, p.J.structure.e_rows))
     @test_throws ArgumentError reduce_qr!(ws, other, ones(n_e), 0.1)
     @test_throws DimensionMismatch reduce_qr!(ws, p.J, ones(n_e + 1), 0.1)
     @test reduce_qr!(ws, p.J, ones(n_e), 1)              # any real λ

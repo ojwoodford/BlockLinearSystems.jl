@@ -88,6 +88,9 @@ sort_schur_blocks
 
 The Jacobian-path counterpart of the Schur reduction: elimination of the same blocks from a tall
 least-squares problem `min ‖J x - r‖²` by QR. See the [QR elimination tutorial](tutorials/qr_elimination.md).
+`SchurBlockJacobian{T, RType}` carries the storage of the reduced system as its second type parameter
+(`Matrix{T}` or `SparseMatrixCSC{T, Int}`), set by whoever builds it, as the type of `R` does for
+`SchurBlockMatrix{T, RType}`.
 
 ```@docs
 SchurJacobianStructure

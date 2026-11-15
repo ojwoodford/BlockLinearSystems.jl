@@ -158,25 +158,32 @@ function coupling_entry(jst::SchurJacobianStructure, t::Integer, r::Integer)
     return rng[k]
 end
 
-# SchurBlockJacobian{T}(structure::SchurJacobianStructure)
-# Raw table storage of a tall least-squares problem.
-struct SchurBlockJacobian{T}
+# SchurBlockJacobian{T, RType}(structure::SchurJacobianStructure)
+# Raw table storage of a tall least-squares problem. `RType` is the storage of the reduced system the caller will
+# build from it: `Matrix{T}` (dense, `reduced_normal_dense!`) or `SparseMatrixCSC{T, Int}` (sparse,
+# `reduced_normal_sparse!`). It is a type parameter, not a field, so that code receiving only the Jacobian can
+# dispatch on it; no method of this package reads it.
+struct SchurBlockJacobian{T, RType}
     data::Vector{T}                  # Every table, column-major, at structure.table_offsets
     structure::SchurJacobianStructure
-    function SchurBlockJacobian{T}(data::Vector{T}, jst::SchurJacobianStructure) where T
+    function SchurBlockJacobian{T, RType}(data::Vector{T}, jst::SchurJacobianStructure) where {T, RType}
+        (RType === Matrix{T} || RType === SparseMatrixCSC{T, Int}) ||
+            throw(ArgumentError("Reduced storage $RType is not supported; use Matrix{$T} or SparseMatrixCSC{$T, Int}"))
         length(data) == table_length(jst) || throw(DimensionMismatch("Data has length $(length(data)), the structure needs $(table_length(jst))"))
-        return new{T}(data, jst)
+        return new{T, RType}(data, jst)
     end
 end
 
-SchurBlockJacobian{T}(jst::SchurJacobianStructure) where T = SchurBlockJacobian{T}(zeros(T, table_length(jst)), jst)
-SchurBlockJacobian(data::Vector{T}, jst::SchurJacobianStructure) where T = SchurBlockJacobian{T}(data, jst)
+SchurBlockJacobian{T, RType}(jst::SchurJacobianStructure) where {T, RType} =
+    SchurBlockJacobian{T, RType}(zeros(T, table_length(jst)), jst)
 
 zero!(J::SchurBlockJacobian) = (fill!(J.data, zero(eltype(J.data))); J)
 
 # copy_structure(J::SchurBlockJacobian)
-# A new `SchurBlockJacobian` with the same (shared, immutable) structure and freshly allocated, zeroed tables.
-copy_structure(J::SchurBlockJacobian{T}) where T = SchurBlockJacobian{T}(zeros(T, length(J.data)), J.structure)
+# A new `SchurBlockJacobian` with the same (shared, immutable) structure, the same reduced storage type, and freshly
+# allocated, zeroed tables.
+copy_structure(J::SchurBlockJacobian{T, RType}) where {T, RType} =
+    SchurBlockJacobian{T, RType}(zeros(T, length(J.data)), J.structure)
 
 # ------------------------------------------------------------------------------------------------------------------
 # Assembly views

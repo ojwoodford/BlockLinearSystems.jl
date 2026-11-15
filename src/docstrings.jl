@@ -471,14 +471,26 @@ reduced_nrows(jst)   # 4 + 6 + 2
 SchurJacobianStructure
 
 """
-    SchurBlockJacobian{T}(structure::SchurJacobianStructure)
-    SchurBlockJacobian(data::Vector{T}, structure::SchurJacobianStructure)
+    SchurBlockJacobian{T, RType}(structure::SchurJacobianStructure)
+    SchurBlockJacobian{T, RType}(data::Vector{T}, structure::SchurJacobianStructure)
 
 Raw storage of a tall least-squares problem: the tables of `structure` (see
 [`SchurJacobianStructure`](@ref)), each column-major, in one flat vector `data` at
 `structure.table_offsets`. It is the Jacobian prototype a caller fills, the analogue of
 [`SchurBlockMatrix`](@ref) on the Hessian path. `T` may be any floating-point type; `Float64` and
 `Float32` are tested.
+
+`RType` is the storage of the reduced system in the retained variables, `S = J̃ᵀJ̃` (and `J̃`), that a
+solver builds after [`reduce_qr!`](@ref): `Matrix{T}` (dense, filled by [`reduced_normal_dense!`](@ref))
+or `SparseMatrixCSC{T, Int}` (sparse, filled by [`reduced_normal_sparse!`](@ref)); anything else is an
+`ArgumentError`. It plays the part the type of `R` plays in `SchurBlockMatrix{T, RType}`, and is chosen
+by whoever builds the prototype (a modelling package, from its own storage option), so that a solver
+receiving only `J` can dispatch on `J isa SchurBlockJacobian{T, Matrix{T}}`. There is no default. This
+package's kernels do not read it: the tables, [`QRReductionWorkspace`](@ref) and every kernel are the
+same for both.
+
+The data-taking form uses `data` as the storage (no copy); its length must be the structure's table
+length, else `DimensionMismatch`.
 
 Fill it through [`coupling_block`](@ref), [`eliminated_block`](@ref) and [`residual_block`](@ref). The
 rows of a table belong to one eliminated block (or one free group), so threads that fill different
@@ -487,15 +499,15 @@ through the views and stay zero. [`reduce_qr!`](@ref) reads these tables and nev
 change of the damping re-factors from them.
 
 [`zero!`](@ref) zeroes every table; [`copy_structure`](@ref) returns a new, zeroed `SchurBlockJacobian`
-sharing only the (immutable) structure. [`schur_jacobian_bytes`](@ref) gives the memory needed before
-anything is allocated.
+of the same type, sharing only the (immutable) structure. [`schur_jacobian_bytes`](@ref) gives the
+memory needed before anything is allocated.
 """
 SchurBlockJacobian
 
 """
     schur_jacobian_bytes(structure::SchurJacobianStructure, T=Float64; workspace=true) -> Int
 
-Bytes of element data a [`SchurBlockJacobian{T}`](@ref SchurBlockJacobian) for `structure` allocates
+Bytes of element data a [`SchurBlockJacobian{T}`](@ref SchurBlockJacobian) (of either reduced storage) for `structure` allocates
 and, with `workspace=true`, its [`QRReductionWorkspace{T}`](@ref QRReductionWorkspace) too (a factored
 copy of every table, plus scratch for eliminated blocks above `BlockLinearSystems.D_STATIC`
 dimensions). Computed from the structure alone, so a caller can refuse, or choose the Schur route,
@@ -525,7 +537,7 @@ never reachable), and `DimensionMismatch` for a wrong `ncols`.
 # Example
 ```julia
 using BlockLinearSystems, Static, StaticArrays
-J = SchurBlockJacobian{Float64}(SchurJacobianStructure([6, 3], [3, 3], [[1, 2], [2]], [4, 6]))
+J = SchurBlockJacobian{Float64, Matrix{Float64}}(SchurJacobianStructure([6, 3], [3, 3], [[1, 2], [2]], [4, 6]))
 u = coupling_entry(J.structure, 1, 2)                 # retained block 2 in eliminated block 1's table
 coupling_block(J, u, 3, static(2), static(3)) .= @SMatrix rand(2, 3)   # rows 3:4 of that residual
 ```

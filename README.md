@@ -121,7 +121,7 @@ eliminated columns to the whole table; the remaining rows of every table form th
 
 ```julia
 jst = SchurJacobianStructure([6, 6, 6], [3, 3, 3, 1], [[1, 2], [1, 2, 3], [2, 3], [3]], [8, 10, 6, 3])  # ..., rows per eliminated block
-J = SchurBlockJacobian{Float64}(jst)
+J = SchurBlockJacobian{Float64, Matrix{Float64}}(jst)   # reduced-system storage: Matrix{T} or SparseMatrixCSC{T, Int}
 # ... fill through coupling_block(J, u, row, nrows), eliminated_block(J, e, ...), residual_block(J, t, ...), then:
 ws = QRReductionWorkspace(J)
 reduce_qr!(ws, J, scaling_e, lambda)          # false if a block is rank deficient (e.g. too few rows, undamped)

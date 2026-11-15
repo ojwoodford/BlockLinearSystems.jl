@@ -61,7 +61,7 @@ The same kind of small problem as in the Schur tutorial, built as a Jacobian. Th
 eliminated blocks, and one free group of rows that touches only retained blocks 1 and 3:
 
 ```@example qr
-using BlockLinearSystems, LinearAlgebra, Random
+using BlockLinearSystems, LinearAlgebra, SparseArrays, Random
 
 rng = Random.Xoshiro(1)
 r_dims = [6, 6, 6]
@@ -70,7 +70,7 @@ couplings = [[1, 2], [1, 2, 3], [2, 3], [1, 3], [1, 2], [3]]
 e_rows = [8, 10, 6, 6, 4, 3]                 # residual rows that involve each eliminated block
 jst = SchurJacobianStructure(r_dims, e_dims, couplings, e_rows; free_rows=[12], free_retained=[[1, 3]])
 st = jst.schur                               # the SchurStructure it wraps
-J = SchurBlockJacobian{Float64}(jst)
+J = SchurBlockJacobian{Float64, Matrix{Float64}}(jst)   # dense reduced system (see below)
 
 # Fill every table with random values through the assembly views; keep a dense copy for checking
 nr, ne = st.nr, sum(e_dims)
@@ -156,6 +156,24 @@ S_qr[diagind(S_qr)] .+= lambda .* s_r
 `build_schur_pattern(st; extra_blocks=free_block_pairs(jst))`.
 
 ## Solving the reduced problem
+
+The second type parameter of [`SchurBlockJacobian`](@ref) names the storage of the reduced system:
+`Matrix{T}` for a dense `J̃` / `S = J̃ᵀJ̃`, or `SparseMatrixCSC{T, Int}` for the sparse `S` of
+[`reduced_normal_sparse!`](@ref). It is the counterpart of the type of `R` in a `SchurBlockMatrix`, and is
+set by whoever builds the prototype (a modelling package, from its own dense-or-sparse option), so that a
+solver handed only `J` can dispatch on it. There is no default. The tables, the workspace and every kernel
+of this package are the same for both:
+
+```@example qr
+Js = SchurBlockJacobian{Float64, SparseMatrixCSC{Float64, Int}}(copy(J.data), jst)   # same tables, sparse S
+wss = QRReductionWorkspace(Js)
+reduce_qr!(wss, Js, s_e, lambda)
+qpattern = build_schur_pattern(st; extra_blocks=free_block_pairs(jst))
+S_sp, g_sp = copy(qpattern.S_sparse), zeros(nr)
+reduced_normal_sparse!(S_sp, g_sp, wss, qpattern)
+S_sp[diagind(S_sp)] .+= lambda .* s_r
+norm(triu(Matrix(S_sp)) - triu(S_qr)) / norm(triu(S_qr))
+```
 
 - **Dense QR**: [`reduced_jacobian!`](@ref) writes `J̃` and `r̃` into a `Matrix` and `Vector`.
 - **Iterative (LSMR, CG on the normal equations)**: [`reduced_mul!`](@ref) and [`reduced_tmul!`](@ref) give
