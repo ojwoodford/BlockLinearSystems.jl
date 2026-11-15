@@ -281,19 +281,22 @@ end
         Ssp = copy(pat.S_sparse)
         rt, D, d, gg = zeros(T, m), zeros(T, jst.doffsets[end] - 1), zeros(T, n), zeros(T, n)
         vf = randn(rng, T, n)
-        # Serial path: nothing at all. Threaded path: only Polyester's per-launch argument reference, a few
-        # kilobytes at most (more on Julia 1.10), independent of the problem size (the existing Schur kernels do the same).
+        # No allocation, serial or threaded (R2; bounded when threaded on Julia 1.10)
         old_minwork = BlockLinearSystems.SCHUR_THREAD_MIN_WORK[]
         try
-            for (minwork, bound) in ((typemax(Int), 0), (0, 4096))
+            for minwork in (typemax(Int), 0)
                 BlockLinearSystems.SCHUR_THREAD_MIN_WORK[] = minwork
+                threaded = minwork == 0 && Threads.nthreads() > 1
+                # warm calls: the first call of the threaded path compiles it
+                qr_mul_allocs(y, ws, v); qr_tmul_allocs(g, ws, w); qr_backsub_allocs(x_e, v, ws)
+                qr_normal_allocs(S, gS, ws); qr_snormal_allocs(Ssp, gS, ws, pat); qr_misc_allocs(rt, D, d, gg, ws, J, vf)
                 for _ in 1:2
-                    @test qr_mul_allocs(y, ws, v) <= bound
-                    @test qr_tmul_allocs(g, ws, w) <= bound
-                    @test qr_backsub_allocs(x_e, v, ws) <= bound
-                    @test qr_normal_allocs(S, gS, ws) <= bound
-                    @test qr_snormal_allocs(Ssp, gS, ws, pat) <= bound
-                    @test qr_misc_allocs(rt, D, d, gg, ws, J, vf) <= 5 * bound
+                    @test threaded_allocs_ok(qr_mul_allocs(y, ws, v), threaded)
+                    @test threaded_allocs_ok(qr_tmul_allocs(g, ws, w), threaded)
+                    @test threaded_allocs_ok(qr_backsub_allocs(x_e, v, ws), threaded)
+                    @test threaded_allocs_ok(qr_normal_allocs(S, gS, ws), threaded)
+                    @test threaded_allocs_ok(qr_snormal_allocs(Ssp, gS, ws, pat), threaded)
+                    @test qr_misc_allocs(rt, D, d, gg, ws, J, vf) <= (threaded && VERSION < v"1.11" ? 5 * 2048 * Threads.nthreads() : 0)
                 end
             end
         finally

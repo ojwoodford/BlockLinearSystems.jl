@@ -15,6 +15,7 @@ export SchurJacobianStructure, SchurBlockJacobian, schur_jacobian_bytes, residua
 export QRReductionWorkspace, reduce_qr!
 export reduced_nrows, free_block_pairs, reduced_mul!, reduced_tmul!, reduced_residual!, reduced_jacobian!
 export reduced_normal_dense!, reduced_normal_sparse!, reduced_diagonal_blocks!, jtr!, jtj_diag!, jtj_quadform
+export threadargs, fromthreadargs
 
 include("utils.jl")
 include("threading.jl")

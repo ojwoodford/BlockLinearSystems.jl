@@ -111,14 +111,13 @@ reduce_allocs(ws, J, sc, lambda) = @allocated reduce_qr!(ws, J, sc, lambda)
             @test ws.factored == fresh.factored
         end
         @test J.data == raw                                   # the raw tables are kept
-        # Serial path: no allocation at all. Threaded path: only Polyester's per-launch argument reference
-        # (at most a few kilobytes, independent of the problem size), as for the existing Schur kernels.
+        # No allocation, serial or threaded (R2; bounded when threaded on Julia 1.10)
         old = BlockLinearSystems.SCHUR_THREAD_MIN_WORK[]
         try
-            for (minwork, bound) in ((typemax(Int), 0), (0, 4096))
+            for minwork in (typemax(Int), 0)
                 BlockLinearSystems.SCHUR_THREAD_MIN_WORK[] = minwork
                 reduce_allocs(ws, J, sc_e, T(0.3))
-                @test reduce_allocs(ws, J, sc_e, T(0.3)) <= bound
+                @test threaded_allocs_ok(reduce_allocs(ws, J, sc_e, T(0.3)), minwork == 0 && Threads.nthreads() > 1)
             end
         finally
             BlockLinearSystems.SCHUR_THREAD_MIN_WORK[] = old

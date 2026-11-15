@@ -1,12 +1,22 @@
 module PolyesterExt
 
 import Polyester
-import BlockLinearSystems: batch_foreach
+import BlockLinearSystems: batch_foreach, threadargs, fromthreadargs
 
-# Kept out of line so that the serial path does not pay for the closure Polyester builds
+# Kept out of line so that the serial path does not pay for the closure Polyester builds. `f` (a closure over the
+# kernel's arrays and structures) reaches the threads as `threadargs(f)`, an isbits value, so the launch allocates
+# nothing; each iteration rebuilds `f` from it. On Julia 1.10 the rebuilt closure allocates when it calls a closure
+# it captured (every kernel wraps its own closure in `foreach_range`, `foreach_retained` or `dispatch_dim`), a few
+# hundred bytes per chunk; later versions do not.
 @noinline function batch_foreach(f::F, n::Int) where F
-    Polyester.@batch for i in 1:n
-        f(i)
+    args = threadargs(f)
+    GC.@preserve f begin
+        Polyester.@batch for i in 1:n
+            # Bound to a local: the curried `fromthreadargs(args)(i)` made the first threaded call of a session fail
+            # in Polyester ("cfunction: closures are not supported"), on Julia 1.13 (later calls succeeded)
+            f_ = fromthreadargs(args)
+            f_(i)
+        end
     end
     return nothing
 end

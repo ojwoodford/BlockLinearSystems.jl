@@ -622,10 +622,11 @@ for the Schur reduction. Free tables are copied, not checked.
 
 Statically sized in the eliminated dimension (unrolled over the columns) up to
 `BlockLinearSystems.D_STATIC`, dynamic above, through the `e_groups` and `chunks` of the structure.
-Threaded over the chunks of eliminated blocks when there is enough work
-(`BlockLinearSystems.SCHUR_THREAD_MIN_WORK`); tables are independent, so there is no merge step. The
-raw tables are untouched, so calling it again with another `lambda` re-factors from them; it allocates
-nothing on the serial path (a threaded launch costs Polyester a small constant allocation).
+Threaded over the chunks of eliminated blocks when Polyester is loaded and there is enough work
+(`BlockLinearSystems.SCHUR_THREAD_MIN_WORK`), serial otherwise; tables are independent, so there is no
+merge step. The raw tables are untouched, so calling it again with another `lambda` re-factors from them.
+It allocates nothing, serial or threaded (on Julia 1.10, a threaded call allocates a few hundred
+bytes per chunk; see [Threading](@ref)).
 """
 reduce_qr!
 
@@ -635,7 +636,7 @@ reduce_qr!
 Recover the eliminated variables from the retained ones after [`reduce_qr!`](@ref): `x_e = U⁻¹ (q - B x_r)`
 for each eliminated block, from the top rows of its factored table. Equals the Schur
 `x_e = E⁻¹ (b_e - C x_r)` of `H = JᵀJ + λ·Diagonal(s)`. Static up to `D_STATIC` dimensions, dynamic above
-(using the workspace scratch), threaded over chunks of eliminated blocks; allocation free on the serial path.
+(using the workspace scratch), threaded over chunks of eliminated blocks; allocation free (but see [Threading](@ref) for Julia 1.10).
 """
 backsubstitute!(::AbstractVector, ::AbstractVector, ::QRReductionWorkspace)
 
@@ -663,7 +664,7 @@ free_block_pairs
 
 `y = J̃ v`, with `v` over the retained variables (length `nr`) and `y` over the reduced rows (length
 [`reduced_nrows`](@ref)), in the documented order: the bottom rows of eliminated block 1's table, block 2's,
-…, then each free group's rows. Threaded over tables, allocation free on the serial path.
+…, then each free group's rows. Threaded over tables, allocation free (but see [Threading](@ref) for Julia 1.10).
 """
 reduced_mul!
 
@@ -804,3 +805,46 @@ Index of the coupling entry of retained block `r` in eliminated block `e` (binar
 `ArgumentError` if `r` is not coupled to `e`, `BoundsError` for an unknown eliminated block.
 """
 coupling_entry(::SchurStructure, ::Integer, ::Integer)
+
+"""
+    threadargs(x) -> ThreadArgs
+
+`x` as an isbits value, for passing into a `Polyester.@batch` loop without allocating; rebuild it inside
+the loop with [`fromthreadargs`](@ref). Polyester hands the threads an isbits value as it is but boxes any
+other captured value, one allocation per launch. `threadargs` walks `x`'s immutable fields (a tuple, a
+struct, a closure) into a flat tuple of leaves: each isbits field stays as it is, and each object held by
+reference (a mutable object such as an `Array`, or a field of abstract type) becomes its address.
+
+The addresses do not keep their objects alive: keep `x` alive with `GC.@preserve x` for as long as the
+loop runs. The methods come from the Polyester package extension, so `threadargs` has none unless
+Polyester is loaded.
+
+```julia
+using BlockLinearSystems, Polyester
+function scale!(ys::Vector{Vector{Float64}}, a)
+    args = threadargs((ys, a))
+    GC.@preserve ys begin
+        @batch for i in eachindex(ys)
+            ys_, a_ = fromthreadargs(args)
+            ys_[i] .*= a_
+        end
+    end
+    return ys
+end
+```
+
+This is the mechanism every threaded kernel of this package uses. It is here until it can be offered to
+Polyester; moving it there will remove `threadargs` and `fromthreadargs` from this package's API, in a
+minor version.
+"""
+threadargs
+
+"""
+    fromthreadargs(args) -> x
+
+Rebuild, inside a `Polyester.@batch` loop, the value `x` that [`threadargs`](@ref) turned into `args`;
+the result has the type of `x`. Bind the result to a local variable before using it (calling it directly
+as `fromthreadargs(args)(i)` made Polyester fail to compile the loop on Julia 1.13). Needs Polyester
+loaded, as `threadargs` does, and may move to Polyester with it.
+"""
+fromthreadargs
