@@ -13,7 +13,7 @@ const PUBLIC_API = sort([
     :reduced_normal_dense!, :reduced_normal_sparse!, :reduced_nrows, :reduced_residual!, :reduced_tmul!,
     :reset_schur_dense!, :reset_schur_sparse!, :residual_block, :retained_block, :retained_block_pairs,
     :schur_jacobian_bytes, :sort_schur_blocks, :sparse_with_map, :symmetrifyfull, :symmetrifyfull!,
-    :trial_workspace, :uniformscaling!, :zero!,
+    :fromthreadargs, :threadargs, :trial_workspace, :uniformscaling!, :zero!,
 ])
 
 @testset "Public API: exactly the documented names are exported (X1)" begin

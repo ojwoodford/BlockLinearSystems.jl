@@ -115,3 +115,19 @@ jtr!
 jtj_diag!
 jtj_quadform
 ```
+
+## Threading
+
+The Schur and QR-elimination kernels thread through Polyester, a weak dependency: with
+`using Polyester` (or any package that loads it, such as NLLSModel) they thread over their chunks when
+more than one thread is available and there is enough work (`BlockLinearSystems.SCHUR_THREAD_MIN_WORK`),
+and allocate nothing, serial or threaded. The exception is Julia 1.10: there a threaded call allocates a
+few hundred bytes per chunk, because rebuilding the kernels' nested closures inside the threaded loop
+allocates on that version (later versions do not; 1.13 is tested). Without Polyester the kernels run
+serially. Their closures reach the threads through `threadargs` / `fromthreadargs`, public so that other
+packages' `@batch` loops can use them too (they may move to Polyester later).
+
+```@docs
+threadargs
+fromthreadargs
+```

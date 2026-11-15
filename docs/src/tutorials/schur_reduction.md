@@ -104,7 +104,7 @@ reduce_schur_dense!(S, g, view(b, 1:nr), view(b, nr+1:n), view(scaling, nr+1:n),
     error("an eliminated block is singular")
 x = zeros(n)
 x[1:nr] .= Symmetric(S, :U) \ g                   # only the upper triangle of S is filled
-backsubstitute!(view(x, nr+1:n), view(x, 1:nr), st, C_data, ws.E_inv_data, ws.z_data)
+backsubstitute!(view(x, nr+1:n), view(x, 1:nr), st, C_data, ws)
 
 x_full = (H + lambda * Diagonal(scaling)) \ b     # reference: solve the whole system
 norm(x - x_full) / norm(x_full)
@@ -140,8 +140,10 @@ by `copy_structure` copies, so treat it as read-only: copy `pattern.S_sparse` be
 The reduction runs in two phases. Phase 1 factors every eliminated block (in parallel over chunks of
 eliminated blocks) and stores `E_e⁻¹`, `z_e = E_e⁻¹ b_e` and `W_er = E_e⁻¹ C_er`. Phase 2 splits the *retained* blocks
 into contiguous ranges (`ws.col_chunks`); each chunk writes only its own columns of the single `S`, so there
-are no per-chunk copies of `S` and no merge pass. Loops run serially unless more than one thread is available
-and there is enough work (`BlockLinearSystems.SCHUR_THREAD_MIN_WORK`); threading uses Polyester.
+are no per-chunk copies of `S` and no merge pass. Threading uses Polyester, a weak dependency: the loops thread
+only when Polyester is loaded (`using Polyester`, or a package that loads it), more than one thread is available
+and there is enough work (`BlockLinearSystems.SCHUR_THREAD_MIN_WORK`); otherwise they run serially. Either way
+the kernels allocate nothing, except a threaded call on Julia 1.10 (see [Threading](@ref)).
 
 ## Trial systems
 

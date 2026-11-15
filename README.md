@@ -105,7 +105,7 @@ ws = SchurReductionWorkspace{Float64}(st, 1)
 reset_schur_dense!(S, R, scaling_r, lambda, ws)
 reduce_schur_dense!(S, g, b_r, b_e, scaling_e, lambda, st, E_data, C_data, ws)   # false if a block is singular
 # solve S x_r = g, then recover the eliminated variables:
-backsubstitute!(x_e, x_r, st, C_data, ws.E_inv_data, ws.z_data)
+backsubstitute!(x_e, x_r, st, C_data, ws)
 ```
 
 See the [Schur reduction tutorial](https://ojwoodford.github.io/BlockLinearSystems.jl/dev/tutorials/schur_reduction/) for a complete, runnable example.

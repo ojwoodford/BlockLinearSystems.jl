@@ -217,6 +217,8 @@ schur_jacobian_bytes(jst)                     # raw tables + factored copy + scr
 - Filling: the rows of a table belong to one eliminated block, so threads that fill different tables never
   write the same memory. The reduction and back-substitution are threaded over chunks of eliminated
   blocks, the products and accumulations over tables or by retained-column ownership, with the same
-  thresholds as the Schur kernels (`BlockLinearSystems.SCHUR_THREAD_MIN_WORK`).
+  thresholds as the Schur kernels (`BlockLinearSystems.SCHUR_THREAD_MIN_WORK`). As there, threading needs
+  Polyester loaded (without it everything runs serially), and nothing allocates, serial or threaded,
+  except a threaded call on Julia 1.10 (see [Threading](@ref)).
 - [`copy_structure`](@ref) gives a zeroed copy of the tables, and [`trial_workspace`](@ref) a workspace
   with its own factored tables, for a trial system.

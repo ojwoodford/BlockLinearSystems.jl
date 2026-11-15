@@ -109,7 +109,7 @@ qr_rtol(::Type{Float32}) = 2e-3
                 x_e = zeros(T, n - nr)
                 backsubstitute!(x_e, x_r, ws)
                 x_e_ref = zeros(T, n - nr)
-                backsubstitute!(x_e_ref, x_r, st, Hs.C_data, sws.E_inv_data, sws.z_data)
+                backsubstitute!(x_e_ref, x_r, st, Hs.C_data, sws)
                 @test relerr(x_e, x_e_ref) <= qr_rtol(T)
             end
         end
@@ -178,7 +178,7 @@ end
     @test !issuccess(cholesky(Symmetric(S, :U); check=false))
     x_s = zeros(n)
     x_s[1:nr] .= bunchkaufman(Symmetric(S, :U)) \ g
-    backsubstitute!(view(x_s, nr+1:n), x_s[1:nr], Hs.structure, Hs.C_data, sws.E_inv_data, sws.z_data)
+    backsubstitute!(view(x_s, nr+1:n), x_s[1:nr], Hs.structure, Hs.C_data, sws)
     err_schur = relerr(x_s, x_true)
     @info "Ill-conditioned least squares" cond_J=kJ err_qr err_schur
     @test err_qr <= 10 * kJ * eps()
@@ -281,19 +281,22 @@ end
         Ssp = copy(pat.S_sparse)
         rt, D, d, gg = zeros(T, m), zeros(T, jst.doffsets[end] - 1), zeros(T, n), zeros(T, n)
         vf = randn(rng, T, n)
-        # Serial path: nothing at all. Threaded path: only Polyester's per-launch argument reference, a few
-        # kilobytes at most (more on Julia 1.10), independent of the problem size (the existing Schur kernels do the same).
+        # No allocation, serial or threaded (R2; bounded when threaded on Julia 1.10)
         old_minwork = BlockLinearSystems.SCHUR_THREAD_MIN_WORK[]
         try
-            for (minwork, bound) in ((typemax(Int), 0), (0, 4096))
+            for minwork in (typemax(Int), 0)
                 BlockLinearSystems.SCHUR_THREAD_MIN_WORK[] = minwork
+                threaded = minwork == 0 && Threads.nthreads() > 1
+                # warm calls: the first call of the threaded path compiles it
+                qr_mul_allocs(y, ws, v); qr_tmul_allocs(g, ws, w); qr_backsub_allocs(x_e, v, ws)
+                qr_normal_allocs(S, gS, ws); qr_snormal_allocs(Ssp, gS, ws, pat); qr_misc_allocs(rt, D, d, gg, ws, J, vf)
                 for _ in 1:2
-                    @test qr_mul_allocs(y, ws, v) <= bound
-                    @test qr_tmul_allocs(g, ws, w) <= bound
-                    @test qr_backsub_allocs(x_e, v, ws) <= bound
-                    @test qr_normal_allocs(S, gS, ws) <= bound
-                    @test qr_snormal_allocs(Ssp, gS, ws, pat) <= bound
-                    @test qr_misc_allocs(rt, D, d, gg, ws, J, vf) <= 5 * bound
+                    @test threaded_allocs_ok(qr_mul_allocs(y, ws, v), threaded)
+                    @test threaded_allocs_ok(qr_tmul_allocs(g, ws, w), threaded)
+                    @test threaded_allocs_ok(qr_backsub_allocs(x_e, v, ws), threaded)
+                    @test threaded_allocs_ok(qr_normal_allocs(S, gS, ws), threaded)
+                    @test threaded_allocs_ok(qr_snormal_allocs(Ssp, gS, ws, pat), threaded)
+                    @test qr_misc_allocs(rt, D, d, gg, ws, J, vf) <= (threaded && VERSION < v"1.11" ? 5 * 2048 * Threads.nthreads() : 0)
                 end
             end
         finally

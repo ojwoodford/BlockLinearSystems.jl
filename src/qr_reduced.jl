@@ -123,8 +123,7 @@ end
     return nothing
 end
 
-# Call f(i) for i in 1:n, threaded over K contiguous ranges. Polyester only sees the wrapper (f, n, K), which keeps
-# its per-launch allocation small and constant (handing it f directly allocated per item on Julia 1.10).
+# Call f(i) for i in 1:n, threaded over K contiguous ranges: one threaded iteration per range, not per item.
 @inline function foreach_range(f::F, n::Int, K::Int, threaded::Bool) where F
     K = max(min(K, n), 1)
     foreach_index(K, threaded) do k
