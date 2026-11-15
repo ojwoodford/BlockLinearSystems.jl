@@ -13,7 +13,7 @@ struct QRTestProblem{T}
     r_dims::Vector{Int}
     e_dims::Vector{Int}
     couplings::Vector{Vector{Int}}
-    J::SchurBlockJacobian{T}
+    J::SchurBlockJacobian{T, Matrix{T}}
     Jf::Matrix{T}
     rf::Vector{T}
 end
@@ -21,7 +21,7 @@ end
 function QRTestProblem(name, rng, ::Type{T}, r_dims, e_dims, couplings, e_rows;
                        free_rows=Int[], free_retained=Vector{Int}[], nchunks=1) where T
     jst = SchurJacobianStructure(r_dims, e_dims, couplings, e_rows; free_rows, free_retained, nchunks)
-    J = SchurBlockJacobian{T}(jst)
+    J = SchurBlockJacobian{T, Matrix{T}}(jst)
     st = jst.schur
     nr, ne = sum(r_dims), sum(e_dims)
     m = sum(e_rows) + sum(free_rows; init=0)
@@ -147,9 +147,9 @@ end
     J = p.J
     jst = J.structure
     @test length(J.data) == jst.table_offsets[end] - 1
-    @test_throws DimensionMismatch SchurBlockJacobian(zeros(3), jst)
-    @test SchurBlockJacobian(copy(J.data), jst).data == J.data
-    @test SchurBlockJacobian{Float32}(jst).data isa Vector{Float32}
+    @test_throws DimensionMismatch SchurBlockJacobian{Float64, Matrix{Float64}}(zeros(3), jst)
+    @test SchurBlockJacobian{Float64, Matrix{Float64}}(copy(J.data), jst).data == J.data
+    @test SchurBlockJacobian{Float32, Matrix{Float32}}(jst).data isa Vector{Float32}
     C = copy_structure(J)
     @test C.structure === J.structure && C.data !== J.data && all(iszero, C.data) && length(C.data) == length(J.data)
     before = copy(J.data)
@@ -163,7 +163,43 @@ end
         @test all(iszero, T_e[M-de+1:M, :])
     end
     @test schur_jacobian_bytes(jst, Float64; workspace=false) == sizeof(J.data)
-    @test schur_jacobian_bytes(jst, Float32; workspace=false) == sizeof(SchurBlockJacobian{Float32}(jst).data)
+    @test schur_jacobian_bytes(jst, Float32; workspace=false) == sizeof(SchurBlockJacobian{Float32, Matrix{Float32}}(jst).data)
+end
+
+@testset "SchurBlockJacobian reduced storage type (R1)" begin
+    for T in (Float64, Float32)
+        p = qr_problems(T)[3]
+        jst = p.J.structure
+        st = jst.schur
+        Jd = SchurBlockJacobian{T, Matrix{T}}(copy(p.J.data), jst)
+        Js = SchurBlockJacobian{T, SparseMatrixCSC{T, Int}}(copy(p.J.data), jst)
+        @test Jd isa SchurBlockJacobian{T, Matrix{T}} && Js isa SchurBlockJacobian{T, SparseMatrixCSC{T, Int}}
+        @test SchurBlockJacobian{T, SparseMatrixCSC{T, Int}}(jst).data == zeros(T, length(p.J.data))
+        # Only the two reduced storages that have kernels; no default
+        @test_throws ArgumentError SchurBlockJacobian{T, SparseBlockLinearSystem{T}}(jst)
+        @test_throws ArgumentError SchurBlockJacobian{T, Matrix{Float16}}(jst)
+        @test_throws ArgumentError SchurBlockJacobian{T, SparseMatrixCSC{T, Int32}}(jst)
+        @test_throws MethodError SchurBlockJacobian{T}(jst)
+        @test_throws MethodError SchurBlockJacobian(copy(p.J.data), jst)
+        # copy_structure and zero! keep the parameter
+        for J in (Jd, Js)
+            C = copy_structure(J)
+            @test typeof(C) === typeof(J) && C.structure === J.structure && all(iszero, C.data)
+            @test zero!(copy_structure(J)) isa typeof(J)
+        end
+        # The same tables reduce to the same J̃ᵀJ̃, whatever the parameter, dense and sparse
+        sc, lambda = rand(Random.Xoshiro(2), T, sum(p.e_dims)) .+ T(0.5), T(0.3)
+        wsd, wss = QRReductionWorkspace(Jd), QRReductionWorkspace(Js)
+        @test reduce_qr!(wsd, Jd, sc, lambda) && reduce_qr!(wss, Js, sc, lambda)
+        @test wsd.factored == wss.factored
+        S, g = zeros(T, st.nr, st.nr), zeros(T, st.nr)
+        reduced_normal_dense!(S, g, wsd)
+        pat = build_schur_pattern(st, T; extra_blocks=free_block_pairs(jst))
+        Ssp, gsp = copy(pat.S_sparse), zeros(T, st.nr)
+        reduced_normal_sparse!(Ssp, gsp, wss, pat)
+        tol = sqrt(eps(T)) * norm(triu(S))
+        @test norm(triu(Matrix(Ssp)) - triu(S)) <= tol && norm(gsp - g) <= sqrt(eps(T)) * norm(g)
+    end
 end
 
 # Linear index of entry (row, col) of table t in the flat storage
