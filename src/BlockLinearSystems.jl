@@ -1,6 +1,6 @@
 module BlockLinearSystems
 
-using Static, StaticArrays, HybridArrays, SparseArrays, LinearAlgebra, Polyester
+using Static, StaticArrays, HybridArrays, SparseArrays, LinearAlgebra
 
 # Public API: exported, documented and listed in docs/src/api.md (test/exports.jl enforces this list).
 # Everything else is internal: not exported, not in the API reference.
@@ -17,6 +17,7 @@ export reduced_nrows, free_block_pairs, reduced_mul!, reduced_tmul!, reduced_res
 export reduced_normal_dense!, reduced_normal_sparse!, reduced_diagonal_blocks!, jtr!, jtj_diag!, jtj_quadform
 
 include("utils.jl")
+include("threading.jl")
 include("BlockRLE.jl")
 include("DenseBlockLinearSystem.jl")
 include("SparseBlockLinearSystem.jl")

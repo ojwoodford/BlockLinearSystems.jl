@@ -1,4 +1,4 @@
-using Random, BlockLinearSystems, SparseArrays, StaticArrays, Static, HybridArrays, LinearAlgebra, Test, Aqua, JET
+using Random, BlockLinearSystems, SparseArrays, StaticArrays, Static, HybridArrays, LinearAlgebra, Test, Aqua, JET, Polyester
 
 @testset "BlockLinearSystems.jl" begin
     include("aqua.jl")

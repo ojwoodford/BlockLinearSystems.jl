@@ -6,10 +6,15 @@ authors = ["Oliver Woodford"]
 [deps]
 HybridArrays = "1baab800-613f-4b0a-84e4-9cd3431bfbb9"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
-Polyester = "f517fe37-dbe3-4b94-8317-1923a5111588"
 SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
 Static = "aedffcd0-7271-4cad-89d0-dc628f76c6d3"
 StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
+
+[weakdeps]
+Polyester = "f517fe37-dbe3-4b94-8317-1923a5111588"
+
+[extensions]
+PolyesterExt = "Polyester"
 
 [compat]
 Aqua = "0.8"
@@ -27,8 +32,9 @@ julia = "1.10"
 [extras]
 Aqua = "4c88cf16-eb10-579e-8560-4a9242c79595"
 JET = "c3a54625-cd67-489e-a8e7-0a5a0ff4e31b"
+Polyester = "f517fe37-dbe3-4b94-8317-1923a5111588"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
-test = ["Test", "Aqua", "JET", "Random"]
+test = ["Test", "Aqua", "JET", "Polyester", "Random"]
