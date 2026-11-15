@@ -223,7 +223,7 @@ using BlockLinearSystems: expand_block_perm   # internal names
     dx_e_dense = zeros(ne)
     BlockLinearSystems.backsubstitute!(
         dx_e_dense, dx_r_dense, structure_K1, C_data,
-        ws_K1.E_inv_data, ws_K1.z_data
+        ws_K1
     )
 
     # Verify back-substituted eliminated step matches ground truth
@@ -256,7 +256,7 @@ using BlockLinearSystems: expand_block_perm   # internal names
     dx_e_K4 = zeros(ne)
     BlockLinearSystems.backsubstitute!(
         dx_e_K4, dx_r_K4, structure_K4, C_data,
-        ws_K4.E_inv_data, ws_K4.z_data
+        ws_K4
     )
     @test norm([dx_r_K4; dx_e_K4] - dx_full) / norm(dx_full) < 1e-12
 

@@ -109,7 +109,7 @@ qr_rtol(::Type{Float32}) = 2e-3
                 x_e = zeros(T, n - nr)
                 backsubstitute!(x_e, x_r, ws)
                 x_e_ref = zeros(T, n - nr)
-                backsubstitute!(x_e_ref, x_r, st, Hs.C_data, sws.E_inv_data, sws.z_data)
+                backsubstitute!(x_e_ref, x_r, st, Hs.C_data, sws)
                 @test relerr(x_e, x_e_ref) <= qr_rtol(T)
             end
         end
@@ -178,7 +178,7 @@ end
     @test !issuccess(cholesky(Symmetric(S, :U); check=false))
     x_s = zeros(n)
     x_s[1:nr] .= bunchkaufman(Symmetric(S, :U)) \ g
-    backsubstitute!(view(x_s, nr+1:n), x_s[1:nr], Hs.structure, Hs.C_data, sws.E_inv_data, sws.z_data)
+    backsubstitute!(view(x_s, nr+1:n), x_s[1:nr], Hs.structure, Hs.C_data, sws)
     err_schur = relerr(x_s, x_true)
     @info "Ill-conditioned least squares" cond_J=kJ err_qr err_schur
     @test err_qr <= 10 * kJ * eps()

@@ -25,7 +25,7 @@ alloc_reduce_schur_dense(S, g, b_r, b_e, sc_e, lambda, st, H, ws) =
 alloc_reduce_schur_sparse(S, g, b_r, b_e, sc_e, lambda, st, H, pat, ws) =
     @allocated reduce_schur_sparse!(S, g, b_r, b_e, sc_e, lambda, st, H.E_data, H.C_data,
                                     pat.block_colptr, pat.block_rowval, pat.block_row_offsets, pat.col_heights, ws)
-alloc_backsubstitute_schur(x_e, x_r, st, H, ws) = @allocated backsubstitute!(x_e, x_r, st, H.C_data, ws.E_inv_data, ws.z_data)
+alloc_backsubstitute_schur(x_e, x_r, st, H, ws) = @allocated backsubstitute!(x_e, x_r, st, H.C_data, ws)
 
 # Warm the call, then the least of three measurements
 warm_allocs(f, args...) = (f(args...); minimum(f(args...) for _ in 1:3))
@@ -107,12 +107,7 @@ end
                         @test threaded_allocs_ok(warm_allocs(alloc_reset_schur_sparse, S.nzval, H.R.data, rmap, pat.diag_inds, sc_r, lambda, ws))
                         @test threaded_allocs_ok(warm_allocs(alloc_reduce_schur_sparse, S, g, b_r, b_e, sc_e, lambda, st, H, pat, ws))
                     end
-                    bytes = warm_allocs(alloc_backsubstitute_schur, x_e, x_r, st, H, ws)
-                    if maximum(st.e_dims) > BlockLinearSystems.D_STATIC     # R3: one temporary per chunk above D_STATIC
-                        @test threaded_allocs_ok(bytes) broken=!threaded_allocs_ok(bytes)
-                    else
-                        @test threaded_allocs_ok(bytes)
-                    end
+                    @test threaded_allocs_ok(warm_allocs(alloc_backsubstitute_schur, x_e, x_r, st, H, ws))
                 end
             end
         end

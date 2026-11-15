@@ -10,7 +10,7 @@ columns of `S` (and entries of `g_S`) that it owns, so no per-chunk copies of `S
 has to be merged afterwards.
 """
 struct SchurReductionWorkspace{T}
-    W_scratch::Vector{Matrix{T}}          # per phase-1 chunk: max_De x max_De scratch for blocks above D_STATIC (0 x 0 otherwise)
+    W_scratch::Vector{Matrix{T}}          # per chunk: max_De x max_De scratch for blocks above D_STATIC (0 x 0 otherwise), for phase 1 and back-substitution
     W_data::Vector{T}                     # W_er = E_e^-1 C_er for every coupling, same layout as C_data
     E_inv_data::Vector{T}                 # Cached E_e(lambda)^-1: length sum_e d_e^2
     z_data::Vector{T}                     # Cached z_e = E_e(lambda)^-1 b_e: length sum_e d_e
@@ -453,17 +453,20 @@ function reduce_schur_sparse!(
 end
 
 """
-    backsubstitute!(x_e, x_r, structure, C_data, E_inv_data, z_data)
+    backsubstitute!(x_e, x_r, structure, C_data, ws::SchurReductionWorkspace)
 
-Recover step Delta x_e for all eliminated blocks independently using cached E_inv and z:
+Recover step Delta x_e for all eliminated blocks independently using the `E_inv` and `z` cached in `ws`
+by [`reduce_schur_dense!`](@ref) / [`reduce_schur_sparse!`](@ref):
 `x_e = z_e - E_e^-1 * (sum_r C_er x_r)` for each eliminated block e. The coupling sum is accumulated first
-and `E_inv` is applied once per eliminated block.
+and `E_inv` is applied once per eliminated block. Blocks above `BlockLinearSystems.D_STATIC` dimensions use
+the workspace's per-chunk scratch (shared with its [`trial_workspace`](@ref)s), so nothing is allocated.
 """
 function backsubstitute!(
     x_e::AbstractVector{T}, x_r::AbstractVector{T},
     structure::SchurStructure, C_data::Vector{T},
-    E_inv_data::Vector{T}, z_data::Vector{T}
+    ws::SchurReductionWorkspace{T}
 ) where T
+    E_inv_data, z_data, scratch = ws.E_inv_data, ws.z_data, ws.W_scratch
     threaded = use_threads(structure.neblocks, length(structure.entry_retained))
     for (g_idx, e_range) in enumerate(structure.e_groups)
         de = structure.e_sizes[g_idx]
@@ -471,7 +474,7 @@ function backsubstitute!(
         # Function barrier on the (static) block dimension
         dispatch_dim(de) do s_de
             foreach_index(length(chunks), threaded) do k
-                backsubstitute_group!(x_e, x_r, structure, C_data, E_inv_data, z_data, chunks[k], s_de)
+                backsubstitute_group!(x_e, x_r, structure, C_data, E_inv_data, z_data, scratch[k], chunks[k], s_de)
             end
         end
     end
@@ -481,7 +484,7 @@ end
 function backsubstitute_group!(
     x_e::AbstractVector{T}, x_r::AbstractVector{T},
     structure::SchurStructure, C_data::Vector{T},
-    E_inv_data::Vector{T}, z_data::Vector{T},
+    E_inv_data::Vector{T}, z_data::Vector{T}, ::Matrix{T},
     e_chunk::UnitRange{Int}, s_de::StaticInt{De}
 ) where {T, De}
     eliminated_ptr = structure.eliminated_ptr
@@ -515,18 +518,20 @@ function backsubstitute_group!(
     return nothing
 end
 
-# Blocks above D_STATIC dimensions: same computation with run-time loops and one small temporary per call
+# Blocks above D_STATIC dimensions: same computation with run-time loops; `t` is the first `de` entries of the
+# chunk's scratch matrix (max_De x max_De, max_De >= de)
 function backsubstitute_group!(
     x_e::AbstractVector{T}, x_r::AbstractVector{T},
     structure::SchurStructure, C_data::Vector{T},
-    E_inv_data::Vector{T}, z_data::Vector{T},
+    E_inv_data::Vector{T}, z_data::Vector{T}, t::Matrix{T},
     e_chunk::UnitRange{Int}, de::Int
 ) where T
-    t = Vector{T}(undef, de)
     @inbounds for e in e_chunk
         e_off = structure.boffsets_e[e]
         eo = structure.eoffsets[e]
-        fill!(t, zero(T))
+        for i in 1:de
+            t[i] = zero(T)
+        end
         for c in structure.eliminated_ptr[e]:(structure.eliminated_ptr[e + 1] - 1)
             r = structure.entry_retained[c]
             dr = Int(structure.r_dims[r])

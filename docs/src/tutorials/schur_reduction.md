@@ -104,7 +104,7 @@ reduce_schur_dense!(S, g, view(b, 1:nr), view(b, nr+1:n), view(scaling, nr+1:n),
     error("an eliminated block is singular")
 x = zeros(n)
 x[1:nr] .= Symmetric(S, :U) \ g                   # only the upper triangle of S is filled
-backsubstitute!(view(x, nr+1:n), view(x, 1:nr), st, C_data, ws.E_inv_data, ws.z_data)
+backsubstitute!(view(x, nr+1:n), view(x, 1:nr), st, C_data, ws)
 
 x_full = (H + lambda * Diagonal(scaling)) \ b     # reference: solve the whole system
 norm(x - x_full) / norm(x_full)

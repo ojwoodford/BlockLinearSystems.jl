@@ -178,7 +178,7 @@ function schur_solve(H::SchurBlockMatrix{T}, b, scaling, lambda; nchunks=1) wher
     x = zeros(T, n)
     x_r = T.(cholesky(Symmetric(S, :U)) \ g)   # CHOLMOD may return Float64 for Float32 input
     x[1:nr] .= x_r
-    backsubstitute!(view(x, nr+1:n), x_r, st, H.C_data, ws.E_inv_data, ws.z_data)
+    backsubstitute!(view(x, nr+1:n), x_r, st, H.C_data, ws)
     return (x, true)
 end
 
