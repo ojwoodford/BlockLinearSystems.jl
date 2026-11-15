@@ -125,8 +125,9 @@ J = SchurBlockJacobian{Float64, Matrix{Float64}}(jst)   # reduced-system storage
 # ... fill through coupling_block(J, u, row, nrows), eliminated_block(J, e, ...), residual_block(J, t, ...), then:
 ws = QRReductionWorkspace(J)
 reduce_qr!(ws, J, scaling_e, lambda)          # false if a block is rank deficient (e.g. too few rows, undamped)
-reduced_jacobian!(Jt, rt, ws)                 # dense J̃ and r̃; or reduced_mul! / reduced_tmul! for LSMR,
-x_r = qr(Jt) \ rt                             # or reduced_normal_dense! / _sparse! for J̃ᵀJ̃ and Cholesky
+reduced_jacobian!(Jt, rt, ws)                 # J̃ and r̃: Jt a Matrix, or build_reduced_jacobian_pattern(jst) for a
+x_r = qr(Jt) \ rt                             # sparse J̃; or reduced_mul! / reduced_tmul! for LSMR,
+                                              # or reduced_normal_dense! / _sparse! for J̃ᵀJ̃ and Cholesky
 backsubstitute!(x_e, x_r, ws)
 ```
 

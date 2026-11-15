@@ -686,12 +686,32 @@ reduced_residual!
 
 """
     reduced_jacobian!(Jt::AbstractMatrix, rt::AbstractVector, ws::QRReductionWorkspace) -> Jt
+    reduced_jacobian!(Jt::SparseMatrixCSC, rt::AbstractVector, ws::QRReductionWorkspace) -> Jt
 
-Write the reduced problem densely: `Jt = J̃` (size `(reduced_nrows(structure), nr)`, overwritten) and
-`rt = r̃`, for a dense QR of the reduced problem. Solving that by QR, then [`backsubstitute!`](@ref),
+Write the reduced problem: `Jt = J̃` (size `(reduced_nrows(structure), nr)`) and `rt = r̃`, in the row order of
+[`reduced_mul!`](@ref), for a QR of the reduced problem. Solving that by QR, then [`backsubstitute!`](@ref),
 keeps the whole solve at the condition number of `J`; forming `J̃ᵀJ̃` squares it.
+
+A dense `Jt` is overwritten entirely. A `SparseMatrixCSC` `Jt` must have the pattern of
+[`build_reduced_jacobian_pattern`](@ref), and only its `nzval` is written: the same matrix as the dense form,
+entry for entry, filled in place. Its pattern is checked first (column heights and the first row of each table's
+run), and an `ArgumentError` is thrown if it differs. The sparse form allocates nothing and is threaded by retained
+column ownership, so no two threads write the same entry (but see [Threading](@ref) for Julia 1.10).
+
+The retained damping is left to the caller, as for every reduced kernel: rows `√(λ s_r)` appended to `J̃`.
 """
 reduced_jacobian!
+
+"""
+    build_reduced_jacobian_pattern(structure::SchurJacobianStructure, ::Type{T}=Float64) -> SparseMatrixCSC{T, Int}
+
+The sparse `J̃`, of size `(reduced_nrows(structure), nr)`, with every stored value zero, for
+[`reduced_jacobian!`](@ref) to fill. Its rows are the reduced rows of every table, in the order of
+[`reduced_mul!`](@ref). Each column of retained block `r` stores the reduced rows of every table that couples
+to `r`, whether an eliminated block's or a free group's. Build it once per structure; each fill writes only `nzval`.
+A table whose bottom rows are numerically zero (`λ = 0`, see [`reduced_nrows`](@ref)) still has its entries stored.
+"""
+build_reduced_jacobian_pattern
 
 """
     reduced_normal_dense!(S::Matrix, g_S, ws::QRReductionWorkspace) -> true

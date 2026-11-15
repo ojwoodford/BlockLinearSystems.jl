@@ -13,7 +13,8 @@ export reset_schur_dense!, reset_schur_sparse!, reduce_schur_dense!, reduce_schu
 export retained_block, eliminated_block, coupling_block, coupling_entry
 export SchurJacobianStructure, SchurBlockJacobian, schur_jacobian_bytes, residual_block
 export QRReductionWorkspace, reduce_qr!
-export reduced_nrows, free_block_pairs, reduced_mul!, reduced_tmul!, reduced_residual!, reduced_jacobian!
+export reduced_nrows, free_block_pairs, reduced_mul!, reduced_tmul!, reduced_residual!, reduced_jacobian!,
+    build_reduced_jacobian_pattern
 export reduced_normal_dense!, reduced_normal_sparse!, reduced_diagonal_blocks!, jtr!, jtj_diag!, jtj_quadform
 export threadargs, fromthreadargs
 

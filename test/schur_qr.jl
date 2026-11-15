@@ -254,6 +254,81 @@ end
     end
 end
 
+# The problems of R4: those of qr_problems (no free group, blocks above D_STATIC, free groups), the tutorial's
+# structure, an under-determined eliminated block with a free group, and no eliminated block at all (with a retained
+# block that no row touches, so a column of J̃ stores nothing)
+function sparse_reduced_problems(::Type{T}; nchunks=1) where T
+    rng = Random.Xoshiro(40)
+    probs = qr_problems(T; nchunks)
+    push!(probs, QRTestProblem("tutorial", rng, T, [6, 6, 6], [3, 3, 3, 3, 2, 1],
+                               [[1, 2], [1, 2, 3], [2, 3], [1, 3], [1, 2], [3]], [8, 10, 6, 6, 4, 3];
+                               free_rows=[12], free_retained=[[1, 3]], nchunks))
+    push!(probs, QRTestProblem("under-determined", rng, T, [6, 6], [12, 12, 12], [[1, 2], [1], [2]], [28, 15, 10];
+                               free_rows=[8], free_retained=[[1, 2]], nchunks))
+    push!(probs, QRTestProblem("no eliminated block", rng, T, [3, 2, 4], Int[], Vector{Int}[], Int[];
+                               free_rows=[5, 4], free_retained=[[1, 2], [2]], nchunks))
+    return probs
+end
+
+qr_sparse_jacobian_allocs(Jt, rt, ws) = @allocated reduced_jacobian!(Jt, rt, ws)
+
+@testset "Sparse reduced Jacobian: the dense one, entry for entry, filled in place (R4)" begin
+    nt = Threads.nthreads()
+    for T in (Float64, Float32), p in sparse_reduced_problems(T; nchunks=nt),
+        lambda in (p.name == "under-determined" ? (0.3,) : (0.0, 0.3))     # undamped, it cannot be eliminated
+        @testset "$T $(p.name) λ=$lambda" begin
+            rng = Random.Xoshiro(41)
+            J = p.J
+            jst = J.structure
+            nr, n = jst.schur.nr, size(p.Jf, 2)
+            m = reduced_nrows(jst)
+            ws = QRReductionWorkspace(J)
+            @test reduce_qr!(ws, J, qr_scaling(p, rng)[nr+1:n], lambda)
+            Jt, rt = zeros(T, m, nr), zeros(T, m)
+            reduced_jacobian!(Jt, rt, ws)
+            Jsp = build_reduced_jacobian_pattern(jst, T)
+            @test Jsp isa SparseMatrixCSC{T, Int} && size(Jsp) == (m, nr) && all(iszero, nonzeros(Jsp))
+            fill!(nonzeros(Jsp), T(NaN))                       # every stored entry is written
+            rts = fill(T(NaN), m)
+            @test reduced_jacobian!(Jsp, rts, ws) === Jsp
+            @test Matrix(Jsp) == Jt && rts == rt               # identical, not just close
+            @test nnz(Jsp) == sum(Int(jst.schur.r_dims[jst.entry_retained[u]]) *
+                                  (jst.table_nrows[jst.entry_table[u]] - jst.table_top[jst.entry_table[u]])
+                                  for u in eachindex(jst.entry_retained); init=0)
+            # The same matrix whether the fill is serial or threaded
+            old = BlockLinearSystems.SCHUR_THREAD_MIN_WORK[]
+            try
+                for minwork in (typemax(Int), 0)
+                    BlockLinearSystems.SCHUR_THREAD_MIN_WORK[] = minwork
+                    threaded = minwork == 0 && nt > 1 && length(jst.col_chunks) > 1
+                    fill!(nonzeros(Jsp), T(NaN))
+                    reduced_jacobian!(Jsp, rts, ws)
+                    @test Matrix(Jsp) == Jt
+                    @test threaded_allocs_ok(qr_sparse_jacobian_allocs(Jsp, rts, ws), threaded)
+                    @test threaded_allocs_ok(qr_sparse_jacobian_allocs(Jsp, rts, ws), threaded)
+                end
+            finally
+                BlockLinearSystems.SCHUR_THREAD_MIN_WORK[] = old
+            end
+            @inferred reduced_jacobian!(Jsp, rts, ws)
+            # A matrix without the pattern is rejected before anything is written
+            vals = copy(nonzeros(Jsp))
+            @test_throws DimensionMismatch reduced_jacobian!(spzeros(T, m, nr + 1), rts, ws)
+            @test_throws DimensionMismatch reduced_jacobian!(Jsp, zeros(T, m + 1), ws)
+            @test nonzeros(Jsp) == vals
+            if nnz(Jsp) > 0
+                nnz(Jsp) < m * nr && @test_throws ArgumentError reduced_jacobian!(sparse(ones(T, m, nr)), rts, ws)  # heights
+                Jbad = copy(Jsp)
+                c = findfirst(j -> !isempty(nzrange(Jbad, j)), 1:nr)
+                q = first(nzrange(Jbad, c))
+                Jbad.rowval[q] = Jbad.rowval[q] == m ? 1 : m    # a run that starts at the wrong row
+                @test_throws ArgumentError reduced_jacobian!(Jbad, rts, ws)
+                @test nonzeros(Jbad) == vals
+            end
+        end
+    end
+end
+
 qr_mul_allocs(y, ws, v) = @allocated reduced_mul!(y, ws, v)
 qr_tmul_allocs(g, ws, w) = @allocated reduced_tmul!(g, ws, w)
 qr_backsub_allocs(x_e, x_r, ws) = @allocated backsubstitute!(x_e, x_r, ws)

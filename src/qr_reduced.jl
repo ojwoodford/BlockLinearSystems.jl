@@ -260,6 +260,104 @@ function reduced_jacobian!(Jt::AbstractMatrix, rt::AbstractVector, ws::QRReducti
     return Jt
 end
 
+# Number of reduced rows in each column of retained block r: the bottom rows of every table coupled to r
+@inline function reduced_column_height(jst::SchurJacobianStructure, r::Int)
+    h = 0
+    @inbounds for k in jst.retained_ptr[r]:jst.retained_ptr[r + 1] - 1
+        t = jst.entry_table[jst.retained_entry[k]]
+        h += jst.table_nrows[t] - jst.table_top[t]
+    end
+    return h
+end
+
+# build_reduced_jacobian_pattern(structure::SchurJacobianStructure, ::Type{T}=Float64) -> SparseMatrixCSC{T, Int}
+# The sparsity pattern of `J̃`, values zero. Each column of retained block r stores the reduced rows of every table
+# coupled to r, tables in ascending order (the entries of r in `retained_entry` are ascending, hence so are their
+# tables and their rows), so the fill finds a run's position by counting, without index arrays.
+function build_reduced_jacobian_pattern(jst::SchurJacobianStructure, ::Type{T}=Float64) where T
+    st = jst.schur
+    colptr = Vector{Int}(undef, st.nr + 1)
+    colptr[1] = 1
+    for r in 1:st.nrblocks
+        h = reduced_column_height(jst, r)
+        ro = st.boffsets_r[r]
+        for j in 0:Int(st.r_dims[r]) - 1
+            colptr[ro + j + 1] = colptr[ro + j] + h
+        end
+    end
+    rowval = Vector{Int}(undef, colptr[end] - 1)
+    for r in 1:st.nrblocks, j in 0:Int(st.r_dims[r]) - 1
+        p = colptr[st.boffsets_r[r] + j]
+        for k in jst.retained_ptr[r]:jst.retained_ptr[r + 1] - 1
+            t = jst.entry_table[jst.retained_entry[k]]
+            for i in 0:jst.table_nrows[t] - jst.table_top[t] - 1
+                rowval[p] = jst.reduced_offsets[t] + i
+                p += 1
+            end
+        end
+    end
+    return SparseMatrixCSC(reduced_nrows(jst), st.nr, colptr, rowval, zeros(T, length(rowval)))
+end
+
+# Check, before any work, that Jt has the pattern of build_reduced_jacobian_pattern: its size, the height of every
+# column, and the first row of every run (one run per table and column). Rows inside a run are not checked.
+function check_reduced_jacobian_pattern(Jt::SparseMatrixCSC, jst::SchurJacobianStructure)
+    st = jst.schur
+    size(Jt) == (reduced_nrows(jst), st.nr) || throw(DimensionMismatch("Jt has size $(size(Jt)), expected $((reduced_nrows(jst), st.nr))"))
+    colptr, rowval = Jt.colptr, Jt.rowval
+    @inbounds for r in 1:st.nrblocks
+        h = reduced_column_height(jst, r)
+        for c in st.boffsets_r[r]:st.boffsets_r[r] + Int(st.r_dims[r]) - 1
+            colptr[c + 1] - colptr[c] == h || throw(ArgumentError("Jt does not have the pattern of build_reduced_jacobian_pattern: column $c stores $(colptr[c + 1] - colptr[c]) entries, expected $h"))
+            p = Int(colptr[c])
+            for k in jst.retained_ptr[r]:jst.retained_ptr[r + 1] - 1
+                t = jst.entry_table[jst.retained_entry[k]]
+                n = jst.table_nrows[t] - jst.table_top[t]
+                n == 0 || rowval[p] == jst.reduced_offsets[t] || throw(ArgumentError("Jt does not have the pattern of build_reduced_jacobian_pattern: column $c stores row $(rowval[p]), expected $(jst.reduced_offsets[t])"))
+                p += n
+            end
+        end
+    end
+    return nothing
+end
+
+# reduced_jacobian!(Jt::SparseMatrixCSC, rt::AbstractVector, ws::QRReductionWorkspace)
+# Sparse form: write `J̃` into `Jt.nzval` (the pattern of build_reduced_jacobian_pattern) and `rt = r̃`.
+function reduced_jacobian!(Jt::SparseMatrixCSC, rt::AbstractVector, ws::QRReductionWorkspace)
+    jst = ws.structure
+    st = jst.schur
+    F = ws.factored
+    check_reduced_jacobian_pattern(Jt, jst)
+    reduced_residual!(rt, ws)
+    nzval = Jt.nzval
+    colptr = Jt.colptr
+    # Threaded by retained column ownership: each chunk writes the stored entries of its own columns
+    foreach_retained(jst) do r
+        @inbounds begin
+            ro = st.boffsets_r[r]
+            dr = Int(st.r_dims[r])
+            p = 0                                    # position of this table's run within each column of r
+            for k in jst.retained_ptr[r]:jst.retained_ptr[r + 1] - 1
+                u = jst.retained_entry[k]
+                t = jst.entry_table[u]
+                M = jst.table_nrows[t]
+                top = jst.table_top[t]
+                n = M - top
+                cb = jst.table_offsets[t] + (jst.entry_col[u] - 1) * M + top
+                for j in 0:dr - 1
+                    q = Int(colptr[ro + j]) + p
+                    c0 = cb + j * M
+                    for i in 0:n - 1
+                        nzval[q + i] = F[c0 + i]
+                    end
+                end
+                p += n
+            end
+        end
+    end
+    return Jt
+end
+
 # Contributions of entry u2 (table t, retained block r2) to g_S[r2] and to block column r2 of S, through every
 # entry u1 <= u2 of the same table (entries are sorted by retained block within a table, so r1 <= r2).
 # `slot(u1, row, col)` returns the index in `Sv` of S[row of r1, col of r2].

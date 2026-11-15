@@ -108,6 +108,7 @@ reduced_mul!
 reduced_tmul!
 reduced_residual!
 reduced_jacobian!
+build_reduced_jacobian_pattern
 reduced_normal_dense!
 reduced_normal_sparse!
 reduced_diagonal_blocks!
