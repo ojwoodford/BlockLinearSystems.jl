@@ -212,4 +212,3 @@ end
 as_block_rle(v::BlockRLE{BlockSize, Int}) = v
 as_block_rle(v::BlockRLE) = BlockRLE{BlockSize, Int}(v)
 as_block_rle(v::AbstractVector{<:Integer}) = BlockRLE(v)
-const as_blocksizes = as_block_rle
