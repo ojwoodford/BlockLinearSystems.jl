@@ -1,4 +1,4 @@
-# schur_quadform(H::SchurBlockMatrix, dx::AbstractVector) -> Real
+# schur_quadform(H::SchurBlockHessian, dx::AbstractVector) -> Real
 # The quadratic form `dx' * H * dx` in O(N) operations without materializing the full Hessian: the fast path of
 # `dot(dx, H, dx)`. `dx` may have any element type; the result has the promoted type.
 #
@@ -8,7 +8,7 @@
 # sizes on a bundle-adjustment-like benchmark with 200 retained and 20000 eliminated blocks). Specialising the
 # retained part by run of retained block sizes was measured too: it saved nothing measurable (that part takes
 # ~0.01 ms) and cost 0.2-2 s of extra compilation, so it is not done.
-function schur_quadform(H::SchurBlockMatrix{T}, dx::AbstractVector) where T
+function schur_quadform(H::SchurBlockHessian{T}, dx::AbstractVector) where T
     Tacc = promote_type(T, eltype(dx))
     structure = H.structure
     nr = structure.nr
@@ -78,7 +78,7 @@ function schur_quadform(H::SchurBlockMatrix{T}, dx::AbstractVector) where T
 end
 
 # C and E contributions of the eliminated blocks in `e_range`, all of dimension `s_de` (static up to D_STATIC)
-function schur_quadform_eliminated(H::SchurBlockMatrix{T}, dx_r, dx_e, e_range::UnitRange{Int}, s_de::StaticInt, z::Tacc) where {T, Tacc}
+function schur_quadform_eliminated(H::SchurBlockHessian{T}, dx_r, dx_e, e_range::UnitRange{Int}, s_de::StaticInt, z::Tacc) where {T, Tacc}
     structure = H.structure
     D = dimval(s_de)
     part = z
@@ -100,7 +100,7 @@ function schur_quadform_eliminated(H::SchurBlockMatrix{T}, dx_r, dx_e, e_range::
 end
 
 # Blocks above D_STATIC dimensions: the same computation with run-time loops
-function schur_quadform_eliminated(H::SchurBlockMatrix{T}, dx_r, dx_e, e_range::UnitRange{Int}, de::Int, z::Tacc) where {T, Tacc}
+function schur_quadform_eliminated(H::SchurBlockHessian{T}, dx_r, dx_e, e_range::UnitRange{Int}, de::Int, z::Tacc) where {T, Tacc}
     structure = H.structure
     part = z
     @inbounds for e in e_range
@@ -129,7 +129,7 @@ function schur_quadform_eliminated(H::SchurBlockMatrix{T}, dx_r, dx_e, e_range::
     return part
 end
 
-function LinearAlgebra.dot(x::AbstractVector{<:Real}, H::SchurBlockMatrix{<:Real}, y::AbstractVector{<:Real})
+function LinearAlgebra.dot(x::AbstractVector{<:Real}, H::SchurBlockHessian{<:Real}, y::AbstractVector{<:Real})
     st = H.structure
     n = st.nr + (st.neblocks == 0 ? 0 : st.boffsets_e[end] + Int(st.e_dims[end]) - 1)
     (length(x) == n && length(y) == n) ||
@@ -138,10 +138,10 @@ function LinearAlgebra.dot(x::AbstractVector{<:Real}, H::SchurBlockMatrix{<:Real
     return schur_bilinear(H, x, y)
 end
 
-# schur_bilinear(H::SchurBlockMatrix, x, y) -> Real
+# schur_bilinear(H::SchurBlockHessian, x, y) -> Real
 # The bilinear form `x' * H * y` for any two vectors, by the walk of `schur_quadform`: H is symmetric and one
 # triangle of R is stored or read, so each doubled term `2·a·b` of the quadratic form is `aₓ·b_y + a_y·bₓ` here.
-function schur_bilinear(H::SchurBlockMatrix{T}, x::AbstractVector, y::AbstractVector) where T
+function schur_bilinear(H::SchurBlockHessian{T}, x::AbstractVector, y::AbstractVector) where T
     Tacc = promote_type(T, eltype(x), eltype(y))
     structure = H.structure
     nr = structure.nr
@@ -203,7 +203,7 @@ function schur_bilinear(H::SchurBlockMatrix{T}, x::AbstractVector, y::AbstractVe
 end
 
 # C and E contributions of the eliminated blocks in `e_range`, all of dimension `s_de` (static up to D_STATIC)
-function schur_bilinear_eliminated(H::SchurBlockMatrix{T}, x_r, x_e, y_r, y_e, e_range::UnitRange{Int}, s_de::StaticInt, z::Tacc) where {T, Tacc}
+function schur_bilinear_eliminated(H::SchurBlockHessian{T}, x_r, x_e, y_r, y_e, e_range::UnitRange{Int}, s_de::StaticInt, z::Tacc) where {T, Tacc}
     structure = H.structure
     D = dimval(s_de)
     part = z
@@ -227,7 +227,7 @@ function schur_bilinear_eliminated(H::SchurBlockMatrix{T}, x_r, x_e, y_r, y_e, e
 end
 
 # Blocks above D_STATIC dimensions: the same computation with run-time loops
-function schur_bilinear_eliminated(H::SchurBlockMatrix{T}, x_r, x_e, y_r, y_e, e_range::UnitRange{Int}, de::Int, z::Tacc) where {T, Tacc}
+function schur_bilinear_eliminated(H::SchurBlockHessian{T}, x_r, x_e, y_r, y_e, e_range::UnitRange{Int}, de::Int, z::Tacc) where {T, Tacc}
     structure = H.structure
     part = z
     @inbounds for e in e_range

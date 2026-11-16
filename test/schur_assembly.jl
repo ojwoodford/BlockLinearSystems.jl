@@ -1,10 +1,10 @@
 using Random, LinearAlgebra, SparseArrays, StaticArrays, Static, HybridArrays, Test, BlockLinearSystems
 using BlockLinearSystems: validblock   # internal names
 
-# Sized views into SchurBlockMatrix storage (E5). Uses SchurTestProblem and the matrix builders of schur_problems.jl.
+# Sized views into SchurBlockHessian storage (E5). Uses SchurTestProblem and the matrix builders of schur_problems.jl.
 
 # Fill a zeroed copy of H through the views only, from the dense Hessian of p
-function fill_through_views!(Hv::SchurBlockMatrix, p::SchurTestProblem)
+function fill_through_views!(Hv::SchurBlockHessian, p::SchurTestProblem)
     st = Hv.structure
     n_r = st.nr
     rrange(r) = st.boffsets_r[r] .+ (0:Int(st.r_dims[r])-1)
@@ -33,7 +33,7 @@ sab_dynamic(H, e, c) = (eliminated_block(H, e) .+= 1; coupling_block(H, c) .+= 1
 allocs_sab_static(H, e, c) = @allocated sab_static(H, e, c)
 allocs_sab_dynamic(H, e, c) = @allocated sab_dynamic(H, e, c)
 
-@testset "Assembly views into SchurBlockMatrix storage (E5)" begin
+@testset "Assembly views into SchurBlockHessian storage (E5)" begin
     for p in (standard_problem(), coupled_groups_problem(), mixed_dims_problem()), make in (dense_schur_matrix, sparse_schur_matrix)
         H = make(p)
         st = H.structure

@@ -8,7 +8,7 @@ using Random, LinearAlgebra, SparseArrays, StaticArrays, Static, Test, BlockLine
 
 A random, strictly diagonally dominant (hence positive definite) bipartite system with retained
 variables first and eliminated variables second, in full dense form plus everything needed to build
-`SchurBlockMatrix` objects from it.
+`SchurBlockHessian` objects from it.
 """
 struct SchurTestProblem
     H::Matrix{Float64}
@@ -81,7 +81,7 @@ function dense_schur_matrix(p::SchurTestProblem; nchunks=1)
     E_data = zeros(sum(abs2, p.e_dims))
     C_data = zeros(structure.coffsets[end] + Int(structure.r_dims[structure.entry_retained[end]]) * Int(structure.e_dims[end]) - 1)
     fill_ce!(p, structure, E_data, C_data)
-    return SchurBlockMatrix(structure, R, E_data, C_data)
+    return SchurBlockHessian(structure, R, E_data, C_data)
 end
 
 function sparse_schur_matrix(p::SchurTestProblem; nchunks=1)
@@ -103,7 +103,7 @@ function sparse_schur_matrix(p::SchurTestProblem; nchunks=1)
     E_data = zeros(sum(abs2, p.e_dims))
     C_data = zeros(structure.coffsets[end] + Int(structure.r_dims[structure.entry_retained[end]]) * Int(structure.e_dims[end]) - 1)
     fill_ce!(p, structure, E_data, C_data)
-    return SchurBlockMatrix(structure, R, E_data, C_data)
+    return SchurBlockHessian(structure, R, E_data, C_data)
 end
 
 "Reference solution: dense Cholesky of the full system with `lambda * diag(damping)` added to the diagonal."
@@ -155,7 +155,7 @@ using Polyester
 Solve `(H + lambda * diag(scaling)) x = b` with the public Schur kernels only: reduce, dense or sparse
 Cholesky of the reduced system, back-substitution.
 """
-function schur_solve(H::SchurBlockMatrix{T}, b, scaling, lambda; nchunks=1) where T
+function schur_solve(H::SchurBlockHessian{T}, b, scaling, lambda; nchunks=1) where T
     st = H.structure
     nr = st.nr
     n = length(b)
@@ -261,7 +261,7 @@ end
     end
 end
 
-@testset "copy_structure(::SchurBlockMatrix) shares nothing mutable (B1)" begin
+@testset "copy_structure(::SchurBlockHessian) shares nothing mutable (B1)" begin
     for make in (dense_schur_matrix, sparse_schur_matrix)
         H = make(standard_problem())
         T = copy_structure(H)
@@ -355,7 +355,7 @@ end
         H = make(p)
         B32 = H.R isa Matrix ? Float32.(H.R) :
               SparseBlockLinearSystem{Float32}(Float32.(H.R.data), H.R.indices, H.R.indicestransposed, H.R.rowblocksizes, H.R.columnblocksizes, H.R.m, H.R.n)
-        H32 = SchurBlockMatrix(H.structure, B32, Float32.(H.E_data), Float32.(H.C_data))
+        H32 = SchurBlockHessian(H.structure, B32, Float32.(H.E_data), Float32.(H.C_data))
         x, ok = schur_solve(H32, Float32.(p.b), ones(Float32, n), 0.3)
         @test ok && eltype(x) == Float32
         @test norm(Float64.(x) - x_ref) <= 1e-3 * norm(x_ref)
@@ -448,21 +448,21 @@ end
 # Measured inside functions: @allocated at a testset's top level counts spurious boxing on Julia 1.10
 allocs_zero!(H) = @allocated zero!(H)
 
-@testset "SchurBlockMatrix carries an optional pattern (A1)" begin
+@testset "SchurBlockHessian carries an optional pattern (A1)" begin
     for make in (dense_schur_matrix, sparse_schur_matrix)
         H0 = make(standard_problem())
         st = H0.structure
         @test H0.pattern === nothing
         extra = H0.R isa Matrix ? () : retained_block_pairs(H0.R)
         pat = build_schur_pattern(st; extra_blocks=extra)
-        H = SchurBlockMatrix(st, H0.R, H0.E_data, H0.C_data; pattern=pat)
+        H = SchurBlockHessian(st, H0.R, H0.E_data, H0.C_data; pattern=pat)
         @test H.pattern === pat
         @test H.R === H0.R
         # positional (field-order) forms still work and carry no pattern
-        @test SchurBlockMatrix(H0.R, H0.E_data, H0.C_data, st).pattern === nothing
-        @test SchurBlockMatrix{Float64, typeof(H0.R)}(H0.R, H0.E_data, H0.C_data, st).pattern === nothing
+        @test SchurBlockHessian(H0.R, H0.E_data, H0.C_data, st).pattern === nothing
+        @test SchurBlockHessian{Float64, typeof(H0.R)}(H0.R, H0.E_data, H0.C_data, st).pattern === nothing
         # extra entries on the named tuple are accepted
-        @test SchurBlockMatrix(st, H0.R, H0.E_data, H0.C_data; pattern=merge(pat, (S_factor = 1,))).pattern.S_factor == 1
+        @test SchurBlockHessian(st, H0.R, H0.E_data, H0.C_data; pattern=merge(pat, (S_factor = 1,))).pattern.S_factor == 1
 
         # copy shares the pattern, nothing mutable
         Tc = copy_structure(H)
@@ -471,7 +471,7 @@ allocs_zero!(H) = @allocated zero!(H)
 
         # wrong size
         bad = (S_sparse = spzeros(st.nr + 1, st.nr + 1),)
-        @test_throws ArgumentError SchurBlockMatrix(st, H0.R, H0.E_data, H0.C_data; pattern=bad)
+        @test_throws ArgumentError SchurBlockHessian(st, H0.R, H0.E_data, H0.C_data; pattern=bad)
 
         # concrete types and allocation-free hot paths with a pattern attached
         @test isconcretetype(typeof(H))

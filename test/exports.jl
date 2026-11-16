@@ -4,7 +4,7 @@ using Test, BlockLinearSystems, LinearAlgebra
 # or internal (not exported, not in the API reference). Adding or dropping an export must change this list.
 const PUBLIC_API = sort([
     :BlockRLE, :DenseBlockLinearSystem, :QRReductionWorkspace, :SchurBlockJacobian,
-    :SchurBlockMatrix, :SchurJacobianStructure, :SchurReductionWorkspace, :SchurStructure,
+    :SchurBlockHessian, :SchurJacobianStructure, :SchurReductionWorkspace, :SchurStructure,
     :SparseBlockLinearSystem, :TransposedPattern,
     :backsubstitute!, :block, :block_sparse_nnz, :blockrange, :blocksizes, :build_r_to_s_map,
     :build_reduced_jacobian_pattern, :build_schur_pattern, :copy_structure, :coupling_block, :coupling_entry, :computestartindices, :eliminated_block, :find_diag_inds,
@@ -33,7 +33,7 @@ const PUBLIC_API = sort([
         end
         # ... apart from methods added to other packages' functions, listed qualified (rules.md 7)
         qualified = filter(e -> occursin('.', string(e)), listed)
-        @test qualified == [Symbol("LinearAlgebra.dot(::AbstractVector{<:Real}, ::SchurBlockMatrix{<:Real}, ::AbstractVector{<:Real})")]
+        @test qualified == [Symbol("LinearAlgebra.dot(::AbstractVector{<:Real}, ::SchurBlockHessian{<:Real}, ::AbstractVector{<:Real})")]
         @test sort(unique(setdiff(listed, qualified))) == PUBLIC_API
     end
     # Internal names stay defined (qualified access), and the old alias is gone
@@ -43,7 +43,7 @@ const PUBLIC_API = sort([
         @test isdefined(BlockLinearSystems, name) && !(name in exported)
     end
     @test !isdefined(BlockLinearSystems, :SchurBlockStructure)
-    # fast_bAb is gone (D1): dot(v, H, v) for a SchurBlockMatrix, jtj_quadform for the QR tables
+    # fast_bAb is gone (D1): dot(v, H, v) for a SchurBlockHessian, jtj_quadform for the QR tables
     @test !isdefined(BlockLinearSystems, :fast_bAb)
-    @test hasmethod(LinearAlgebra.dot, Tuple{Vector{Float64}, SchurBlockMatrix{Float64, Matrix{Float64}}, Vector{Float64}})
+    @test hasmethod(LinearAlgebra.dot, Tuple{Vector{Float64}, SchurBlockHessian{Float64, Matrix{Float64}}, Vector{Float64}})
 end

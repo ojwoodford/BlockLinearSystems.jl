@@ -115,7 +115,7 @@ norm([x_r; x_e] - Jd \ rd) / norm(Jd \ rd)    # against a dense least-squares so
 
 ## The same problem by the Schur complement
 
-Form `H = JᵀJ` and `b = Jᵀr`, fill a [`SchurBlockMatrix`](@ref) as in the
+Form `H = JᵀJ` and `b = Jᵀr`, fill a [`SchurBlockHessian`](@ref) as in the
 [Schur tutorial](schur_reduction.md), and compare the two reduced systems, damped this time:
 
 ```@example qr
@@ -159,7 +159,7 @@ S_qr[diagind(S_qr)] .+= lambda .* s_r
 
 The second type parameter of [`SchurBlockJacobian`](@ref) names the storage of the reduced system:
 `Matrix{T}` for a dense `J̃` / `S = J̃ᵀJ̃`, or `SparseMatrixCSC{T, Int}` for the sparse `S` of
-[`reduced_normal_sparse!`](@ref). It is the counterpart of the type of `R` in a `SchurBlockMatrix`, and is
+[`reduced_normal_sparse!`](@ref). It is the counterpart of the type of `R` in a `SchurBlockHessian`, and is
 set by whoever builds the prototype (a modelling package, from its own dense-or-sparse option), so that a
 solver handed only `J` can dispatch on it. There is no default. The tables, the workspace and every kernel
 of this package are the same for both:

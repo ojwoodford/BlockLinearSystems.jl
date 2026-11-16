@@ -1,6 +1,6 @@
 using Static, StaticArrays, HybridArrays
 
-# Sized views into the storage of a SchurBlockMatrix, so that callers assemble R, E and C without offset
+# Sized views into the storage of a SchurBlockHessian, so that callers assemble R, E and C without offset
 # arithmetic: the Hessian-path counterparts of the views into a SchurBlockJacobian's tables.
 
 # A d1 x d2 column-major block stored contiguously from data[off]
@@ -20,7 +20,7 @@ function check_block_size(what::String, index, expected_rows::Integer, expected_
 end
 
 # eliminated_block(H, e[, rows, cols]): view of E_e (d_e x d_e)
-@inline function eliminated_block(H::SchurBlockMatrix, e::Integer, rows, cols)
+@inline function eliminated_block(H::SchurBlockHessian, e::Integer, rows, cols)
     st = H.structure
     @boundscheck (1 <= e <= st.neblocks) || throw(BoundsError(H, e))
     r_, c_ = as_size(rows), as_size(cols)
@@ -28,7 +28,7 @@ end
     @boundscheck check_block_size("Eliminated block", e, de, de, dynamic(r_), dynamic(c_))
     return flat_block(H.E_data, @inbounds(st.eoffsets[e]), r_, c_)
 end
-@inline function eliminated_block(H::SchurBlockMatrix, e::Integer)
+@inline function eliminated_block(H::SchurBlockHessian, e::Integer)
     st = H.structure
     @boundscheck (1 <= e <= st.neblocks) || throw(BoundsError(H, e))
     de = @inbounds Int(st.e_dims[e])
@@ -36,7 +36,7 @@ end
 end
 
 # coupling_block(H, c[, rows, cols]): view of C_er (d_e x d_r) for coupling entry c
-@inline function coupling_block(H::SchurBlockMatrix, c::Integer, rows, cols)
+@inline function coupling_block(H::SchurBlockHessian, c::Integer, rows, cols)
     st = H.structure
     @boundscheck (1 <= c <= length(st.entry_retained)) || throw(BoundsError(H, c))
     r_, c_ = as_size(rows), as_size(cols)
@@ -46,7 +46,7 @@ end
     @boundscheck check_block_size("Coupling entry", c, de, dr, dynamic(r_), dynamic(c_))
     return flat_block(H.C_data, @inbounds(st.coffsets[c]), r_, c_)
 end
-@inline function coupling_block(H::SchurBlockMatrix, c::Integer)
+@inline function coupling_block(H::SchurBlockHessian, c::Integer)
     st = H.structure
     @boundscheck (1 <= c <= length(st.entry_retained)) || throw(BoundsError(H, c))
     e = coupling_eliminated(st, Int(c))
@@ -66,18 +66,18 @@ function coupling_entry(st::SchurStructure, e::Integer, r::Integer)
 end
 
 # retained_block(H, i, j[, rows, cols]): view of block (i, j) of R
-@inline function retained_block(H::SchurBlockMatrix{T, <:Matrix}, i::Integer, j::Integer, rows, cols) where T
+@inline function retained_block(H::SchurBlockHessian{T, <:Matrix}, i::Integer, j::Integer, rows, cols) where T
     st = H.structure
     @boundscheck (1 <= i <= st.nrblocks && 1 <= j <= st.nrblocks) || throw(BoundsError(H, (i, j)))
     r_, c_ = as_size(rows), as_size(cols)
     @boundscheck check_block_size("Retained block", (i, j), @inbounds(Int(st.r_dims[i])), @inbounds(Int(st.r_dims[j])), dynamic(r_), dynamic(c_))
     return @inbounds sized_view(H.R, st.boffsets_r[i], r_, st.boffsets_r[j], c_)
 end
-@inline function retained_block(H::SchurBlockMatrix{T, <:SparseBlockLinearSystem}, i::Integer, j::Integer, rows, cols) where T
+@inline function retained_block(H::SchurBlockHessian{T, <:SparseBlockLinearSystem}, i::Integer, j::Integer, rows, cols) where T
     @boundscheck validblock(H.R, i, j) || throw(ArgumentError("Block ($i, $j) of R is not stored"))
     return block(H.R, i, j, as_size(rows), as_size(cols))
 end
-@inline function retained_block(H::SchurBlockMatrix, i::Integer, j::Integer)
+@inline function retained_block(H::SchurBlockHessian, i::Integer, j::Integer)
     st = H.structure
     @boundscheck (1 <= i <= st.nrblocks && 1 <= j <= st.nrblocks) || throw(BoundsError(H, (i, j)))
     return retained_block(H, i, j, @inbounds(Int(st.r_dims[i])), @inbounds(Int(st.r_dims[j])))

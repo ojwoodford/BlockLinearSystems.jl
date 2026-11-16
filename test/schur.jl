@@ -486,9 +486,9 @@ using BlockLinearSystems: expand_block_perm   # internal names
     @test b_map == r_to_s_map
 
     # --------------------------------------------------------------------------
-    # 11. SchurBlockMatrix & dot(v, H, v) Equivalence Test
+    # 11. SchurBlockHessian & dot(v, H, v) Equivalence Test
     # --------------------------------------------------------------------------
-    H_dense_block = SchurBlockMatrix(R, E_data, C_data, structure_K1)
+    H_dense_block = SchurBlockHessian(R, E_data, C_data, structure_K1)
     # Undamped H_full
     H_full_undamped = copy(H_full)
     for i in 1:nr

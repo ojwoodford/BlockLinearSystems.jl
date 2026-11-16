@@ -477,13 +477,13 @@ SchurJacobianStructure
 Raw storage of a tall least-squares problem: the tables of `structure` (see
 [`SchurJacobianStructure`](@ref)), each column-major, in one flat vector `data` at
 `structure.table_offsets`. It is the Jacobian prototype a caller fills, the analogue of
-[`SchurBlockMatrix`](@ref) on the Hessian path. `T` may be any floating-point type; `Float64` and
+[`SchurBlockHessian`](@ref) on the Hessian path. `T` may be any floating-point type; `Float64` and
 `Float32` are tested.
 
 `RType` is the storage of the reduced system in the retained variables, `S = J̃ᵀJ̃` (and `J̃`), that a
 solver builds after [`reduce_qr!`](@ref): `Matrix{T}` (dense, filled by [`reduced_normal_dense!`](@ref))
 or `SparseMatrixCSC{T, Int}` (sparse, filled by [`reduced_normal_sparse!`](@ref)); anything else is an
-`ArgumentError`. It plays the part the type of `R` plays in `SchurBlockMatrix{T, RType}`, and is chosen
+`ArgumentError`. It plays the part the type of `R` plays in `SchurBlockHessian{T, RType}`, and is chosen
 by whoever builds the prototype (a modelling package, from its own storage option), so that a solver
 receiving only `J` can dispatch on `J isa SchurBlockJacobian{T, Matrix{T}}`. There is no default. This
 package's kernels do not read it: the tables, [`QRReductionWorkspace`](@ref) and every kernel are the
@@ -765,14 +765,14 @@ jtj_diag!
     jtj_quadform(src::Union{SchurBlockJacobian, QRReductionWorkspace}, v) -> Real
 
 `‖J v‖² = vᵀ(JᵀJ)v` for `v = [v_r; v_e]`, from the tables, without forming anything: the analogue of
-`dot(v, H, v)` for a [`SchurBlockMatrix`](@ref) holding the Hessian `H = JᵀJ`. From the factored tables
+`dot(v, H, v)` for a [`SchurBlockHessian`](@ref) holding the Hessian `H = JᵀJ`. From the factored tables
 the damped Jacobian is used, so the result includes `λ * Σ s_e v_e²` (equal at `λ = 0`). Any element type of `v`;
 the result has the promoted type.
 """
 jtj_quadform
 
 """
-    dot(x::AbstractVector{<:Real}, H::SchurBlockMatrix{<:Real}, y::AbstractVector{<:Real}) -> Real
+    dot(x::AbstractVector{<:Real}, H::SchurBlockHessian{<:Real}, y::AbstractVector{<:Real}) -> Real
 
 The bilinear form `xᵀ H y`, with `x` and `y` over `[retained; eliminated]` (length `nr + sum(e_dims)`), in
 O(N) operations without materializing `H`. The result has the promoted element type of `H`, `x` and `y`. A
@@ -786,10 +786,10 @@ the work is, is processed per group of eliminated blocks of uniform dimension wi
 statically (3.4x faster than per-block run-time sizes on a bundle-adjustment-like benchmark with 200 retained
 and 20000 eliminated blocks). Pass the same vector twice to get it.
 """
-LinearAlgebra.dot(::AbstractVector{<:Real}, ::SchurBlockMatrix{<:Real}, ::AbstractVector{<:Real})
+LinearAlgebra.dot(::AbstractVector{<:Real}, ::SchurBlockHessian{<:Real}, ::AbstractVector{<:Real})
 
 """
-    retained_block(H::SchurBlockMatrix, i, j[, rows, cols])
+    retained_block(H::SchurBlockHessian, i, j[, rows, cols])
 
 Mutable view of block `(i, j)` of `R`, `d_i × d_j`. For a dense `R` (a `Matrix`) any block may be
 viewed; for a sparse `R` (a [`SparseBlockLinearSystem`](@ref)) only stored blocks (the lower triangle,
@@ -797,26 +797,26 @@ viewed; for a sparse `R` (a [`SparseBlockLinearSystem`](@ref)) only stored block
 block's size (`DimensionMismatch` otherwise); static sizes give a `SizedMatrix`, as for [`block`](@ref).
 
 With [`eliminated_block`](@ref)`(H, e)` and [`coupling_block`](@ref)`(H, c)` this lets a caller assemble a
-[`SchurBlockMatrix`](@ref) without offset arithmetic. All forms are type stable and allocation free.
+[`SchurBlockHessian`](@ref) without offset arithmetic. All forms are type stable and allocation free.
 """
 retained_block
 
 """
-    eliminated_block(H::SchurBlockMatrix, e[, rows, cols])
+    eliminated_block(H::SchurBlockHessian, e[, rows, cols])
 
 Mutable view of the eliminated block `E_e` (`d_e × d_e`, column-major in `H.E_data`). Sizes and errors
 as for [`retained_block`](@ref).
 """
-eliminated_block(::SchurBlockMatrix, ::Integer)
+eliminated_block(::SchurBlockHessian, ::Integer)
 
 """
-    coupling_block(H::SchurBlockMatrix, c[, rows, cols])
+    coupling_block(H::SchurBlockHessian, c[, rows, cols])
 
 Mutable view of the coupling block `C_er` (`d_e × d_r`, column-major in `H.C_data`) of coupling entry `c`
 (an index into `H.structure.entry_retained`; [`coupling_entry`](@ref)`(H.structure, e, r)` finds it).
 Sizes and errors as for [`retained_block`](@ref).
 """
-coupling_block(::SchurBlockMatrix, ::Integer)
+coupling_block(::SchurBlockHessian, ::Integer)
 
 """
     coupling_entry(structure::SchurStructure, e, r) -> Int

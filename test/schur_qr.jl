@@ -4,7 +4,7 @@ using Random, LinearAlgebra, SparseArrays, StaticArrays, Static, Test, BlockLine
 # first: its SchurTestProblem and dense/sparse_schur_matrix build the Hessian side) and against dense least squares.
 # The test problems come from schur_jacobian.jl.
 
-# The Hessian side: H = J'J and b = J'r as a SchurBlockMatrix (dense or sparse R), in element type T
+# The Hessian side: H = J'J and b = J'r as a SchurBlockHessian (dense or sparse R), in element type T
 function schur_matrix(p::QRTestProblem{T}, kind) where T
     J64 = Float64.(p.Jf)
     H = J64' * J64
@@ -15,11 +15,11 @@ function schur_matrix(p::QRTestProblem{T}, kind) where T
     Hs = kind === :dense ? dense_schur_matrix(sp) : sparse_schur_matrix(sp)
     R = Hs.R isa Matrix ? T.(Hs.R) :
         SparseBlockLinearSystem{T}(T.(Hs.R.data), Hs.R.indices, Hs.R.indicestransposed, Hs.R.rowblocksizes, Hs.R.columnblocksizes, Hs.R.m, Hs.R.n)
-    return SchurBlockMatrix(Hs.structure, R, T.(Hs.E_data), T.(Hs.C_data)), T.(b)
+    return SchurBlockHessian(Hs.structure, R, T.(Hs.E_data), T.(Hs.C_data)), T.(b)
 end
 
 # Existing Schur reduction: (S, g_S, ws, ok, pattern) with S including the retained damping
-function schur_reduced(Hs::SchurBlockMatrix{T}, b, sc, lambda) where T
+function schur_reduced(Hs::SchurBlockHessian{T}, b, sc, lambda) where T
     st = Hs.structure
     nr, n = st.nr, length(b)
     ws = SchurReductionWorkspace{T}(st, 1)

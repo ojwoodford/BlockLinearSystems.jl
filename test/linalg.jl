@@ -81,8 +81,8 @@ end
     n = length(p.b)
     H = sparse_schur_matrix(p)
     R32 = SparseBlockLinearSystem{Float32}(Float32.(H.R.data), H.R.indices, H.R.indicestransposed, H.R.rowblocksizes, H.R.columnblocksizes, H.R.m, H.R.n)
-    H32 = SchurBlockMatrix(H.structure, R32, Float32.(H.E_data), Float32.(H.C_data))
-    Hd32 = SchurBlockMatrix(H.structure, Float32.(dense_schur_matrix(p).R), Float32.(H.E_data), Float32.(H.C_data))
+    H32 = SchurBlockHessian(H.structure, R32, Float32.(H.E_data), Float32.(H.C_data))
+    Hd32 = SchurBlockHessian(H.structure, Float32.(dense_schur_matrix(p).R), Float32.(H.E_data), Float32.(H.C_data))
     x, y = randn(rng, n), randn(rng, n)
     for Hk in (H32, Hd32)
         @test @inferred(dot(x, Hk, y)) isa Float64

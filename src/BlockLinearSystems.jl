@@ -7,7 +7,7 @@ using Static, StaticArrays, HybridArrays, SparseArrays, LinearAlgebra
 export SparseBlockLinearSystem, DenseBlockLinearSystem, TransposedPattern, BlockRLE
 export block, blocksizes, nblocks, blockrange, zero!, copy_structure, uniformscaling!
 export symmetrifyfull, symmetrifyfull!, sparse_with_map, block_sparse_nnz, computestartindices, find_diag_inds
-export SchurStructure, SchurBlockMatrix, SchurReductionWorkspace, trial_workspace
+export SchurStructure, SchurBlockHessian, SchurReductionWorkspace, trial_workspace
 export sort_schur_blocks, build_schur_pattern, build_r_to_s_map, retained_block_pairs
 export reset_schur_dense!, reset_schur_sparse!, reduce_schur_dense!, reduce_schur_sparse!, backsubstitute!
 export retained_block, eliminated_block, coupling_block, coupling_entry

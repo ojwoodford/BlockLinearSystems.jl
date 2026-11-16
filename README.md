@@ -17,7 +17,7 @@ In nonlinear least squares (NLS), bundle adjustment (BA), and SLAM, optimization
 - **Contiguous Block Storage**: Each non-zero block $(i, j)$ is stored contiguously in column-major order in a flat buffer, making block accumulation a single contiguous memory write.
 - **Zero-Allocation Views**: Accessing blocks with static dimensions (`static(N)` or `Val(N)`) returns stack-allocated `SizedMatrix` or `HybridArray` views, enabling unrolled SIMD addition with StaticArrays (`.+=`).
 - **Zero-Allocation Solver Scatter**: In iterative solvers, `sparse_with_map` precomputes the CSC pattern and an integer scatter map once during setup. In each iteration, `copyto!(csc_mat, bsm, scatter_map)` updates the sparse solver matrix with **zero allocations**.
-- **Schur Complement Reduction**: `SchurStructure`, `SchurBlockMatrix` and the parallel `reduce_schur_dense!` / `reduce_schur_sparse!` kernels eliminate blocks (any dimension, 1–255) from bipartite systems, with dense or sparse reduced systems. `symmetrifyfull!(dest, bsm, blocks)` extracts principal block submatrices in-place.
+- **Schur Complement Reduction**: `SchurStructure`, `SchurBlockHessian` and the parallel `reduce_schur_dense!` / `reduce_schur_sparse!` kernels eliminate blocks (any dimension, 1–255) from bipartite systems, with dense or sparse reduced systems. `symmetrifyfull!(dest, bsm, blocks)` extracts principal block submatrices in-place.
 - **QR Elimination (Jacobian path)**: `SchurJacobianStructure`, `SchurBlockJacobian` and `reduce_qr!` eliminate the same blocks from a tall least-squares problem `min ‖J x − r‖²` by QR, without forming `JᵀJ`, so the elimination works at the condition number of `J` rather than its square.
 - **Thread-Local Clones**: `copy_structure(sys)` creates a lightweight thread-local accumulator sharing index structures, reduced after assembly via a fast BLAS vector addition (`sys.data .+= thread_sys.data`).
 
@@ -101,7 +101,7 @@ symmetrifyfull!(H_sub, bsm, [1, 2])
 ```julia
 st = SchurStructure([6, 6, 6], [3, 3, 3, 1], [[1, 2], [1, 2, 3], [2, 3], [3]])  # retained block dims, eliminated block dims, retained blocks coupled to each eliminated block
 ws = SchurReductionWorkspace{Float64}(st, 1)
-# ... fill R, E_data, C_data in a SchurBlockMatrix, then:
+# ... fill R, E_data, C_data in a SchurBlockHessian, then:
 reset_schur_dense!(S, R, scaling_r, lambda, ws)
 reduce_schur_dense!(S, g, b_r, b_e, scaling_e, lambda, st, E_data, C_data, ws)   # false if a block is singular
 # solve S x_r = g, then recover the eliminated variables:
@@ -141,6 +141,6 @@ reports it from the structure alone, before anything is allocated. See the
 
 Loading `BlockLinearSystems` together with [SecondOrderOptimization.jl](https://github.com/ojwoodford/SecondOrderOptimization.jl)
 activates an extension (defined in that package) with `DenseSchurLinearSystem` and `SparseSchurLinearSystem`.
-Passing a `SchurBlockMatrix` as the Hessian prototype selects elimination; there is no option to set.
+Passing a `SchurBlockHessian` as the Hessian prototype selects elimination; there is no option to set.
 Whether the reduced system is dense or sparse follows the storage of `R` (a `Matrix` or a `SparseBlockLinearSystem`),
 and `linsolver` names the solver applied to the reduced system (`:auto`, `:cholesky` or `:ldl`).
