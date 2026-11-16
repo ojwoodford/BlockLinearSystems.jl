@@ -74,9 +74,10 @@ using BlockLinearSystems: expand_block_perm   # internal names
     # Max coupled dimension across eliminated blocks
     max_coupled_dim = maximum(sum(Int(r_dims[r]) for r in couplings[e]) for e in 1:neblocks)
 
-    # Groups: eliminated blocks of dimension 3 (1:8) and 1 (9:10)
-    e_groups = [1:8, 9:10]
-    e_sizes = [3, 1]
+    # Runs of e_dims: eliminated blocks of dimension 3 (1:8) and 1 (9:10)
+    e_rle = BlockRLE(e_dims)
+    @test [BlockLinearSystems.runblockrange(e_rle, k) for k in 1:BlockLinearSystems.nruns(e_rle)] == [1:8, 9:10]
+    @test [BlockLinearSystems.runblocksize(e_rle, k) for k in 1:BlockLinearSystems.nruns(e_rle)] == [3, 1]
 
     # Pre-computed workload chunks for K=1 and K=4
     chunks_K1 = [[1:8], [9:10]]
@@ -87,16 +88,16 @@ using BlockLinearSystems: expand_block_perm   # internal names
 
     structure_K1 = BlockLinearSystems.SchurStructure(
         nr, nrblocks, neblocks,
-        r_dims, e_dims, boffsets_r, boffsets_e,
+        BlockRLE(r_dims), e_rle, boffsets_r, boffsets_e,
         eoffsets, eliminated_ptr, entry_retained, coffsets,
-        max_coupled_dim, e_groups, e_sizes, chunks_K1
+        max_coupled_dim, chunks_K1
     )
 
     structure_K4 = BlockLinearSystems.SchurStructure(
         nr, nrblocks, neblocks,
-        r_dims, e_dims, boffsets_r, boffsets_e,
+        BlockRLE(r_dims), e_rle, boffsets_r, boffsets_e,
         eoffsets, eliminated_ptr, entry_retained, coffsets,
-        max_coupled_dim, e_groups, e_sizes, chunks_K4
+        max_coupled_dim, chunks_K4
     )
 
     # --------------------------------------------------------------------------

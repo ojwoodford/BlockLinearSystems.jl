@@ -169,6 +169,8 @@ end
 nruns(rle::BlockRLE) = length(rle.runlengths)
 runlength(rle::BlockRLE, k::Integer) = rle.runlengths[k]
 runblocksize(rle::BlockRLE, k::Integer) = Int(rle.blocksizes[k])
+# Largest block size, from the runs
+max_run_blocksize(rle::BlockRLE; init::Int) = maximum(runblocksize(rle, k) for k in 1:nruns(rle); init)
 matrixdimension(rle::BlockRLE) = rle.cummatrixdims[end] - 1
 
 @inline function runblockrange(rle::BlockRLE, k::Integer)

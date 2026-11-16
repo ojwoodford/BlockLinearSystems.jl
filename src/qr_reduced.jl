@@ -97,9 +97,9 @@ function backsubstitute!(x_e::AbstractVector{T}, x_r::AbstractVector, ws::QRRedu
     jst = ws.structure
     st = jst.schur
     threaded = qr_threaded(jst, st.neblocks)
-    for (g_idx, e_range) in enumerate(st.e_groups)
+    for g_idx in 1:nruns(st.e_dims)
         chunks = st.chunks[g_idx]
-        dispatch_dim(st.e_sizes[g_idx]) do s_de
+        dispatch_dim(runblocksize(st.e_dims, g_idx)) do s_de
             foreach_index(length(chunks), threaded) do k
                 qr_backsubstitute_group!(x_e, x_r, ws.factored, jst, ws.scratch[k], chunks[k], s_de)
             end

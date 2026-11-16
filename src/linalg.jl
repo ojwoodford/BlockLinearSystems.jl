@@ -68,8 +68,9 @@ function schur_quadform(H::SchurBlockHessian{T}, dx::AbstractVector) where T
     # (`z`, a typed zero, is captured by the closure rather than the type `Tacc`: Julia 1.10 widens a captured
     # type to `DataType`, which made the result type inferred as `Any` and boxed it on every call.)
     z = zero(Tacc)
-    for (g_idx, e_range) in enumerate(structure.e_groups)
-        total += dispatch_dim(structure.e_sizes[g_idx]) do s_de
+    for g_idx in 1:nruns(structure.e_dims)
+        e_range = runblockrange(structure.e_dims, g_idx)
+        total += dispatch_dim(runblocksize(structure.e_dims, g_idx)) do s_de
             schur_quadform_eliminated(H, dx_r, dx_e, e_range, s_de, z)
         end
     end
@@ -194,8 +195,9 @@ function schur_bilinear(H::SchurBlockHessian{T}, x::AbstractVector, y::AbstractV
     # 2. The coupling terms x_e' C y_r + y_e' C x_r and 3. x_e' E y_e, per group of eliminated blocks of uniform
     # dimension (`z` is captured rather than `Tacc`; see `schur_quadform`)
     z = zero(Tacc)
-    for (g_idx, e_range) in enumerate(structure.e_groups)
-        total += dispatch_dim(structure.e_sizes[g_idx]) do s_de
+    for g_idx in 1:nruns(structure.e_dims)
+        e_range = runblockrange(structure.e_dims, g_idx)
+        total += dispatch_dim(runblocksize(structure.e_dims, g_idx)) do s_de
             schur_bilinear_eliminated(H, x_r, x_e, y_r, y_e, e_range, s_de, z)
         end
     end

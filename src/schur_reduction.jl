@@ -51,7 +51,7 @@ function SchurReductionWorkspace{T}(
     structure::SchurStructure, nchunks::Int;
     is_dense::Bool=true, nnz_S::Int=0   # accepted for compatibility: no per-chunk copies of S are needed any more
 ) where T
-    max_De = maximum(structure.e_sizes; init=3)
+    max_De = max_run_blocksize(structure.e_dims; init=3)
 
     # One scratch matrix per phase-1 chunk, only used for blocks above D_STATIC
     nscratch = max(nchunks, maximum(length, structure.chunks; init=1))
@@ -399,10 +399,10 @@ function factor_all_eliminated!(
     structure::SchurStructure, E_data::Vector{T}, C_data::Vector{T}, b_e::AbstractVector{T},
     scaling_e::AbstractVector{T}, lambda::T, ws::SchurReductionWorkspace{T}
 ) where T
-    for (g_idx, e_range) in enumerate(structure.e_groups)
+    for g_idx in 1:nruns(structure.e_dims)
         chunks = structure.chunks[g_idx]
         threaded = use_threads(length(chunks), length(structure.entry_retained))
-        dispatch_dim(structure.e_sizes[g_idx]) do s_de
+        dispatch_dim(runblocksize(structure.e_dims, g_idx)) do s_de
             foreach_index(length(chunks), threaded) do k
                 factor_eliminated_group!(ws.E_inv_data, ws.z_data, ws.W_data, ws.W_scratch[k], ws.failed_block,
                                         structure, E_data, C_data, b_e, scaling_e, lambda, chunks[k], s_de)
@@ -472,8 +472,8 @@ function backsubstitute!(
 ) where T
     E_inv_data, z_data, scratch = ws.E_inv_data, ws.z_data, ws.W_scratch
     threaded = use_threads(structure.neblocks, length(structure.entry_retained))
-    for (g_idx, e_range) in enumerate(structure.e_groups)
-        de = structure.e_sizes[g_idx]
+    for g_idx in 1:nruns(structure.e_dims)
+        de = runblocksize(structure.e_dims, g_idx)
         chunks = structure.chunks[g_idx]
         # Function barrier on the (static) block dimension
         dispatch_dim(de) do s_de

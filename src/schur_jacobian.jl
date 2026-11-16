@@ -20,7 +20,7 @@ using Static, StaticArrays, SparseArrays, LinearAlgebra
 # SchurJacobianStructure(r_dims, e_dims, couplings, e_rows; free_rows, free_retained, nchunks=1)
 # Layout of a tall (Jacobian) least-squares problem partitioned like `structure`.
 struct SchurJacobianStructure
-    schur::SchurStructure            # Partition, block offsets, couplings, e_groups and chunks
+    schur::SchurStructure            # Partition, block offsets, couplings and chunks
     e_rows::Vector{Int}              # Number of residual rows m_e of each eliminated block's table
     free_rows::Vector{Int}           # Number of rows of each free group
     ntables::Int                     # neblocks + number of free groups; table t <= neblocks is eliminated block t
@@ -280,7 +280,7 @@ end
 
 # Element data of the workspace: a factored copy of the tables, and per-chunk scratch for blocks above D_STATIC
 qr_nscratch(jst::SchurJacobianStructure) = maximum(length, jst.schur.chunks; init=1)
-qr_scratch_length(jst::SchurJacobianStructure) = (d = maximum(jst.schur.e_sizes; init=0); d > D_STATIC ? d : 0)
+qr_scratch_length(jst::SchurJacobianStructure) = (d = max_run_blocksize(jst.schur.e_dims; init=0); d > D_STATIC ? d : 0)
 
 # schur_jacobian_bytes(structure::SchurJacobianStructure, T=Float64; workspace=true) -> Int
 # Bytes of element data allocated by a `SchurBlockJacobian{T}` (and its `QRReductionWorkspace{T}`).

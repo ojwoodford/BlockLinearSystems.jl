@@ -372,6 +372,41 @@ end
 # Measured inside a function: @allocated at a testset's top level counts spurious boxing on Julia 1.10
 allocs_dot(x, H, y) = @allocated dot(x, H, y)
 
+# The grouping SchurStructure built by hand before R10: maximal ranges of adjacent eliminated blocks of one dimension
+function old_e_groups(e_dims)
+    groups, sizes = UnitRange{Int}[], Int[]
+    for (e, d) in enumerate(e_dims)
+        if !isempty(sizes) && sizes[end] == d
+            groups[end] = first(groups[end]):e
+        else
+            push!(groups, e:e)
+            push!(sizes, d)
+        end
+    end
+    return groups, sizes
+end
+
+@testset "SchurStructure holds its block sizes as BlockRLEs; the runs of e_dims are the old groups (R10)" begin
+    for (e_dims, nchunks) in (([3, 3, 9, 9, 9, 1, 3], 1), ([3, 3, 9, 9, 9, 1, 3], 3), (Int[], 2), ([12], 4))
+        st = SchurStructure([6, 3, 6], e_dims, [[1 + (e % 3)] for e in eachindex(e_dims)]; nchunks)
+        @test st.r_dims isa BlockRLE{UInt16, Int} && st.e_dims isa BlockRLE{UInt16, Int}
+        @test st.r_dims == [6, 3, 6] && st.e_dims == e_dims
+        groups, sizes = old_e_groups(e_dims)
+        runs = BlockLinearSystems.nruns(st.e_dims)
+        @test [BlockLinearSystems.runblockrange(st.e_dims, k) for k in 1:runs] == groups
+        @test [BlockLinearSystems.runblocksize(st.e_dims, k) for k in 1:runs] == sizes
+        # chunks is indexed by run, and each run's chunks cover it
+        @test length(st.chunks) == runs
+        @test all(reduce(vcat, collect.(st.chunks[k])) == collect(groups[k]) for k in 1:runs)
+        @test st.boffsets_r == [1, 7, 10] && st.boffsets_e == cumsum([1; e_dims])[1:end-1]
+        @test !hasfield(SchurStructure, :e_groups) && !hasfield(SchurStructure, :e_sizes)
+    end
+    # The dimension errors come from BlockRLE, in its generic wording
+    msg(f) = try f(); "no error" catch e; e isa ArgumentError ? e.msg : string(typeof(e)) end
+    @test msg(() -> SchurStructure([6, 0], [3], [[1]])) == "Block 2 has dimension 0; dimensions must be between 1 and 65535"
+    @test msg(() -> SchurStructure([6], [3, 65536], [[1], [1]])) == "Block 2 has dimension 65536; dimensions must be between 1 and 65535"
+end
+
 @testset "SchurStructure validates its inputs (B13)" begin
     ok = SchurStructure([6, 6], [3, 3], [[1, 2], [2]])
     @test ok.neblocks == 2

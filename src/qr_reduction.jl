@@ -152,10 +152,10 @@ function reduce_qr!(ws::QRReductionWorkspace{T}, J::SchurBlockJacobian{T}, scali
     length(scaling_e) == sum(Int, st.e_dims; init=0) || throw(DimensionMismatch("scaling_e has length $(length(scaling_e)), expected $(sum(Int, st.e_dims; init=0))"))
     ws.failed_block[] = 0
     F, Rw = ws.factored, J.data
-    for (g_idx, e_range) in enumerate(st.e_groups)
+    for g_idx in 1:nruns(st.e_dims)
         chunks = st.chunks[g_idx]
         threaded = qr_threaded(jst, length(chunks))
-        dispatch_dim(st.e_sizes[g_idx]) do s_de
+        dispatch_dim(runblocksize(st.e_dims, g_idx)) do s_de
             foreach_index(length(chunks), threaded) do k
                 qr_group!(F, Rw, ws.failed_block, jst, scaling_e, lambda, chunks[k], s_de)
             end

@@ -614,7 +614,7 @@ rows), which catches under-determined (`e_rows[e] < d_e`), rank-deficient and ze
 for the Schur reduction. Free tables are copied, not checked.
 
 Statically sized in the eliminated dimension (unrolled over the columns) up to
-`BlockLinearSystems.D_STATIC`, dynamic above, through the `e_groups` and `chunks` of the structure.
+`BlockLinearSystems.D_STATIC`, dynamic above, over the runs of the structure's `e_dims` and their `chunks`.
 Threaded over the chunks of eliminated blocks when Polyester is loaded and there is enough work
 (`BlockLinearSystems.SCHUR_THREAD_MIN_WORK`), serial otherwise; tables are independent, so there is no
 merge step. The raw tables are untouched, so calling it again with another `lambda` re-factors from them.
