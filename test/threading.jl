@@ -85,7 +85,7 @@ end
             n = length(p.b)
             b, sc = p.b, abs.(diag(p.H))
             lambda = 0.3
-            for make in (dense_schur_matrix, sparse_schur_matrix)
+            for make in (dense_schur_hessian, sparse_schur_hessian)
                 H = make(p; nchunks=nt)
                 st = H.structure
                 nr = st.nr

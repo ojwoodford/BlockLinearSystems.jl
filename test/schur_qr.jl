@@ -1,18 +1,18 @@
 using Random, LinearAlgebra, SparseArrays, StaticArrays, Static, Test, BlockLinearSystems
 
 # QR elimination on the Jacobian path, tested against the Schur reduction (schur_problems.jl must be included
-# first: its SchurTestProblem and dense/sparse_schur_matrix build the Hessian side) and against dense least squares.
+# first: its SchurTestProblem and dense/sparse_schur_hessian build the Hessian side) and against dense least squares.
 # The test problems come from schur_jacobian.jl.
 
 # The Hessian side: H = J'J and b = J'r as a SchurBlockHessian (dense or sparse R), in element type T
-function schur_matrix(p::QRTestProblem{T}, kind) where T
+function schur_hessian(p::QRTestProblem{T}, kind) where T
     J64 = Float64.(p.Jf)
     H = J64' * J64
     b = J64' * Float64.(p.rf)
     jst = p.J.structure
     rr = [(r2, r1) for (r1, r2) in free_block_pairs(jst)]   # lower-triangle block coordinates
     sp = SchurTestProblem(H, b, p.r_dims, p.e_dims, p.couplings, rr)
-    Hs = kind === :dense ? dense_schur_matrix(sp) : sparse_schur_matrix(sp)
+    Hs = kind === :dense ? dense_schur_hessian(sp) : sparse_schur_hessian(sp)
     R = Hs.R isa Matrix ? T.(Hs.R) :
         SparseBlockLinearSystem{T}(T.(Hs.R.data), Hs.R.indices, Hs.R.indicestransposed, Hs.R.rowblocksizes, Hs.R.columnblocksizes, Hs.R.m, Hs.R.n)
     return SchurBlockHessian(Hs.structure, R, T.(Hs.E_data), T.(Hs.C_data)), T.(b)
@@ -79,7 +79,7 @@ qr_rtol(::Type{Float32}) = 2e-3
                 st = jst.schur
                 nr, n = st.nr, size(p.Jf, 2)
                 sc = qr_scaling(p, rng)
-                Hs, b = schur_matrix(p, kind)
+                Hs, b = schur_hessian(p, kind)
                 S_ref, g_ref, sws, ok_ref, pattern = schur_reduced(Hs, b, sc, lambda)
                 @test ok_ref
 
@@ -171,7 +171,7 @@ end
     err_qr = relerr(x_qr, x_true)
     # The Schur route: the reduction itself succeeds (every E_e is well conditioned), but S has lost its
     # positive definiteness to rounding, so Cholesky fails; solve it with Bunch-Kaufman instead to get a number
-    Hs, b = schur_matrix(p, :dense)
+    Hs, b = schur_hessian(p, :dense)
     nr = Hs.structure.nr
     S, g, sws, ok_s, _ = schur_reduced(Hs, b, ones(n), 0.0)
     @test ok_s
@@ -444,7 +444,7 @@ end
         @test ok
         A = [Float64.(p.Jf); Diagonal(sqrt.(0.2 .* Float64.(sc)))]
         @test relerr(x, dense_ls(p, sc, 0.2)) <= 50 * cond(A) * eps(T)
-        Hs, b = schur_matrix(p, :dense)
+        Hs, b = schur_hessian(p, :dense)
         S_ref, g_ref, _, ok_ref, _ = schur_reduced(Hs, b, sc, 0.2)
         S, g = zeros(T, 12, 12), zeros(T, 12)
         reduced_normal_dense!(S, g, ws)

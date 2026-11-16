@@ -4,7 +4,7 @@
         dx = randn(Random.Xoshiro(5), n)
         expected = dot(dx, p.H * dx)
         for kind in (:dense, :sparse)
-            H = kind === :dense ? dense_schur_matrix(p) : sparse_schur_matrix(p)
+            H = kind === :dense ? dense_schur_hessian(p) : sparse_schur_hessian(p)
             @test dot(dx, H, dx) ≈ expected rtol = 1e-12
             # Type stable (a captured `Type` was once widened to DataType on Julia 1.10, which made the
             # result `Any` and boxed it on every call) and allocation free, for both kinds of R
@@ -22,7 +22,7 @@ end
         n = length(p.b)
         dx = randn(Random.Xoshiro(8), n)
         expected = dot(dx, p.H * dx)
-        for make in (dense_schur_matrix, sparse_schur_matrix)
+        for make in (dense_schur_hessian, sparse_schur_hessian)
             H = make(p)
             @test dot(dx, H, dx) ≈ expected rtol = 1e-12
             vdx = view(dx, 1:n)
@@ -42,7 +42,7 @@ end
     @test any(<=(BlockLinearSystems.D_STATIC), mixed_dims_problem().e_dims)
     for p in (standard_problem(), coupled_groups_problem(), mixed_dims_problem())
         n = length(p.b)
-        for make in (dense_schur_matrix, sparse_schur_matrix)
+        for make in (dense_schur_hessian, sparse_schur_hessian)
             H = make(p)
             x, y = randn(rng, n), randn(rng, n)
             tol = 1e-12 * opnorm(p.H) * norm(x) * norm(y)
@@ -79,10 +79,10 @@ end
     # A Float32 H with Float64 vectors promotes too
     p = mixed_dims_problem()
     n = length(p.b)
-    H = sparse_schur_matrix(p)
+    H = sparse_schur_hessian(p)
     R32 = SparseBlockLinearSystem{Float32}(Float32.(H.R.data), H.R.indices, H.R.indicestransposed, H.R.rowblocksizes, H.R.columnblocksizes, H.R.m, H.R.n)
     H32 = SchurBlockHessian(H.structure, R32, Float32.(H.E_data), Float32.(H.C_data))
-    Hd32 = SchurBlockHessian(H.structure, Float32.(dense_schur_matrix(p).R), Float32.(H.E_data), Float32.(H.C_data))
+    Hd32 = SchurBlockHessian(H.structure, Float32.(dense_schur_hessian(p).R), Float32.(H.E_data), Float32.(H.C_data))
     x, y = randn(rng, n), randn(rng, n)
     for Hk in (H32, Hd32)
         @test @inferred(dot(x, Hk, y)) isa Float64

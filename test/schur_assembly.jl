@@ -34,7 +34,7 @@ allocs_sab_static(H, e, c) = @allocated sab_static(H, e, c)
 allocs_sab_dynamic(H, e, c) = @allocated sab_dynamic(H, e, c)
 
 @testset "Assembly views into SchurBlockHessian storage (E5)" begin
-    for p in (standard_problem(), coupled_groups_problem(), mixed_dims_problem()), make in (dense_schur_matrix, sparse_schur_matrix)
+    for p in (standard_problem(), coupled_groups_problem(), mixed_dims_problem()), make in (dense_schur_hessian, sparse_schur_hessian)
         H = make(p)
         st = H.structure
         Hv = fill_through_views!(copy_structure(H), p)
@@ -66,7 +66,7 @@ allocs_sab_dynamic(H, e, c) = @allocated sab_dynamic(H, e, c)
     end
     # Static sizes give statically sized views; all forms are type stable and do not allocate
     p = standard_problem()
-    for make in (dense_schur_matrix, sparse_schur_matrix)
+    for make in (dense_schur_hessian, sparse_schur_hessian)
         H = make(p)
         st = H.structure
         e, c = 1, 1                                   # eliminated block 1 is 3-dimensional, coupled to retained block 1 (6)
