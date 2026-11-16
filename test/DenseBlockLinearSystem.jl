@@ -164,7 +164,7 @@ end
     # Unsorted, repeated and oversized offsets give an ArgumentError (not an InexactError)
     @test_throws ArgumentError DenseBlockLinearSystem{Float64}(BlockOffsets([1, 3, 2]))
     @test_throws ArgumentError DenseBlockLinearSystem{Float64}(BlockOffsets([1, 3, 3]))
-    @test_throws ArgumentError DenseBlockLinearSystem{Float64}(BlockOffsets([1, 400]))
+    @test_throws ArgumentError DenseBlockLinearSystem{Float64}(BlockOffsets([1, 65537]))
     @test_throws ArgumentError DenseBlockLinearSystem{Float64}(BlockOffsets([1, 3, 7]), BlockOffsets([1, 2, 2]))
     @test_throws ArgumentError DenseBlockLinearSystem(zeros(5, 5), BlockOffsets([1, 4, 3, 6]))
     err = try DenseBlockLinearSystem{Float64}(BlockOffsets([1, 3, 2])); nothing catch e; e end

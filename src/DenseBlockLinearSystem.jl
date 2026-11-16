@@ -12,18 +12,18 @@ struct DenseBlockLinearSystem{T, M<:AbstractMatrix{T}}
     data::M
     rowblockoffsets::Vector{Int}
     columnblockoffsets::Vector{Int}
-    rowblocksizes::BlockRLE{UInt8, Int}
-    columnblocksizes::BlockRLE{UInt8, Int}
+    rowblocksizes::BlockRLE{BlockSize, Int}
+    columnblocksizes::BlockRLE{BlockSize, Int}
 
-    function DenseBlockLinearSystem{T, M}(data::M, rowblocksizes::BlockRLE{UInt8, Int}, colblocksizes::BlockRLE{UInt8, Int}=rowblocksizes) where {T, M<:AbstractMatrix{T}}
-        # Block sizes are already validated (1-255) by the BlockRLE constructor
+    function DenseBlockLinearSystem{T, M}(data::M, rowblocksizes::BlockRLE{BlockSize, Int}, colblocksizes::BlockRLE{BlockSize, Int}=rowblocksizes) where {T, M<:AbstractMatrix{T}}
+        # Block sizes are already validated (1 to MAX_BLOCK_DIM) by the BlockRLE constructor
         r_offsets = blockoffsets(rowblocksizes)
         c_offsets = rowblocksizes === colblocksizes ? r_offsets : blockoffsets(colblocksizes)
         size(data) == (r_offsets[end]-1, c_offsets[end]-1) || throw(DimensionMismatch("Matrix size $(size(data)) does not match block sizes ($(r_offsets[end]-1), $(c_offsets[end]-1))"))
         return new{T, M}(data, r_offsets, c_offsets, rowblocksizes, colblocksizes)
     end
 
-    function DenseBlockLinearSystem{T, M}(data::M, rowblockoffsets::Vector{Int}, columnblockoffsets::Vector{Int}, rbs::BlockRLE{UInt8, Int}, cbs::BlockRLE{UInt8, Int}) where {T, M<:AbstractMatrix{T}}
+    function DenseBlockLinearSystem{T, M}(data::M, rowblockoffsets::Vector{Int}, columnblockoffsets::Vector{Int}, rbs::BlockRLE{BlockSize, Int}, cbs::BlockRLE{BlockSize, Int}) where {T, M<:AbstractMatrix{T}}
         return new{T, M}(data, rowblockoffsets, columnblockoffsets, rbs, cbs)
     end
 end

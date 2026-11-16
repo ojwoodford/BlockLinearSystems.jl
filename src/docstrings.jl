@@ -10,8 +10,8 @@ The block sparsity pattern is provided transposed (`sparsitytransposed` has size
 - `data::Vector{T}`: Contiguous storage for all non-zero block entries.
 - `indices::SparseMatrixCSC{Int, Int}`: Cached start indices in `data` for each block `(row, col)`.
 - `indicestransposed::SparseMatrixCSC{Int, Int}`: Transposed start indices in `data` (`indicestransposed[col, row]`).
-- `rowblocksizes::Vector{UInt8}`: Row dimensions of each block row.
-- `columnblocksizes::Vector{UInt8}`: Column dimensions of each block column.
+- `rowblocksizes::BlockRLE`: Row dimensions of each block row (1 to 65535).
+- `columnblocksizes::BlockRLE`: Column dimensions of each block column (1 to 65535).
 - `m::Int`: Total number of scalar rows.
 - `n::Int`: Total number of scalar columns.
 
@@ -200,8 +200,8 @@ S = sparse(bsm, idx_csc)
 makesparseindices
 
 """
-    blocksizes(sys, dim) -> Vector{UInt8}
-    blocksizes(sys) -> Tuple{Vector{UInt8}, Vector{UInt8}}
+    blocksizes(sys, dim) -> BlockRLE
+    blocksizes(sys) -> Tuple{BlockRLE, BlockRLE}
 
 Returns the block dimensions along dimension `dim` (1 for rows, 2 for columns), or a tuple of `(rowblocksizes, columnblocksizes)`.
 
@@ -333,12 +333,16 @@ sparse_with_map
     BlockRLE(vec::AbstractVector{<:Integer})
 
 Run-Length Encoded (RLE) block layout metadata capturing contiguous runs of uniform block sizes.
-Subtypes `AbstractVector{Int}` (storing the sizes compactly, normally as `UInt8`, but always returning `Int`) for transparent interop with all linear systems while providing
+Subtypes `AbstractVector{Int}` (storing the sizes compactly, as `UInt16` by default, but always returning `Int`) for transparent interop with all linear systems while providing
 \$O(1)\$ matrix dimension lookup, \$O(1)\$ run indexing, and \$O(\\log R)\$ block-to-coordinate mapping.
+
+Block dimensions must be between 1 and 65535 (for a `BlockRLE{T}` with another storage type, 1 and `typemax(T)`).
+Any other size is an `ArgumentError` that names the block, or the run for run-length input; zero-length runs are
+skipped without their size being checked.
 
 # Fields
 - `runlengths::Vector{Int}`: Number of blocks in each run.
-- `blocksizes::Vector{UInt8}`: Block dimension in each run.
+- `blocksizes::Vector{T}`: Block dimension in each run, stored as `T` (`UInt16` by default).
 - `cumblocks::Vector{Int}`: 1-based start block index for each run, terminated by `total_blocks + 1`.
 - `cummatrixdims::Vector{Int}`: 1-based start scalar matrix coordinate for each run, terminated by `total_dimension + 1`.
 
@@ -408,7 +412,7 @@ eachrun
 Index range of a block of `len` entries starting at index `first`. A `StaticInt` `len` gives a statically
 sized range; any other integer `len` gives a plain `UnitRange{Int}`, so views built with it are type stable
 and allocation free even when the size is only known at run time. Integer sizes of any type (including
-the `UInt8` sizes stored by `BlockRLE`) are widened to `Int` before use.
+the `UInt16` sizes stored by `BlockRLE`) are widened to `Int` before use.
 """
 blockrange
 

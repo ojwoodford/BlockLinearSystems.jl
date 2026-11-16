@@ -132,6 +132,20 @@ end
     end
 end
 
+@testset "QR elimination with a retained and an eliminated block above 255 (R9)" begin
+    rng = Random.Xoshiro(255)
+    p = QRTestProblem("above 255", rng, Float64, [6, 260], [300, 3], [[1, 2], [2]], [600, 10])
+    @test maximum(p.J.structure.schur.e_dims) == 300 && maximum(p.J.structure.schur.r_dims) == 260
+    for lambda in (0.0, 0.3)
+        n = size(p.Jf, 2)
+        sc = lambda == 0 ? ones(n) : qr_scaling(p, rng)
+        x, ok, _ = qr_solve(p, sc, lambda)
+        @test ok
+        A = [p.Jf; Diagonal(sqrt.(lambda .* sc))]
+        @test relerr(x, dense_ls(p, sc, lambda)) <= 50 * cond(A) * eps()
+    end
+end
+
 # Near-dependence between a retained and an eliminated column: retained block 3 is coupled only to eliminated
 # block 5, and its first column is that block's first column plus 1e-8 noise. cond(J) is then about 1e8: S has
 # condition about 1e16, and the Schur route loses everything that the QR route keeps.

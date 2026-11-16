@@ -120,8 +120,8 @@ end
     test_block_alloc(b) # warmup
     @test (@allocated test_block_alloc(b)) == 0
 
-    # Block dimensions limit (> 255)
-    @test_throws ArgumentError SparseBlockLinearSystem{Float64}(sparse([true;;]), [300], [300])
+    # Block dimensions limit (> 65535)
+    @test_throws ArgumentError SparseBlockLinearSystem{Float64}(sparse([true;;]), [65536], [65536])
 
     # Symmetric lower-triangular BSM tests
     out2 = [0  0  0   0   0   0 ;

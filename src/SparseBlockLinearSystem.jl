@@ -15,13 +15,13 @@ struct SparseBlockLinearSystem{T}
     data::Vector{T}                                             # Storage for all the matrix data
     indices::SparseArrays.SparseMatrixCSC{Int, Int}             # Start indices for each block matrix
     indicestransposed::SparseArrays.SparseMatrixCSC{Int, Int}   # Start indices for each block matrix, stored transposed
-    rowblocksizes::BlockRLE{UInt8, Int}                         # Number of rows for each block of rows
-    columnblocksizes::BlockRLE{UInt8, Int}                      # Number of columns for each block of columns
+    rowblocksizes::BlockRLE{BlockSize, Int}                         # Number of rows for each block of rows
+    columnblocksizes::BlockRLE{BlockSize, Int}                      # Number of columns for each block of columns
     m::Int                                                      # Number of rows of the represented matrix
     n::Int                                                      # Number of columns of the represented matrix
 
-    function SparseBlockLinearSystem{T}(nnzvals::Integer, indicestransposed::SparseArrays.SparseMatrixCSC{Int, Int}, rowblocksizes::BlockRLE{UInt8, Int}, colblocksizes::BlockRLE{UInt8, Int}=rowblocksizes) where T
-        # Block sizes are already validated (1-255) by the BlockRLE constructor
+    function SparseBlockLinearSystem{T}(nnzvals::Integer, indicestransposed::SparseArrays.SparseMatrixCSC{Int, Int}, rowblocksizes::BlockRLE{BlockSize, Int}, colblocksizes::BlockRLE{BlockSize, Int}=rowblocksizes) where T
+        # Block sizes are already validated (1 to MAX_BLOCK_DIM) by the BlockRLE constructor
         sumrbs = Int(sum(rowblocksizes))
         sumcbs = rowblocksizes === colblocksizes ? sumrbs : Int(sum(colblocksizes))
         size(indicestransposed) == (length(colblocksizes), length(rowblocksizes)) || throw(DimensionMismatch("Size of indicestransposed must be ($(length(colblocksizes)), $(length(rowblocksizes))), got $(size(indicestransposed))"))
@@ -30,7 +30,7 @@ struct SparseBlockLinearSystem{T}
         return new{T}(zeros(T, nnzvals), indices, it, rowblocksizes, colblocksizes, sumrbs, sumcbs)
     end
 
-    function SparseBlockLinearSystem{T}(data::Vector{T}, indices::SparseArrays.SparseMatrixCSC{Int, Int}, indicestransposed::SparseArrays.SparseMatrixCSC{Int, Int}, rowblocksizes::BlockRLE{UInt8, Int}, colblocksizes::BlockRLE{UInt8, Int}, m::Integer, n::Integer) where T
+    function SparseBlockLinearSystem{T}(data::Vector{T}, indices::SparseArrays.SparseMatrixCSC{Int, Int}, indicestransposed::SparseArrays.SparseMatrixCSC{Int, Int}, rowblocksizes::BlockRLE{BlockSize, Int}, colblocksizes::BlockRLE{BlockSize, Int}, m::Integer, n::Integer) where T
         return new{T}(data, indices, indicestransposed, rowblocksizes, colblocksizes, Int(m), Int(n))
     end
 end

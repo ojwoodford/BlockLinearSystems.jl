@@ -7,8 +7,8 @@ struct SchurStructure
     nr::Int                          # Total scalar dimension of retained variables
     nrblocks::Int                    # Number of retained blocks
     neblocks::Int                    # Number of eliminated blocks
-    r_dims::Vector{UInt8}            # Dimension of each retained block
-    e_dims::Vector{UInt8}            # Dimension of each eliminated block
+    r_dims::Vector{BlockSize}        # Dimension of each retained block
+    e_dims::Vector{BlockSize}        # Dimension of each eliminated block
     boffsets_r::Vector{Int}          # Scalar start index of each retained block in x_r
     boffsets_e::Vector{Int}          # Scalar start index of each eliminated block in x_e
     eoffsets::Vector{Int}           # Start offset in flat E_data for each E_e block
@@ -22,7 +22,7 @@ struct SchurStructure
 end
 
 # Largest supported dimension of an eliminated block
-const MAX_ELIMINATED_DIM = 255
+const MAX_ELIMINATED_DIM = MAX_BLOCK_DIM
 
 function SchurStructure(
     r_dims::AbstractVector{<:Integer},
@@ -37,7 +37,7 @@ function SchurStructure(
 
     # Validate inputs here, rather than failing (or silently going wrong) deep inside the reduction
     for (i, d) in enumerate(r_dims)
-        1 <= d <= 255 || throw(ArgumentError("Retained block $i has dimension $d; dimensions must be between 1 and 255"))
+        1 <= d <= MAX_BLOCK_DIM || throw(ArgumentError("Retained block $i has dimension $d; dimensions must be between 1 and $MAX_BLOCK_DIM"))
     end
     for (e, d) in enumerate(e_dims)
         1 <= d <= MAX_ELIMINATED_DIM || throw(ArgumentError("Eliminated block $e has dimension $d; supported dimensions are 1 to $MAX_ELIMINATED_DIM"))
@@ -51,8 +51,8 @@ function SchurStructure(
         end
     end
 
-    r_dims_u8 = UInt8.(r_dims)
-    e_dims_u8 = UInt8.(e_dims)
+    r_dims_u8 = BlockSize.(r_dims)
+    e_dims_u8 = BlockSize.(e_dims)
 
     nr = sum(Int, r_dims; init=0)
 

@@ -1,9 +1,9 @@
-using BlockLinearSystems
+using BlockLinearSystems, SparseArrays, Test
 using BlockLinearSystems: eachrun, matrixdimension, nruns, runblockrange, runblocksize, runlength, runmatrixrange   # internal names
 @testset "BlockRLE" begin
     # Construction from run lengths and block sizes
     rle = BlockRLE([10, 50], [6, 3])
-    @test rle isa BlockRLE{UInt8, Int}
+    @test rle isa BlockRLE{BlockLinearSystems.BlockSize, Int} && BlockLinearSystems.BlockSize === UInt16
     @test length(rle) == 60
     @test size(rle) == (60,)
     @test nruns(rle) == 2
@@ -97,7 +97,7 @@ using BlockLinearSystems: eachrun, matrixdimension, nruns, runblockrange, runblo
 
     # Invalid arguments
     @test_throws ArgumentError BlockRLE([1], [0])
-    @test_throws ArgumentError BlockRLE([1], [256])
+    @test_throws ArgumentError BlockRLE([1], [65536])
     @test_throws ArgumentError BlockRLE([-1], [3])
     @test_throws DimensionMismatch BlockRLE([1, 2], [3])
 
@@ -130,11 +130,12 @@ using BlockLinearSystems: eachrun, matrixdimension, nruns, runblockrange, runblo
 
     # Conversions and constructors
     @test BlockRLE(rle) === rle
-    @test BlockRLE{UInt8}(rle) === rle
-    @test BlockRLE{UInt8, Int}(rle) === rle
-    rle_i32 = BlockRLE{UInt8, Int32}(rle)
-    @test rle_i32 isa BlockRLE{UInt8, Int32}
-    @test BlockRLE{UInt8, Int}(rle_i32) isa BlockRLE{UInt8, Int}
+    @test BlockRLE{UInt16}(rle) === rle
+    @test BlockRLE{UInt16, Int}(rle) === rle
+    rle_i32 = BlockRLE{UInt16, Int32}(rle)
+    @test rle_i32 isa BlockRLE{UInt16, Int32}
+    @test BlockRLE{UInt16, Int}(rle_i32) isa BlockRLE{UInt16, Int}
+    @test BlockRLE{UInt8}(rle) isa BlockRLE{UInt8, Int} && BlockRLE{UInt8}(rle) == rle
     rle_int = BlockRLE{Int}(rle)
     @test rle_int isa BlockRLE{Int, Int}
     @test rle_int.blocksizes == [6, 3]
@@ -143,8 +144,9 @@ using BlockLinearSystems: eachrun, matrixdimension, nruns, runblockrange, runblo
     @test convert(Vector{Int}, rle) == Vector{Int}(collect(rle))
     @test convert(Vector{Float64}, rle) == Vector{Float64}(collect(rle))
     @test BlockLinearSystems.as_block_rle(rle) === rle
-    @test BlockLinearSystems.as_block_rle(rle_i32) isa BlockRLE{UInt8, Int}
-    @test BlockLinearSystems.as_block_rle(rle_int) isa BlockRLE{UInt8, Int}
+    @test BlockLinearSystems.as_block_rle(rle_i32) isa BlockRLE{UInt16, Int}
+    @test BlockLinearSystems.as_block_rle(rle_int) isa BlockRLE{UInt16, Int}
+    @test BlockLinearSystems.as_block_rle(BlockRLE{UInt8}([3, 3])) isa BlockRLE{UInt16, Int}
 end
 
 @testset "BlockRLE size accessors return Int (B7)" begin
@@ -169,7 +171,7 @@ end
     @test length(BlockRLE([0], [1000])) == 0
     # Non-empty runs are still validated, as are lengths
     @test_throws ArgumentError BlockRLE([1], [0])
-    @test_throws ArgumentError BlockRLE([2, 1], [4, 300])
+    @test_throws ArgumentError BlockRLE([2, 1], [4, 65536])
     @test_throws DimensionMismatch BlockRLE([1, 2], [4])
     @test_throws ArgumentError BlockRLE([-1], [4])
 end
@@ -192,7 +194,6 @@ end
     for d in (0, over)
         # Flat vectors name the block
         @test argerror_message(() -> BlockRLE([3, 3, d, 2])) == blockmsg(3, d)
-        @test argerror_message(() -> BlockRLE{UInt8}([3, d])) == blockmsg(2, d)
         @test argerror_message(() -> BlockLinearSystems.as_block_rle([d])) == blockmsg(1, d)
         @test argerror_message(() -> DenseBlockLinearSystem{Float64}([2, d])) == blockmsg(2, d)
         @test argerror_message(() -> DenseBlockLinearSystem{Float64}([2, 2], [d, 2])) == blockmsg(1, d)
@@ -200,8 +201,8 @@ end
         @test argerror_message(() -> SparseBlockLinearSystem{Float64}(sparse([true;;]), [d])) == blockmsg(1, d)
         # Run-length forms name the run, counting the runs as the caller passed them
         @test argerror_message(() -> BlockRLE([2, 1], [3, d])) == runmsg(2, d)
-        @test argerror_message(() -> BlockRLE{UInt8}([2, 0, 1], [3, 5, d])) == runmsg(3, d)
-        @test argerror_message(() -> BlockRLE{UInt8, Int}([1, 2], [d, 3])) == runmsg(1, d)
+        @test argerror_message(() -> BlockRLE{UInt16}([2, 0, 1], [3, 5, d])) == runmsg(3, d)
+        @test argerror_message(() -> BlockRLE{UInt16, Int}([1, 2], [d, 3])) == runmsg(1, d)
         @test argerror_message(() -> BlockRLE([2 => 3, 1 => d])) == runmsg(2, d)
         @test argerror_message(() -> BlockRLE([(1, d)])) == runmsg(1, d)
         # Zero-length runs are skipped without their size being checked
@@ -217,4 +218,24 @@ end
     # Sizes at the limit construct
     @test collect(BlockRLE([lim, 1])) == [lim, 1]
     @test collect(BlockRLE([1, 1], [lim, 1])) == [lim, 1]
+end
+
+@testset "Block sizes are stored as UInt16: the limit is 65535 (R9)" begin
+    @test BlockLinearSystems.MAX_BLOCK_DIM == 65535 == typemax(BlockLinearSystems.BlockSize)
+    @test collect(BlockRLE([256, 65535, 3])) == [256, 65535, 3]
+    @test sum(BlockRLE([2, 1], [65535, 3])) == 2 * 65535 + 3        # Int arithmetic, no wrap in the storage type
+    @test block_sparse_nnz(sparse([true true; false true]), BlockRLE([65535, 65535])) == 3 * 65535^2
+    @test argerror_message(() -> BlockRLE([65536])) == "Block 1 has dimension 65536; dimensions must be between 1 and 65535"
+    # Another storage type has typemax(T) as its limit, checked before narrowing
+    u8msg(what, i, d) = "$what $i has $(what == "Run" ? "block " : "")dimension $d; dimensions must be between 1 and 255"
+    @test collect(BlockRLE{UInt8}([255, 1])) == [255, 1]
+    for d in (0, 256)
+        @test argerror_message(() -> BlockRLE{UInt8}([3, d])) == u8msg("Block", 2, d)
+        @test argerror_message(() -> BlockRLE{UInt8}([2, 0, 1], [3, 5, d])) == u8msg("Run", 3, d)
+        @test argerror_message(() -> BlockRLE{UInt8, Int}([1, 2], [d, 3])) == u8msg("Run", 1, d)
+    end
+    @test argerror_message(() -> BlockRLE{UInt8}(BlockRLE([2, 1], [3, 300]))) == u8msg("Run", 2, 300)
+    # Systems take the new limit; a block above 255 constructs
+    @test blocksizes(DenseBlockLinearSystem{Float64}([256, 2]), 1) == [256, 2]
+    @test blocksizes(SparseBlockLinearSystem{Float64}([(1, 1), (2, 2)], [300, 2]), 1) isa BlockRLE{UInt16, Int}
 end

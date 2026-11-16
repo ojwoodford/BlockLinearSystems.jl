@@ -194,13 +194,20 @@ end
         end
     end
     # Each eliminated block size on its own, including the extremes and the static/dynamic boundary
-    for de in (1, 3, 4, 5, 7, 8, 9, 10, 20, 255)
+    for de in (1, 3, 4, 5, 7, 8, 9, 10, 20, 255, 300)
         q = SchurTestProblem(Random.Xoshiro(de), [6, 6], [de, de], [[1, 2], [1]])
         for make in (dense_schur_hessian, sparse_schur_hessian)
             x, ok = schur_solve(make(q), q.b, ones(length(q.b)), 0.2)
             x_ref = reference_solve(q, 0.2, ones(length(q.b)))
             @test ok && norm(x - x_ref) <= 1e-8 * norm(x_ref)
         end
+    end
+    # A retained and an eliminated block above 255, the old limit (R9)
+    q = SchurTestProblem(Random.Xoshiro(256), [6, 260], [300, 4], [[1, 2], [2]])
+    for make in (dense_schur_hessian, sparse_schur_hessian)
+        x, ok = schur_solve(make(q), q.b, ones(length(q.b)), 0.2)
+        x_ref = reference_solve(q, 0.2, ones(length(q.b)))
+        @test ok && norm(x - x_ref) <= 1e-8 * norm(x_ref)
     end
 end
 
@@ -369,11 +376,12 @@ allocs_dot(x, H, y) = @allocated dot(x, H, y)
     ok = SchurStructure([6, 6], [3, 3], [[1, 2], [2]])
     @test ok.neblocks == 2
     @test_throws DimensionMismatch SchurStructure([6, 6], [3, 3], [[1, 2]])
-    @test_throws ArgumentError SchurStructure([6, 6], [3, 256], [[1, 2], [2]])    # eliminated block over 255
-    @test SchurStructure([6, 6], [4, 255], [[1, 2], [2]]).neblocks == 2            # any size up to 255 is supported
+    @test_throws ArgumentError SchurStructure([6, 6], [3, 65536], [[1, 2], [2]])  # eliminated block over 65535
+    @test SchurStructure([6, 6], [4, 65535], [[1, 2], [2]]).neblocks == 2          # any size up to 65535 is supported
+    @test SchurStructure([6, 65535], [4, 256], [[1, 2], [2]]).nr == 65541
     @test_throws ArgumentError SchurStructure([6, 6], [3, 0], [[1, 2], [2]])      # empty eliminated block
     @test_throws ArgumentError SchurStructure([6, 0], [3, 3], [[1, 2], [2]])      # empty retained block
-    @test_throws ArgumentError SchurStructure([6, 300], [3, 3], [[1, 2], [2]])    # retained block over 255
+    @test_throws ArgumentError SchurStructure([6, 65536], [3, 3], [[1, 2], [2]])  # retained block over 65535
     @test_throws ArgumentError SchurStructure([6, 6], [3, 3], [[1, 2], [3]])      # retained block out of range
     @test_throws ArgumentError SchurStructure([6, 6], [3, 3], [[1, 0], [2]])
     @test_throws ArgumentError SchurStructure([6, 6], [3, 3], [[1, 2, 1], [2]])   # duplicate coupling

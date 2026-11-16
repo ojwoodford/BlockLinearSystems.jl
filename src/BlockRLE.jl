@@ -1,7 +1,7 @@
 using Static, StaticArrays
 
-# Block sizes are *stored* compactly as `T` (normally `UInt8`, hence the 1-255 limit), but every accessor
-# returns `Int` so that products such as `rows * cols` can never wrap around in the storage type.
+# Block sizes are *stored* compactly as `T` (normally `BlockSize`, hence the limit `MAX_BLOCK_DIM`), but every
+# accessor returns `Int` so that products such as `rows * cols` can never wrap around in the storage type.
 struct BlockRLE{T<:Integer, L<:Integer} <: AbstractVector{Int}
     runlengths::Vector{L}
     blocksizes::Vector{T}
@@ -30,17 +30,20 @@ struct BlockRLE{T<:Integer, L<:Integer} <: AbstractVector{Int}
     end
 end
 
-# Largest supported block dimension
-const MAX_BLOCK_DIM = 255
+# Storage type of block sizes, and so the largest supported block dimension. A `BlockRLE{T}` with another storage
+# type has `typemax(T)` as its limit (capped at `typemax(Int)`).
+const BlockSize = UInt16
+block_dim_limit(::Type{T}) where T<:Integer = Int(min(typemax(T), typemax(Int)))
+const MAX_BLOCK_DIM = block_dim_limit(BlockSize)
 
 # Whether d is a valid block dimension: the one comparison against the limit
-@inline valid_block_dim(d::Integer) = 1 <= d <= MAX_BLOCK_DIM
+@inline valid_block_dim(d::Integer, limit::Int=MAX_BLOCK_DIM) = 1 <= d <= limit
 
 # Throw unless d is a valid block dimension. `i` is the index the caller passed: of a block, or (run = true) of a run.
-function check_block_dim(d::Integer, i::Integer; run::Bool=false)
-    valid_block_dim(d) && return nothing
+function check_block_dim(d::Integer, i::Integer; run::Bool=false, limit::Int=MAX_BLOCK_DIM)
+    valid_block_dim(d, limit) && return nothing
     what = run ? "Run $i has block dimension $d" : "Block $i has dimension $d"
-    throw(ArgumentError("$what; dimensions must be between 1 and $MAX_BLOCK_DIM"))
+    throw(ArgumentError("$what; dimensions must be between 1 and $limit"))
 end
 
 # From runs: the one checked route for run-length input. Each size is checked before it is narrowed to T, zero-length
@@ -52,7 +55,7 @@ function BlockRLE{T, L}(runlengths::AbstractVector{<:Integer}, blocksizes::Abstr
     for (k, rl, bs) in zip(1:length(runlengths), runlengths, blocksizes)
         rl < 0 && throw(ArgumentError("Run lengths must be non-negative, got $rl"))
         rl == 0 && continue
-        check_block_dim(bs, k; run=true)
+        check_block_dim(bs, k; run=true, limit=block_dim_limit(T))
         if !isempty(merged_bs) && merged_bs[end] == bs
             merged_rl[end] += rl
         else
@@ -83,7 +86,7 @@ BlockRLE{T}(runlengths::AbstractVector{<:Integer}, blocksizes::AbstractVector{<:
     BlockRLE{T, Int}(runlengths, blocksizes)
 
 function BlockRLE(runlengths::AbstractVector{<:Integer}, blocksizes::AbstractVector{<:Integer})
-    return BlockRLE{UInt8}(runlengths, blocksizes)
+    return BlockRLE{BlockSize}(runlengths, blocksizes)
 end
 
 function BlockRLE(runs::AbstractVector{<:Pair{<:Integer, <:Integer}})
@@ -106,12 +109,12 @@ Constructs a `BlockRLE` by run-length encoding a flat vector of block sizes.
 """
 function BlockRLE{T}(vec::AbstractVector{<:Integer}) where T<:Integer
     for (i, d) in enumerate(vec)
-        check_block_dim(d, i)
+        check_block_dim(d, i; limit=block_dim_limit(T))
     end
     return encode_block_sizes(T, vec)
 end
 
-BlockRLE(vec::AbstractVector{<:Integer}) = BlockRLE{UInt8}(vec)
+BlockRLE(vec::AbstractVector{<:Integer}) = BlockRLE{BlockSize}(vec)
 BlockRLE(rle::BlockRLE) = rle
 BlockRLE{T}(rle::BlockRLE{T}) where T<:Integer = rle
 BlockRLE{T}(rle::BlockRLE{T2, L}) where {T<:Integer, T2<:Integer, L} = BlockRLE{T, L}(rle.runlengths, rle.blocksizes)
@@ -205,8 +208,8 @@ function eachrun(rle::BlockRLE)
     )
 end
 
-# Coercion helper ensuring BlockRLE{UInt8, Int} representation
-as_block_rle(v::BlockRLE{UInt8, Int}) = v
-as_block_rle(v::BlockRLE) = BlockRLE{UInt8, Int}(v)
+# Coercion helper ensuring BlockRLE{BlockSize, Int} representation
+as_block_rle(v::BlockRLE{BlockSize, Int}) = v
+as_block_rle(v::BlockRLE) = BlockRLE{BlockSize, Int}(v)
 as_block_rle(v::AbstractVector{<:Integer}) = BlockRLE(v)
 const as_blocksizes = as_block_rle

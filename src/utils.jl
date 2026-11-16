@@ -66,7 +66,7 @@ function blocksizes_from_offsets(offsets::AbstractVector{<:Integer}, what::Abstr
         d = offsets[i+1] - offsets[i]
         valid_block_dim(d) || throw(ArgumentError("$what offsets must be strictly increasing with block sizes between 1 and $MAX_BLOCK_DIM, but block $i spans offsets $(offsets[i]) to $(offsets[i+1]) (size $d)"))
     end
-    return encode_block_sizes(UInt8, diff(offsets))
+    return encode_block_sizes(BlockSize, diff(offsets))
 end
 
 function block_sparse_nnz(sparsity, blocksizes)

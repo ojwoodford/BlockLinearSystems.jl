@@ -8,6 +8,10 @@ The reduction runs in two phases. Phase 1 (parallel over chunks of eliminated bl
 (parallel over `col_chunks`, disjoint ranges of retained blocks) has each chunk write straight into the
 columns of `S` (and entries of `g_S`) that it owns, so no per-chunk copies of `S` are needed and nothing
 has to be merged afterwards.
+
+Memory: `E_inv` takes `d_e²` values per eliminated block, and when any eliminated block is above
+`BlockLinearSystems.D_STATIC` each chunk also holds a `d_max × d_max` scratch matrix (`d_max` the largest
+eliminated dimension). Eliminated blocks up to 65535 are supported, but large ones cost memory accordingly.
 """
 struct SchurReductionWorkspace{T}
     W_scratch::Vector{Matrix{T}}          # per chunk: max_De x max_De scratch for blocks above D_STATIC (0 x 0 otherwise), for phase 1 and back-substitution

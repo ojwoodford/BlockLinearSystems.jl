@@ -21,8 +21,11 @@ for this; the optimizer-facing linear systems built on them live in
 ## Describing the problem
 
 A [`SchurStructure`](@ref) records the block dimensions and which retained blocks are coupled to each eliminated
-block. Eliminated blocks may have any dimension from 1 to 255: up to `BlockLinearSystems.D_STATIC` (8) they
-use statically sized register arithmetic, larger ones use a LAPACK Cholesky on a scratch matrix. The
+block. Blocks may have any dimension from 1 to 65535. Eliminated blocks up to `BlockLinearSystems.D_STATIC` (8)
+use statically sized register arithmetic; larger ones use a LAPACK Cholesky on a scratch matrix. That scratch is
+`d_max × d_max` per chunk (one per thread), `d_max` being the largest eliminated dimension, and each eliminated
+block's own factor takes `d_e²` values, so very large eliminated blocks are supported but cost memory accordingly.
+The
 numerical values live in a [`SchurBlockHessian`](@ref): `R` (a dense `Matrix` or a
 [`SparseBlockLinearSystem`](@ref)), `E_data` (the eliminated blocks `E_e`, each stored column-major) and
 `C_data` (the coupling blocks `C_er`, one `de × dr` block per coupling, each stored column-major).
