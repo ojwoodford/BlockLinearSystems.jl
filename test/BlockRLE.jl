@@ -1,5 +1,5 @@
 using BlockLinearSystems
-using BlockLinearSystems: eachrun, matrixdimension, nruns, runblockrange, runblocksize, runlength, runmatrixrange, sort_blocks_hierarchical   # internal names
+using BlockLinearSystems: eachrun, matrixdimension, nruns, runblockrange, runblocksize, runlength, runmatrixrange   # internal names
 @testset "BlockRLE" begin
     # Construction from run lengths and block sizes
     rle = BlockRLE([10, 50], [6, 3])
@@ -100,17 +100,6 @@ using BlockLinearSystems: eachrun, matrixdimension, nruns, runblockrange, runblo
     @test_throws ArgumentError BlockRLE([1], [256])
     @test_throws ArgumentError BlockRLE([-1], [3])
     @test_throws DimensionMismatch BlockRLE([1, 2], [3])
-
-    # Two-tier hierarchical sorting
-    roles = [2, 1, 1, 2, 1]
-    dims  = [6, 3, 3, 6, 3]
-    perm, rle_sorted = sort_blocks_hierarchical(roles, dims)
-    @test dims[perm] == [3, 3, 3, 6, 6]
-    @test nruns(rle_sorted) == 2
-    @test runlength(rle_sorted, 1) == 3
-    @test runblocksize(rle_sorted, 1) == 3
-    @test runlength(rle_sorted, 2) == 2
-    @test runblocksize(rle_sorted, 2) == 6
 
     # DenseBlockLinearSystem with BlockRLE
     bdm_rle = DenseBlockLinearSystem{Float64}(rle)

@@ -199,15 +199,6 @@ function eachrun(rle::BlockRLE)
     )
 end
 
-function sort_blocks_hierarchical(roles::AbstractVector, dimensions::AbstractVector{<:Integer}; rev_dim::Bool=true)
-    length(roles) == length(dimensions) || throw(DimensionMismatch("roles and dimensions must have equal length"))
-    n = length(roles)
-    perm = sortperm(1:n, by = i -> (roles[i], rev_dim ? -Int(dimensions[i]) : Int(dimensions[i])))
-    sorted_dims = dimensions[perm]
-    rle = BlockRLE(sorted_dims)
-    return perm, rle
-end
-
 # Coercion helper ensuring BlockRLE{UInt8, Int} representation
 as_block_rle(v::BlockRLE{UInt8, Int}) = v
 as_block_rle(v::BlockRLE) = BlockRLE{UInt8, Int}(v)

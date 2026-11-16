@@ -39,7 +39,7 @@ const PUBLIC_API = sort([
     # Internal names stay defined (qualified access), and the old alias is gone
     for name in (:copyto!, :inv_sym_block, :expand_block_perm, :validblock, :symmetrifysparse, :blockdata,
                  :eachstoredblock, :nruns, :runlength, :runblocksize, :matrixdimension, :runblockrange,
-                 :runmatrixrange, :eachrun, :sort_blocks_hierarchical, :BlockOffsets, :makesparseindices)
+                 :runmatrixrange, :eachrun, :BlockOffsets, :makesparseindices)
         @test isdefined(BlockLinearSystems, name) && !(name in exported)
     end
     @test !isdefined(BlockLinearSystems, :SchurBlockStructure)

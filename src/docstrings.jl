@@ -403,17 +403,6 @@ for each uniform run in `rle`.
 eachrun
 
 """
-    sort_blocks_hierarchical(roles::AbstractVector, dimensions::AbstractVector{<:Integer}; rev_dim::Bool=true)
-        -> (permutation::Vector{Int}, rle::BlockRLE)
-
-Sorts blocks using a two-tier hierarchy `(Role, Dimension)` to cleanly separate Schur-eliminated
-variables from retained variables while grouping identical block dimensions into contiguous RLE runs.
-
-Returns the permutation vector `permutation` and the resulting `BlockRLE` metadata.
-"""
-sort_blocks_hierarchical
-
-"""
     blockrange(first, len) -> AbstractUnitRange
 
 Index range of a block of `len` entries starting at index `first`. A `StaticInt` `len` gives a statically
