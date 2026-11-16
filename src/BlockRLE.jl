@@ -1,5 +1,3 @@
-using Static, StaticArrays
-
 # Block sizes are *stored* compactly as `T` (normally `BlockSize`, hence the limit `MAX_BLOCK_DIM`), but every
 # accessor returns `Int` so that products such as `rows * cols` can never wrap around in the storage type.
 struct BlockRLE{T<:Integer, L<:Integer} <: AbstractVector{Int}

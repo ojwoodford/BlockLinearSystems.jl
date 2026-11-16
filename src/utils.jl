@@ -1,5 +1,3 @@
-using Static, StaticArrays, SparseArrays, LinearAlgebra
-
 SR(first, last) = StaticArrays.SUnitRange(dynamic(first), dynamic(last))
 
 # Range of `len` indices starting at `first`. A static length gives a statically sized range (its type

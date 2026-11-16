@@ -1,5 +1,3 @@
-using Static, StaticArrays, SparseArrays, LinearAlgebra
-
 # QR elimination: the Jacobian-path counterpart of the Schur complement.
 #
 # The linear least-squares problem min ||J x - r||^2 over x = [x_r; x_e] (retained first) is stored as one dense

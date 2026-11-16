@@ -1,5 +1,3 @@
-using Static, StaticArrays, HybridArrays
-
 # Sized views into the storage of a SchurBlockHessian, so that callers assemble R, E and C without offset
 # arithmetic: the Hessian-path counterparts of the views into a SchurBlockJacobian's tables.
 

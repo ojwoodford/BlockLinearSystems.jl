@@ -1,5 +1,3 @@
-using Static, StaticArrays, SparseArrays, LinearAlgebra
-
 # Relative tolerance used to declare a damped block numerically singular: 1e-12 for Float64, scaled
 # with the precision of T.
 @inline singular_tol(::Type{T}) where T = 4504 * eps(T)

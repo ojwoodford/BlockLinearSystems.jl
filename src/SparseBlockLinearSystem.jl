@@ -1,6 +1,3 @@
-using StaticArrays, HybridArrays, LinearAlgebra
-import SparseArrays
-
 """
     TransposedPattern(pattern::SparseMatrixCSC{Bool, Int})
 

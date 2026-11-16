@@ -1,5 +1,3 @@
-using Static, StaticArrays, SparseArrays, LinearAlgebra
-
 # reduced_nrows(structure::SchurJacobianStructure) -> Int
 # Number of rows of the reduced Jacobian `J̃`.
 reduced_nrows(jst::SchurJacobianStructure) = jst.reduced_offsets[end] - 1
