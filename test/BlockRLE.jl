@@ -173,3 +173,48 @@ end
     @test_throws DimensionMismatch BlockRLE([1, 2], [4])
     @test_throws ArgumentError BlockRLE([-1], [4])
 end
+
+# The message of the ArgumentError that f() throws, or a description of what it did instead
+function argerror_message(f)
+    try
+        f()
+    catch e
+        return e isa ArgumentError ? e.msg : "threw $(typeof(e))"
+    end
+    return "no error"
+end
+
+@testset "One block-size check, which names the block (R8)" begin
+    lim = BlockLinearSystems.MAX_BLOCK_DIM
+    over = lim + 1
+    blockmsg(i, d) = "Block $i has dimension $d; dimensions must be between 1 and $lim"
+    runmsg(i, d) = "Run $i has block dimension $d; dimensions must be between 1 and $lim"
+    for d in (0, over)
+        # Flat vectors name the block
+        @test argerror_message(() -> BlockRLE([3, 3, d, 2])) == blockmsg(3, d)
+        @test argerror_message(() -> BlockRLE{UInt8}([3, d])) == blockmsg(2, d)
+        @test argerror_message(() -> BlockLinearSystems.as_block_rle([d])) == blockmsg(1, d)
+        @test argerror_message(() -> DenseBlockLinearSystem{Float64}([2, d])) == blockmsg(2, d)
+        @test argerror_message(() -> DenseBlockLinearSystem{Float64}([2, 2], [d, 2])) == blockmsg(1, d)
+        @test argerror_message(() -> SparseBlockLinearSystem{Float64}([(1, 1)], [d])) == blockmsg(1, d)
+        @test argerror_message(() -> SparseBlockLinearSystem{Float64}(sparse([true;;]), [d])) == blockmsg(1, d)
+        # Run-length forms name the run, counting the runs as the caller passed them
+        @test argerror_message(() -> BlockRLE([2, 1], [3, d])) == runmsg(2, d)
+        @test argerror_message(() -> BlockRLE{UInt8}([2, 0, 1], [3, 5, d])) == runmsg(3, d)
+        @test argerror_message(() -> BlockRLE{UInt8, Int}([1, 2], [d, 3])) == runmsg(1, d)
+        @test argerror_message(() -> BlockRLE([2 => 3, 1 => d])) == runmsg(2, d)
+        @test argerror_message(() -> BlockRLE([(1, d)])) == runmsg(1, d)
+        # Zero-length runs are skipped without their size being checked
+        @test collect(BlockRLE([0, 2], [d, 3])) == [3, 3]
+        @test collect(BlockRLE([2 => 3, 0 => d])) == [3, 3]
+    end
+    # Negative run lengths are still rejected; mismatched lengths still a DimensionMismatch
+    @test argerror_message(() -> BlockRLE([1, -1], [3, 3])) == "Run lengths must be non-negative, got -1"
+    @test_throws DimensionMismatch BlockRLE([1, 2], [3])
+    @test_throws DimensionMismatch BlockRLE{UInt8, Int}([1, 2], [3])
+    # Offsets keep their own message (it also covers unsorted offsets), with the same limit
+    @test occursin("between 1 and $lim", argerror_message(() -> DenseBlockLinearSystem{Float64}(zeros(2, 2), BlockLinearSystems.BlockOffsets([1, 3, 2]))))
+    # Sizes at the limit construct
+    @test collect(BlockRLE([lim, 1])) == [lim, 1]
+    @test collect(BlockRLE([1, 1], [lim, 1])) == [lim, 1]
+end

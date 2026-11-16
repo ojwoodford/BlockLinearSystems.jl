@@ -64,9 +64,9 @@ end
 function blocksizes_from_offsets(offsets::AbstractVector{<:Integer}, what::AbstractString="Block")
     @inbounds for i in 1:length(offsets)-1
         d = offsets[i+1] - offsets[i]
-        1 <= d <= 255 || throw(ArgumentError("$what offsets must be strictly increasing with block sizes between 1 and 255, but block $i spans offsets $(offsets[i]) to $(offsets[i+1]) (size $d)"))
+        valid_block_dim(d) || throw(ArgumentError("$what offsets must be strictly increasing with block sizes between 1 and $MAX_BLOCK_DIM, but block $i spans offsets $(offsets[i]) to $(offsets[i+1]) (size $d)"))
     end
-    return BlockRLE(diff(offsets))
+    return encode_block_sizes(UInt8, diff(offsets))
 end
 
 function block_sparse_nnz(sparsity, blocksizes)

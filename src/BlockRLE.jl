@@ -9,26 +9,8 @@ struct BlockRLE{T<:Integer, L<:Integer} <: AbstractVector{Int}
     cummatrixdims::Vector{Int}
     flat::Vector{T}          # per-block sizes, one entry per block: O(1) getindex (and checked block access)
 
-    function BlockRLE{T, L}(runlengths::Vector{L}, blocksizes::Vector{T}) where {T<:Integer, L<:Integer}
-        length(runlengths) == length(blocksizes) || throw(DimensionMismatch("runlengths and blocksizes must have identical length"))
-        
-        # Merge adjacent runs of identical block size and filter zero-length runs
-        merged_rl = L[]
-        merged_bs = T[]
-        for i in eachindex(runlengths)
-            rl = runlengths[i]
-            bs = blocksizes[i]
-            rl < 0 && throw(ArgumentError("Run lengths must be non-negative, got $rl"))
-            rl == 0 && continue
-            (bs > 0 && bs <= 255) || throw(ArgumentError("Block dimensions must be between 1 and 255, got $bs"))
-            if !isempty(merged_bs) && merged_bs[end] == bs
-                merged_rl[end] += rl
-            else
-                push!(merged_rl, rl)
-                push!(merged_bs, bs)
-            end
-        end
-
+    # Unchecked: the runs are already validated, merged and free of zero lengths. Every public route checks first.
+    function BlockRLE{T, L}(::Val{:unchecked}, merged_rl::Vector{L}, merged_bs::Vector{T}) where {T<:Integer, L<:Integer}
         cumblocks = Vector{L}(undef, length(merged_rl) + 1)
         cummatrixdims = Vector{Int}(undef, length(merged_rl) + 1)
         cumblocks[1] = one(L)
@@ -48,17 +30,57 @@ struct BlockRLE{T<:Integer, L<:Integer} <: AbstractVector{Int}
     end
 end
 
-# Outer constructors
-function BlockRLE{T}(runlengths::AbstractVector{<:Integer}, blocksizes::AbstractVector{<:Integer}) where T<:Integer
-    length(runlengths) == length(blocksizes) || throw(DimensionMismatch("runlengths and blocksizes must have identical length"))
-    # Zero-length runs contain no blocks, so their sizes are irrelevant (and are not validated, matching
-    # the inner constructor); negative lengths are rejected there.
-    keep = findall(!iszero, runlengths)
-    all(b -> 0 < b <= 255, view(blocksizes, keep)) || throw(ArgumentError("Block dimensions must be between 1 and 255"))
-    rl = convert(Vector{Int}, runlengths[keep])
-    bs = convert(Vector{T}, blocksizes[keep])
-    return BlockRLE{T, Int}(rl, bs)
+# Largest supported block dimension
+const MAX_BLOCK_DIM = 255
+
+# Whether d is a valid block dimension: the one comparison against the limit
+@inline valid_block_dim(d::Integer) = 1 <= d <= MAX_BLOCK_DIM
+
+# Throw unless d is a valid block dimension. `i` is the index the caller passed: of a block, or (run = true) of a run.
+function check_block_dim(d::Integer, i::Integer; run::Bool=false)
+    valid_block_dim(d) && return nothing
+    what = run ? "Run $i has block dimension $d" : "Block $i has dimension $d"
+    throw(ArgumentError("$what; dimensions must be between 1 and $MAX_BLOCK_DIM"))
 end
+
+# From runs: the one checked route for run-length input. Each size is checked before it is narrowed to T, zero-length
+# runs are skipped (their sizes unchecked), and adjacent runs of the same size are merged.
+function BlockRLE{T, L}(runlengths::AbstractVector{<:Integer}, blocksizes::AbstractVector{<:Integer}) where {T<:Integer, L<:Integer}
+    length(runlengths) == length(blocksizes) || throw(DimensionMismatch("runlengths and blocksizes must have identical length"))
+    merged_rl = L[]
+    merged_bs = T[]
+    for (k, rl, bs) in zip(1:length(runlengths), runlengths, blocksizes)
+        rl < 0 && throw(ArgumentError("Run lengths must be non-negative, got $rl"))
+        rl == 0 && continue
+        check_block_dim(bs, k; run=true)
+        if !isempty(merged_bs) && merged_bs[end] == bs
+            merged_rl[end] += rl
+        else
+            push!(merged_rl, rl)
+            push!(merged_bs, bs)
+        end
+    end
+    return BlockRLE{T, L}(Val(:unchecked), merged_rl, merged_bs)
+end
+
+# Run-length encode block sizes that have already been checked
+function encode_block_sizes(::Type{T}, vec::AbstractVector{<:Integer}) where T<:Integer
+    rl = Int[]
+    bs = T[]
+    for d in vec
+        if !isempty(bs) && bs[end] == d
+            rl[end] += 1
+        else
+            push!(rl, 1)
+            push!(bs, d)
+        end
+    end
+    return BlockRLE{T, Int}(Val(:unchecked), rl, bs)
+end
+
+# Outer constructors
+BlockRLE{T}(runlengths::AbstractVector{<:Integer}, blocksizes::AbstractVector{<:Integer}) where T<:Integer =
+    BlockRLE{T, Int}(runlengths, blocksizes)
 
 function BlockRLE(runlengths::AbstractVector{<:Integer}, blocksizes::AbstractVector{<:Integer})
     return BlockRLE{UInt8}(runlengths, blocksizes)
@@ -83,34 +105,18 @@ end
 Constructs a `BlockRLE` by run-length encoding a flat vector of block sizes.
 """
 function BlockRLE{T}(vec::AbstractVector{<:Integer}) where T<:Integer
-    all(b -> 0 < b <= 255, vec) || throw(ArgumentError("Block dimensions must be between 1 and 255"))
-    isempty(vec) && return BlockRLE{T, Int}(Int[], T[])
-    rl = Int[]
-    bs = T[]
-    current_size = convert(T, vec[1])
-    current_len = 1
-    for i in 2:length(vec)
-        val = convert(T, vec[i])
-        if val == current_size
-            current_len += 1
-        else
-            push!(rl, current_len)
-            push!(bs, current_size)
-            current_size = val
-            current_len = 1
-        end
+    for (i, d) in enumerate(vec)
+        check_block_dim(d, i)
     end
-    push!(rl, current_len)
-    push!(bs, current_size)
-    return BlockRLE{T, Int}(rl, bs)
+    return encode_block_sizes(T, vec)
 end
 
 BlockRLE(vec::AbstractVector{<:Integer}) = BlockRLE{UInt8}(vec)
 BlockRLE(rle::BlockRLE) = rle
 BlockRLE{T}(rle::BlockRLE{T}) where T<:Integer = rle
-BlockRLE{T}(rle::BlockRLE{T2, L}) where {T<:Integer, T2<:Integer, L} = BlockRLE{T, L}(copy(rle.runlengths), convert(Vector{T}, rle.blocksizes))
+BlockRLE{T}(rle::BlockRLE{T2, L}) where {T<:Integer, T2<:Integer, L} = BlockRLE{T, L}(rle.runlengths, rle.blocksizes)
 BlockRLE{T, L}(rle::BlockRLE{T, L}) where {T<:Integer, L<:Integer} = rle
-BlockRLE{T, L}(rle::BlockRLE) where {T<:Integer, L<:Integer} = BlockRLE{T, L}(convert(Vector{L}, rle.runlengths), convert(Vector{T}, rle.blocksizes))
+BlockRLE{T, L}(rle::BlockRLE) where {T<:Integer, L<:Integer} = BlockRLE{T, L}(rle.runlengths, rle.blocksizes)
 
 # Base.AbstractVector Interface
 Base.size(rle::BlockRLE) = (Int(rle.cumblocks[end] - 1),)
@@ -202,8 +208,5 @@ end
 # Coercion helper ensuring BlockRLE{UInt8, Int} representation
 as_block_rle(v::BlockRLE{UInt8, Int}) = v
 as_block_rle(v::BlockRLE) = BlockRLE{UInt8, Int}(v)
-function as_block_rle(v::AbstractVector{<:Integer})
-    all(i -> 0 < i <= 255, v) || throw(ArgumentError("Block dimensions must be between 1 and 255"))
-    return BlockRLE(v)
-end
+as_block_rle(v::AbstractVector{<:Integer}) = BlockRLE(v)
 const as_blocksizes = as_block_rle
