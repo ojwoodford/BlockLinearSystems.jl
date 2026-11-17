@@ -25,9 +25,9 @@ using Test, LinearAlgebra, SparseArrays, StaticArrays, Static, BlockLinearSystem
     end
 
     # --------------------------------------------------------------------------
-    # 3. SchurBlockMatrix zero! (Dense & Sparse R)
+    # 3. SchurBlockHessian zero! (Dense & Sparse R)
     # --------------------------------------------------------------------------
-    @testset "SchurBlockMatrix zero!" begin
+    @testset "SchurBlockHessian zero!" begin
         r_dims = [3, 3]
         e_dims = [2, 2]
         obs = [[1, 2], [1, 2]]
@@ -37,7 +37,7 @@ using Test, LinearAlgebra, SparseArrays, StaticArrays, Static, BlockLinearSystem
         B_dense = fill(5.0, 6, 6)
         E_data_d = fill(3.0, 8)
         C_data_d = fill(2.0, 24)
-        H_dense = SchurBlockMatrix(B_dense, E_data_d, C_data_d, struct_schur)
+        H_dense = SchurBlockHessian(B_dense, E_data_d, C_data_d, struct_schur)
         BlockLinearSystems.zero!(H_dense)
         @test all(iszero, H_dense.R)
         @test all(iszero, H_dense.E_data)
@@ -49,7 +49,7 @@ using Test, LinearAlgebra, SparseArrays, StaticArrays, Static, BlockLinearSystem
         fill!(B_sbls.data, 7.0)
         E_data_s = fill(4.0, 8)
         C_data_s = fill(1.0, 24)
-        H_sparse = SchurBlockMatrix(B_sbls, E_data_s, C_data_s, struct_schur)
+        H_sparse = SchurBlockHessian(B_sbls, E_data_s, C_data_s, struct_schur)
         BlockLinearSystems.zero!(H_sparse)
         @test all(iszero, H_sparse.R.data)
         @test all(iszero, H_sparse.E_data)
@@ -69,7 +69,7 @@ using Test, LinearAlgebra, SparseArrays, StaticArrays, Static, BlockLinearSystem
             struct_schur = SchurStructure(r_dims, e_dims, obs)
 
             # Dense Schur Linear System
-            H_d = SchurBlockMatrix(fill(2.0, 6, 6), fill(3.0, 8), fill(1.5, 24), struct_schur)
+            H_d = SchurBlockHessian(fill(2.0, 6, 6), fill(3.0, 8), fill(1.5, 24), struct_schur)
             b_d = fill(10.0, 10)
             x_d = fill(42.0, 10)
             ls_d = ext.DenseSchurLinearSystem(H_d, b_d, x_d)
@@ -86,7 +86,7 @@ using Test, LinearAlgebra, SparseArrays, StaticArrays, Static, BlockLinearSystem
             pattern = sparse([true false; false true])
             R_sparse = SparseBlockLinearSystem{Float64}(pattern, [3, 3], [3, 3])
             fill!(R_sparse.data, 2.5)
-            H_s = SchurBlockMatrix(R_sparse, fill(3.5, 8), fill(1.2, 24), struct_schur)
+            H_s = SchurBlockHessian(R_sparse, fill(3.5, 8), fill(1.2, 24), struct_schur)
             b_s = fill(20.0, 10)
             x_s = fill(84.0, 10)
             ls_s = ext.SparseSchurLinearSystem(H_s, b_s, x_s)

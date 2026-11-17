@@ -3,6 +3,9 @@ using BlockLinearSystems
 
 DocMeta.setdocmeta!(BlockLinearSystems, :DocTestSetup, :(using BlockLinearSystems, SparseArrays, Static, StaticArrays); recursive=true)
 
+# makedocs runs the doctests of the docstrings in the manual; this runs those of every docstring, internal ones included
+doctest(BlockLinearSystems; manual=false)
+
 makedocs(
     sitename = "BlockLinearSystems.jl",
     modules = [BlockLinearSystems],

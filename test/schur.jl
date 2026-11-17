@@ -74,9 +74,10 @@ using BlockLinearSystems: expand_block_perm   # internal names
     # Max coupled dimension across eliminated blocks
     max_coupled_dim = maximum(sum(Int(r_dims[r]) for r in couplings[e]) for e in 1:neblocks)
 
-    # Groups: eliminated blocks of dimension 3 (1:8) and 1 (9:10)
-    e_groups = [1:8, 9:10]
-    e_sizes = [3, 1]
+    # Runs of e_dims: eliminated blocks of dimension 3 (1:8) and 1 (9:10)
+    e_rle = BlockRLE(e_dims)
+    @test [BlockLinearSystems.runblockrange(e_rle, k) for k in 1:BlockLinearSystems.nruns(e_rle)] == [1:8, 9:10]
+    @test [BlockLinearSystems.runblocksize(e_rle, k) for k in 1:BlockLinearSystems.nruns(e_rle)] == [3, 1]
 
     # Pre-computed workload chunks for K=1 and K=4
     chunks_K1 = [[1:8], [9:10]]
@@ -87,16 +88,16 @@ using BlockLinearSystems: expand_block_perm   # internal names
 
     structure_K1 = BlockLinearSystems.SchurStructure(
         nr, nrblocks, neblocks,
-        r_dims, e_dims, boffsets_r, boffsets_e,
+        BlockRLE(r_dims), e_rle, boffsets_r, boffsets_e,
         eoffsets, eliminated_ptr, entry_retained, coffsets,
-        max_coupled_dim, e_groups, e_sizes, chunks_K1
+        max_coupled_dim, chunks_K1
     )
 
     structure_K4 = BlockLinearSystems.SchurStructure(
         nr, nrblocks, neblocks,
-        r_dims, e_dims, boffsets_r, boffsets_e,
+        BlockRLE(r_dims), e_rle, boffsets_r, boffsets_e,
         eoffsets, eliminated_ptr, entry_retained, coffsets,
-        max_coupled_dim, e_groups, e_sizes, chunks_K4
+        max_coupled_dim, chunks_K4
     )
 
     # --------------------------------------------------------------------------
@@ -200,7 +201,7 @@ using BlockLinearSystems: expand_block_perm   # internal names
     # --------------------------------------------------------------------------
     # 4. Dense Schur Reduction & Equivalence Test (K = 1)
     # --------------------------------------------------------------------------
-    ws_K1 = BlockLinearSystems.SchurReductionWorkspace{Float64}(structure_K1, 1; is_dense=true)
+    ws_K1 = BlockLinearSystems.SchurReductionWorkspace{Float64}(structure_K1, 1)
     S_dense = zeros(nr, nr)
     g_S_dense = zeros(nr)
 
@@ -236,7 +237,7 @@ using BlockLinearSystems: expand_block_perm   # internal names
     # --------------------------------------------------------------------------
     # 5. Multi-Chunk Parallel Reduction & Thread-Invariance Test (K = 4)
     # --------------------------------------------------------------------------
-    ws_K4 = BlockLinearSystems.SchurReductionWorkspace{Float64}(structure_K4, 4; is_dense=true)
+    ws_K4 = BlockLinearSystems.SchurReductionWorkspace{Float64}(structure_K4, 4)
     S_dense_K4 = zeros(nr, nr)
     g_S_dense_K4 = zeros(nr)
 
@@ -344,7 +345,7 @@ using BlockLinearSystems: expand_block_perm   # internal names
 
     # Sparse workspace (K = 1)
     ws_sparse_K1 = BlockLinearSystems.SchurReductionWorkspace{Float64}(
-        structure_K1, 1; is_dense=false, nnz_S=nnz_S
+        structure_K1, 1
     )
 
     BlockLinearSystems.reset_schur_sparse!(
@@ -377,7 +378,7 @@ using BlockLinearSystems: expand_block_perm   # internal names
 
     # Sparse reduction with K = 4 chunks
     ws_sparse_K4 = BlockLinearSystems.SchurReductionWorkspace{Float64}(
-        structure_K4, 4; is_dense=false, nnz_S=nnz_S
+        structure_K4, 4
     )
     S_sparse_K4 = copy(S_sparse)
     BlockLinearSystems.reset_schur_sparse!(
@@ -408,7 +409,7 @@ using BlockLinearSystems: expand_block_perm   # internal names
         E_data_degen[eo1 + (j-1)*3 + i - 1] = E_rank1[i, j]
     end
 
-    ws_degen = BlockLinearSystems.SchurReductionWorkspace{Float64}(structure_K1, 1; is_dense=true)
+    ws_degen = BlockLinearSystems.SchurReductionWorkspace{Float64}(structure_K1, 1)
     S_degen = zeros(nr, nr)
     g_S_degen = zeros(nr)
     BlockLinearSystems.reset_schur_dense!(S_degen, R, scaling_r, 0.0, ws_degen)
@@ -486,9 +487,9 @@ using BlockLinearSystems: expand_block_perm   # internal names
     @test b_map == r_to_s_map
 
     # --------------------------------------------------------------------------
-    # 11. SchurBlockMatrix & dot(v, H, v) Equivalence Test
+    # 11. SchurBlockHessian & dot(v, H, v) Equivalence Test
     # --------------------------------------------------------------------------
-    H_dense_block = SchurBlockMatrix(R, E_data, C_data, structure_K1)
+    H_dense_block = SchurBlockHessian(R, E_data, C_data, structure_K1)
     # Undamped H_full
     H_full_undamped = copy(H_full)
     for i in 1:nr
@@ -506,4 +507,14 @@ using BlockLinearSystems: expand_block_perm   # internal names
     quad_exact = dot(dx_test, H_full_undamped * dx_test)
     quad_fast = dot(dx_test, H_dense_block, dx_test)
     @test isapprox(quad_fast, quad_exact; atol=1e-10)
+end
+
+@testset "Dead compatibility forms are gone (AB11)" begin
+    st = SchurStructure([2, 2], [3], [[1, 2]])
+    @test SchurReductionWorkspace{Float64}(st, 1) isa SchurReductionWorkspace{Float64}
+    @test_throws MethodError SchurReductionWorkspace{Float64}(st, 1; is_dense=true)
+    @test_throws MethodError SchurReductionWorkspace{Float64}(st, 1; is_dense=false, nnz_S=10)
+    bsm = SparseBlockLinearSystem{Float64}([(1, 1), (2, 1), (2, 2)], [2, 3])
+    @test_throws MethodError SparseBlockLinearSystem{Float64}(bsm, 5)
+    @test_throws MethodError SparseBlockLinearSystem{Float64}(bsm, 5, 7)
 end

@@ -21,9 +21,12 @@ for this; the optimizer-facing linear systems built on them live in
 ## Describing the problem
 
 A [`SchurStructure`](@ref) records the block dimensions and which retained blocks are coupled to each eliminated
-block. Eliminated blocks may have any dimension from 1 to 255: up to `BlockLinearSystems.D_STATIC` (8) they
-use statically sized register arithmetic, larger ones use a LAPACK Cholesky on a scratch matrix. The
-numerical values live in a [`SchurBlockMatrix`](@ref): `R` (a dense `Matrix` or a
+block. Blocks may have any dimension from 1 to 65535. Eliminated blocks up to `BlockLinearSystems.D_STATIC` (8)
+use statically sized register arithmetic; larger ones use a LAPACK Cholesky on a scratch matrix. That scratch is
+`d_max × d_max` per chunk (one per thread), `d_max` being the largest eliminated dimension, and each eliminated
+block's own factor takes `d_e²` values, so very large eliminated blocks are supported but cost memory accordingly.
+The
+numerical values live in a [`SchurBlockHessian`](@ref): `R` (a dense `Matrix` or a
 [`SparseBlockLinearSystem`](@ref)), `E_data` (the eliminated blocks `E_e`, each stored column-major) and
 `C_data` (the coupling blocks `C_er`, one `de × dr` block per coupling, each stored column-major).
 
@@ -67,7 +70,7 @@ for e in 1:st.neblocks
         C_data[st.coffsets[c]:st.coffsets[c]+de*dr-1] .= vec(H[e0:e0+de-1, r0:r0+dr-1])
     end
 end
-Hs = SchurBlockMatrix(st, R, E_data, C_data)
+Hs = SchurBlockHessian(st, R, E_data, C_data)
 nothing # hide
 ```
 
@@ -130,8 +133,8 @@ reduce_schur_sparse!(S, g, b_r, b_e, scaling_e, lambda, st, E_data, C_data,
                      pattern.block_colptr, pattern.block_rowval, pattern.block_row_offsets, pattern.col_heights, ws)
 ```
 
-If the pattern is already known when the [`SchurBlockMatrix`](@ref) is built, attach it with
-`Hs = SchurBlockMatrix(st, R, E_data, C_data; pattern=pattern)`. Code that receives only `Hs` can then
+If the pattern is already known when the [`SchurBlockHessian`](@ref) is built, attach it with
+`Hs = SchurBlockHessian(st, R, E_data, C_data; pattern=pattern)`. Code that receives only `Hs` can then
 read `Hs.pattern` instead of rebuilding it (`nothing` means "build it when needed"). The pattern is shared
 by `copy_structure` copies, so treat it as read-only: copy `pattern.S_sparse` before using it as storage.
 
@@ -148,14 +151,14 @@ the kernels allocate nothing, except a threaded call on Julia 1.10 (see [Threadi
 ## Trial systems
 
 Optimizers that linearize at a trial point keep the current system for retries.
-[`copy_structure`](@ref)`(::SchurBlockMatrix)` allocates new zeroed `R`, `E_data` and `C_data` sharing only
+[`copy_structure`](@ref)`(::SchurBlockHessian)` allocates new zeroed `R`, `E_data` and `C_data` sharing only
 the immutable structure (and the read-only `pattern`, if any), and [`trial_workspace`](@ref) gives a workspace with its own caches.
 
 ## Using it with SecondOrderOptimization.jl
 
 Loading both `BlockLinearSystems` and `SecondOrderOptimization` activates an extension that wraps all of this
 in `DenseSchurLinearSystem` and `SparseSchurLinearSystem`, for use with its Levenberg–Marquardt, dogleg and Newton
-iterators. Passing a [`SchurBlockMatrix`](@ref) as the Hessian prototype `H` (for example
+iterators. Passing a [`SchurBlockHessian`](@ref) as the Hessian prototype `H` (for example
 `HessianObjective(f, fdf!; H)`, then `optimize!(x0, obj, options)`) is what selects elimination; there is no option
 to set. Whether the reduced system is dense or sparse follows the storage of `R` (a `Matrix` or a
 [`SparseBlockLinearSystem`](@ref)), and `linsolver` names the solver applied to the reduced system: `:auto`,

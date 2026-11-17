@@ -58,7 +58,7 @@ to many small eliminated variable blocks. See the [Schur reduction tutorial](tut
 
 ```@docs
 SchurStructure
-SchurBlockMatrix
+SchurBlockHessian
 SchurReductionWorkspace
 trial_workspace
 reset_schur_dense!
@@ -66,7 +66,7 @@ reset_schur_sparse!
 reduce_schur_dense!
 reduce_schur_sparse!
 backsubstitute!
-LinearAlgebra.dot(::AbstractVector{<:Real}, ::SchurBlockMatrix{<:Real}, ::AbstractVector{<:Real})
+LinearAlgebra.dot(::AbstractVector{<:Real}, ::SchurBlockHessian{<:Real}, ::AbstractVector{<:Real})
 retained_block
 ```
 
@@ -90,7 +90,7 @@ The Jacobian-path counterpart of the Schur reduction: elimination of the same bl
 least-squares problem `min ‖J x - r‖²` by QR. See the [QR elimination tutorial](tutorials/qr_elimination.md).
 `SchurBlockJacobian{T, RType}` carries the storage of the reduced system as its second type parameter
 (`Matrix{T}` or `SparseMatrixCSC{T, Int}`), set by whoever builds it, as the type of `R` does for
-`SchurBlockMatrix{T, RType}`.
+`SchurBlockHessian{T, RType}`.
 
 ```@docs
 SchurJacobianStructure
@@ -108,6 +108,7 @@ reduced_mul!
 reduced_tmul!
 reduced_residual!
 reduced_jacobian!
+build_reduced_jacobian_pattern
 reduced_normal_dense!
 reduced_normal_sparse!
 reduced_diagonal_blocks!

@@ -67,6 +67,7 @@ end
                 @test threaded_allocs_ok(warm_allocs(alloc_reduced_tmul, zeros(T, nr), ws, w))
                 @test threaded_allocs_ok(warm_allocs(alloc_reduced_residual, zeros(T, m), ws))
                 @test threaded_allocs_ok(warm_allocs(alloc_reduced_jacobian, zeros(T, m, nr), zeros(T, m), ws))
+                @test threaded_allocs_ok(warm_allocs(alloc_reduced_jacobian, build_reduced_jacobian_pattern(jst, T), zeros(T, m), ws))
                 @test threaded_allocs_ok(warm_allocs(alloc_reduced_normal_dense, zeros(T, nr, nr), zeros(T, nr), ws))
                 @test threaded_allocs_ok(warm_allocs(alloc_reduced_normal_sparse, Ssp, zeros(T, nr), ws, pat))
                 @test threaded_allocs_ok(warm_allocs(alloc_reduced_diagonal_blocks, zeros(T, jst.doffsets[end] - 1), ws))
@@ -84,7 +85,7 @@ end
             n = length(p.b)
             b, sc = p.b, abs.(diag(p.H))
             lambda = 0.3
-            for make in (dense_schur_matrix, sparse_schur_matrix)
+            for make in (dense_schur_hessian, sparse_schur_hessian)
                 H = make(p; nchunks=nt)
                 st = H.structure
                 nr = st.nr

@@ -8,6 +8,10 @@ The reduction runs in two phases. Phase 1 (parallel over chunks of eliminated bl
 (parallel over `col_chunks`, disjoint ranges of retained blocks) has each chunk write straight into the
 columns of `S` (and entries of `g_S`) that it owns, so no per-chunk copies of `S` are needed and nothing
 has to be merged afterwards.
+
+Memory: `E_inv` takes `d_e²` values per eliminated block, and when any eliminated block is above
+`BlockLinearSystems.D_STATIC` each chunk also holds a `d_max × d_max` scratch matrix (`d_max` the largest
+eliminated dimension). Eliminated blocks up to 65535 are supported, but large ones cost memory accordingly.
 """
 struct SchurReductionWorkspace{T}
     W_scratch::Vector{Matrix{T}}          # per chunk: max_De x max_De scratch for blocks above D_STATIC (0 x 0 otherwise), for phase 1 and back-substitution
@@ -43,11 +47,8 @@ function partition_columns(retained_ptr::Vector{Int}, K::Int)
     return ranges
 end
 
-function SchurReductionWorkspace{T}(
-    structure::SchurStructure, nchunks::Int;
-    is_dense::Bool=true, nnz_S::Int=0   # accepted for compatibility: no per-chunk copies of S are needed any more
-) where T
-    max_De = maximum(structure.e_sizes; init=3)
+function SchurReductionWorkspace{T}(structure::SchurStructure, nchunks::Int) where T
+    max_De = max_run_blocksize(structure.e_dims; init=3)
 
     # One scratch matrix per phase-1 chunk, only used for blocks above D_STATIC
     nscratch = max(nchunks, maximum(length, structure.chunks; init=1))
@@ -310,7 +311,7 @@ end
         while b_row_idx <= b_row_end && block_rowval[b_row_idx] < r1
             b_row_idx += 1
         end
-        @assert b_row_idx <= b_row_end && block_rowval[b_row_idx] == r1 "Sparse pattern missing entry ($r1, $r2)"
+        (b_row_idx <= b_row_end && block_rowval[b_row_idx] == r1) || throw_missing_block(r1, r2)
         row_offset = block_row_offsets[b_row_idx]
         for col in 1:dr2
             c_off = co2 + (col - 1) * de
@@ -352,12 +353,14 @@ end
 """
     reset_schur_dense!(S, R, scaling_r, lambda, ws)
 
-Reset dense reduced system S = R + lambda * diag(scaling_r) and the failure flag.
+Reset dense reduced system S = R + lambda * diag(scaling_r) and the failure flag. `lambda` and `scaling_r` must be
+finite and non-negative (`ArgumentError` otherwise, before `S` is written).
 """
 function reset_schur_dense!(
     S::Matrix{T}, R::Matrix{T}, scaling_r::AbstractVector{T},
     lambda::T, ws::SchurReductionWorkspace{T}
 ) where T
+    check_damping(lambda, scaling_r, :scaling_r)
     copyto!(S, R)
     @inbounds for (i, sc) in enumerate(scaling_r)
         S[i, i] += lambda * sc
@@ -369,13 +372,15 @@ end
 """
     reset_schur_sparse!(nzval, R_nzval, r_to_s_map, diag_inds, scaling_r, lambda, ws)
 
-Reset sparse reduced system S = R + lambda * diag(scaling_r) and the failure flag.
+Reset sparse reduced system S = R + lambda * diag(scaling_r) and the failure flag. `lambda` and `scaling_r` must be
+finite and non-negative (`ArgumentError` otherwise, before `nzval` is written).
 """
 function reset_schur_sparse!(
     nzval::Vector{T}, R_nzval::Vector{T}, r_to_s_map::Vector{Int},
     diag_inds::Vector{Int}, scaling_r::AbstractVector{T},
     lambda::T, ws::SchurReductionWorkspace{T}
 ) where T
+    check_damping(lambda, scaling_r, :scaling_r)
     fill!(nzval, zero(T))
     @inbounds for i in eachindex(r_to_s_map)
         idx = r_to_s_map[i]
@@ -395,10 +400,10 @@ function factor_all_eliminated!(
     structure::SchurStructure, E_data::Vector{T}, C_data::Vector{T}, b_e::AbstractVector{T},
     scaling_e::AbstractVector{T}, lambda::T, ws::SchurReductionWorkspace{T}
 ) where T
-    for (g_idx, e_range) in enumerate(structure.e_groups)
+    for g_idx in 1:nruns(structure.e_dims)
         chunks = structure.chunks[g_idx]
         threaded = use_threads(length(chunks), length(structure.entry_retained))
-        dispatch_dim(structure.e_sizes[g_idx]) do s_de
+        dispatch_dim(runblocksize(structure.e_dims, g_idx)) do s_de
             foreach_index(length(chunks), threaded) do k
                 factor_eliminated_group!(ws.E_inv_data, ws.z_data, ws.W_data, ws.W_scratch[k], ws.failed_block,
                                         structure, E_data, C_data, b_e, scaling_e, lambda, chunks[k], s_de)
@@ -413,12 +418,14 @@ end
     reduce_schur_dense!(S, g_S, b_r, b_e, scaling_e, lambda, structure, E_data, C_data, ws)
 
 Two-phase Schur reduction into the dense upper triangle of `S` (already holding `R` plus damping) and `g_S`.
+`lambda` and `scaling_e` must be finite and non-negative (`ArgumentError` otherwise, before any work).
 """
 function reduce_schur_dense!(
     S::Matrix{T}, g_S::Vector{T}, b_r::AbstractVector{T}, b_e::AbstractVector{T},
     scaling_e::AbstractVector{T}, lambda::T, structure::SchurStructure,
     E_data::Vector{T}, C_data::Vector{T}, ws::SchurReductionWorkspace{T}
 ) where T
+    check_damping(lambda, scaling_e, :scaling_e)
     factor_all_eliminated!(structure, E_data, C_data, b_e, scaling_e, lambda, ws) || return false
     copyto!(g_S, b_r)
     nk = length(ws.col_chunks)
@@ -433,6 +440,7 @@ end
                          block_colptr, block_rowval, block_row_offsets, col_heights, ws)
 
 Two-phase Schur reduction into `S.nzval` (already holding `R` plus damping) and `g_S`.
+`lambda` and `scaling_e` must be finite and non-negative (`ArgumentError` otherwise, before any work).
 """
 function reduce_schur_sparse!(
     S::SparseMatrixCSC{T, Ti}, g_S::Vector{T}, b_r::AbstractVector{T}, b_e::AbstractVector{T},
@@ -442,6 +450,7 @@ function reduce_schur_sparse!(
     block_row_offsets::Vector{Int}, col_heights::Vector{Int},
     ws::SchurReductionWorkspace{T}
 ) where {T, Ti}
+    check_damping(lambda, scaling_e, :scaling_e)
     factor_all_eliminated!(structure, E_data, C_data, b_e, scaling_e, lambda, ws) || return false
     copyto!(g_S, b_r)
     nk = length(ws.col_chunks)
@@ -468,8 +477,8 @@ function backsubstitute!(
 ) where T
     E_inv_data, z_data, scratch = ws.E_inv_data, ws.z_data, ws.W_scratch
     threaded = use_threads(structure.neblocks, length(structure.entry_retained))
-    for (g_idx, e_range) in enumerate(structure.e_groups)
-        de = structure.e_sizes[g_idx]
+    for g_idx in 1:nruns(structure.e_dims)
+        de = runblocksize(structure.e_dims, g_idx)
         chunks = structure.chunks[g_idx]
         # Function barrier on the (static) block dimension
         dispatch_dim(de) do s_de

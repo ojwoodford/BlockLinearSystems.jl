@@ -1,5 +1,3 @@
-using Static, StaticArrays, SparseArrays, LinearAlgebra
-
 SR(first, last) = StaticArrays.SUnitRange(dynamic(first), dynamic(last))
 
 # Range of `len` indices starting at `first`. A static length gives a statically sized range (its type
@@ -64,9 +62,9 @@ end
 function blocksizes_from_offsets(offsets::AbstractVector{<:Integer}, what::AbstractString="Block")
     @inbounds for i in 1:length(offsets)-1
         d = offsets[i+1] - offsets[i]
-        1 <= d <= 255 || throw(ArgumentError("$what offsets must be strictly increasing with block sizes between 1 and 255, but block $i spans offsets $(offsets[i]) to $(offsets[i+1]) (size $d)"))
+        valid_block_dim(d) || throw(ArgumentError("$what offsets must be strictly increasing with block sizes between 1 and $MAX_BLOCK_DIM, but block $i spans offsets $(offsets[i]) to $(offsets[i+1]) (size $d)"))
     end
-    return BlockRLE(diff(offsets))
+    return encode_block_sizes(BlockSize, diff(offsets))
 end
 
 function block_sparse_nnz(sparsity, blocksizes)
@@ -85,12 +83,29 @@ function find_diag_inds(A::SparseMatrixCSC{T, Ti}) where {T, Ti}
     n = A.n
     diag_inds = Vector{Ti}(undef, n)
     @inbounds for col in 1:n
+        found = false
         for idx in nzrange(A, col)
             if A.rowval[idx] == col
                 diag_inds[col] = idx
+                found = true
                 break
             end
         end
+        found || throw(ArgumentError("column $col has no stored diagonal entry"))
     end
     return diag_inds
 end
+
+# λ and a damping scaling are caller inputs: both must be finite and non-negative. Checked before any work.
+function check_damping(lambda::Real, scaling::AbstractVector, name::Symbol)
+    (isfinite(lambda) && lambda >= 0) || throw_bad_lambda(lambda)
+    @inbounds for i in eachindex(scaling)
+        x = scaling[i]
+        (isfinite(x) && x >= 0) || throw_bad_scaling(name, i, x)
+    end
+    return nothing
+end
+# A sparse reduced system's pattern given by the caller lacks block (r1, r2) of the upper triangle
+@noinline throw_missing_block(r1, r2) = throw(ArgumentError("The sparse pattern has no block ($r1, $r2)"))
+@noinline throw_bad_lambda(lambda) = throw(ArgumentError("lambda must be finite and non-negative, got $lambda"))
+@noinline throw_bad_scaling(name, i, x) = throw(ArgumentError("$name must be finite and non-negative, but entry $i is $x"))

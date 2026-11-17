@@ -164,9 +164,44 @@ end
     # Unsorted, repeated and oversized offsets give an ArgumentError (not an InexactError)
     @test_throws ArgumentError DenseBlockLinearSystem{Float64}(BlockOffsets([1, 3, 2]))
     @test_throws ArgumentError DenseBlockLinearSystem{Float64}(BlockOffsets([1, 3, 3]))
-    @test_throws ArgumentError DenseBlockLinearSystem{Float64}(BlockOffsets([1, 400]))
+    @test_throws ArgumentError DenseBlockLinearSystem{Float64}(BlockOffsets([1, 65537]))
     @test_throws ArgumentError DenseBlockLinearSystem{Float64}(BlockOffsets([1, 3, 7]), BlockOffsets([1, 2, 2]))
     @test_throws ArgumentError DenseBlockLinearSystem(zeros(5, 5), BlockOffsets([1, 4, 3, 6]))
     err = try DenseBlockLinearSystem{Float64}(BlockOffsets([1, 3, 2])); nothing catch e; e end
     @test occursin("strictly increasing", sprint(showerror, err))
+end
+
+@testset "Offsets are checked against the block sizes and never shared with the caller (AB8)" begin
+    rbs, cbs = BlockRLE([2, 3]), BlockRLE([3])
+    data = zeros(5, 3)
+    # The 5-argument constructors check the offsets against the sizes, with BlockRLE or vector sizes
+    for (ro, co) in (([1, 3, 7], [1, 4]), ([1, 4, 6], [1, 4]), ([1, 3], [1, 4]), ([1, 3, 6], [1, 3]), ([1, 3, 6], [1, 4, 5]))
+        @test_throws DimensionMismatch DenseBlockLinearSystem{Float64, Matrix{Float64}}(data, ro, co, rbs, cbs)
+        @test_throws DimensionMismatch DenseBlockLinearSystem{Float64, Matrix{Float64}}(data, ro, co, [2, 3], [3])
+        @test_throws DimensionMismatch DenseBlockLinearSystem{Float64}(data, ro, co, [2, 3], [3])
+    end
+    @test_throws DimensionMismatch DenseBlockLinearSystem{Float64, Matrix{Float64}}(zeros(5, 4), [1, 3, 6], [1, 4], rbs, cbs)
+    ro, co = [1, 3, 6], [1, 4]
+    d = DenseBlockLinearSystem{Float64, Matrix{Float64}}(data, ro, co, rbs, cbs)
+    ro[2] = 100; co[2] = 100   # mutating the caller's vectors does not change the system
+    @test d.rowblockoffsets == [1, 3, 6] && d.columnblockoffsets == [1, 4]
+    @test size(block(d, 2, 1)) == (3, 3)
+
+    # The BlockOffsets and offsets-keyword constructors do not keep the caller's vector
+    for make in ((r, c) -> DenseBlockLinearSystem{Float64}(BlockOffsets(r), BlockOffsets(c)),
+                 (r, c) -> DenseBlockLinearSystem{Float64}(zeros(5, 3), BlockOffsets(r), BlockOffsets(c)),
+                 (r, c) -> DenseBlockLinearSystem(zeros(5, 3), BlockOffsets(r), BlockOffsets(c)),
+                 (r, c) -> DenseBlockLinearSystem{Float64}(; offsets=r, coloffsets=c),
+                 (r, c) -> DenseBlockLinearSystem(zeros(5, 3); offsets=r, coloffsets=c))
+        ro, co = [1, 3, 6], [1, 4]
+        d = make(ro, co)
+        ro[2] = 100; co[2] = 100
+        @test d.rowblockoffsets == [1, 3, 6] && d.columnblockoffsets == [1, 4]
+        @test size(block(d, 2, 1)) == (3, 3)
+    end
+    # With one offsets vector for both dimensions
+    ro = [1, 3, 6]
+    d = DenseBlockLinearSystem{Float64}(BlockOffsets(ro))
+    ro[3] = 100
+    @test d.rowblockoffsets == [1, 3, 6] && d.columnblockoffsets == [1, 3, 6]
 end

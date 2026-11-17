@@ -90,6 +90,14 @@ end
     @test_throws ArgumentError reduce_qr!(ws, other, ones(n_e), 0.1)
     @test_throws DimensionMismatch reduce_qr!(ws, p.J, ones(n_e + 1), 0.1)
     @test reduce_qr!(ws, p.J, ones(n_e), 1)              # any real λ
+    # λ and the scaling must be finite and non-negative; they are checked before any table is written (AB5)
+    for (sc, lambda) in ((ones(n_e), -0.1), (ones(n_e), NaN), (ones(n_e), Inf),
+                         ([fill(1.0, n_e - 1); -1.0], 0.1), ([NaN; ones(n_e - 1)], 0.1), ([ones(n_e - 1); Inf], 0.1))
+        fill!(ws.factored, 7.0)
+        @test_throws ArgumentError reduce_qr!(ws, p.J, sc, lambda)
+        @test all(==(7.0), ws.factored)
+    end
+    @test reduce_qr!(ws, p.J, zeros(n_e), 0.0)           # zero is allowed
 end
 
 reduce_allocs(ws, J, sc, lambda) = @allocated reduce_qr!(ws, J, sc, lambda)

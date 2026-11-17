@@ -10,40 +10,52 @@ The block sparsity pattern is provided transposed (`sparsitytransposed` has size
 - `data::Vector{T}`: Contiguous storage for all non-zero block entries.
 - `indices::SparseMatrixCSC{Int, Int}`: Cached start indices in `data` for each block `(row, col)`.
 - `indicestransposed::SparseMatrixCSC{Int, Int}`: Transposed start indices in `data` (`indicestransposed[col, row]`).
-- `rowblocksizes::Vector{UInt8}`: Row dimensions of each block row.
-- `columnblocksizes::Vector{UInt8}`: Column dimensions of each block column.
+- `rowblocksizes::BlockRLE`: Row dimensions of each block row (1 to 65535).
+- `columnblocksizes::BlockRLE`: Column dimensions of each block column (1 to 65535).
 - `m::Int`: Total number of scalar rows.
 - `n::Int`: Total number of scalar columns.
 
 # Example
-```julia
-using BlockLinearSystems, SparseArrays
+```jldoctest
+julia> using BlockLinearSystems, SparseArrays
 
-sparsity_t = sparse([true false; true true])
-bsm = SparseBlockLinearSystem{Float64}(sparsity_t, [2, 3], [2, 3])
-block(bsm, 1, 1) .= [1.0 2.0; 2.0 4.0]
+julia> bsm = SparseBlockLinearSystem{Float64}(sparse([true false; true true]), [2, 3], [2, 3]);
+
+julia> block(bsm, 1, 1) .= [1.0 2.0; 2.0 4.0];
+
+julia> size(bsm.data)   # blocks (1, 1), (2, 1) and (2, 2): 4 + 6 + 9 entries
+(19,)
 ```
 """
 SparseBlockLinearSystem
 
 """
-    DenseBlockLinearSystem{T}(rowblockoffsets, columnblockoffsets=rowblockoffsets)
-    DenseBlockLinearSystem{T}(data::AbstractMatrix{T}, rowblockoffsets, columnblockoffsets=rowblockoffsets)
-    DenseBlockLinearSystem(data::AbstractMatrix{T}, rowblockoffsets, columnblockoffsets=rowblockoffsets)
+    DenseBlockLinearSystem{T}(rowblocksizes, columnblocksizes=rowblocksizes)
+    DenseBlockLinearSystem{T}(data::AbstractMatrix{T}, rowblocksizes, columnblocksizes=rowblocksizes)
+    DenseBlockLinearSystem(data::AbstractMatrix{T}, rowblocksizes, columnblocksizes=rowblocksizes)
 
-Block-partitioned dense matrix backed by a matrix buffer `data` (such as `Matrix{T}`, `SubArray`, or `FixedSizeMatrix{T}`) alongside 1-based sentinel-terminated block offset vectors `rowblockoffsets` and `columnblockoffsets`.
+Block-partitioned dense matrix backed by a matrix buffer `data` (such as `Matrix{T}`, `SubArray`, or `FixedSizeMatrix{T}`), partitioned into blocks of the sizes given (each 1 to 65535). Without `data`, a zeroed `Matrix{T}` is allocated.
 
 # Fields
-- `data::AbstractMatrix{T}`: Underlying matrix buffer of size `(rowblockoffsets[end]-1, columnblockoffsets[end]-1)`.
+- `data::AbstractMatrix{T}`: Underlying matrix buffer of size `(sum(rowblocksizes), sum(columnblocksizes))`.
 - `rowblockoffsets::Vector{Int}`: 1-based start row of each block row, terminated by `m + 1`.
 - `columnblockoffsets::Vector{Int}`: 1-based start column of each block column, terminated by `n + 1`.
+- `rowblocksizes::BlockRLE`: Row dimensions of each block row.
+- `columnblocksizes::BlockRLE`: Column dimensions of each block column.
 
 # Example
-```julia
-using BlockLinearSystems
+```jldoctest
+julia> using BlockLinearSystems
 
-bdm = DenseBlockLinearSystem{Float64}([1, 3, 6]) # Two blocks of sizes 2 and 3
-block(bdm, 2, 1) .= reshape(1.0:6.0, 3, 2)
+julia> bdm = DenseBlockLinearSystem{Float64}([2, 3]);   # two blocks, of sizes 2 and 3
+
+julia> block(bdm, 2, 1) .= reshape(1.0:6.0, 3, 2);
+
+julia> bdm.data[3:5, 1:2]
+3×2 Matrix{Float64}:
+ 1.0  4.0
+ 2.0  5.0
+ 3.0  6.0
 ```
 """
 DenseBlockLinearSystem
@@ -56,12 +68,17 @@ Returns a mutable view into block `(i, j)` of `M` (`SparseBlockLinearSystem` or 
 When `rows` and/or `cols` are passed as `StaticInt`, returns a stack-wrapped `SizedMatrix` or `HybridArray` view for SIMD-accelerated block operations.
 
 # Example
-```julia
-using BlockLinearSystems, Static
+```jldoctest
+julia> using BlockLinearSystems, Static
 
-bdm = DenseBlockLinearSystem{Float64}([1, 3, 5])
-B = block(bdm, 1, 1, static(2), static(2))
-B .= 1.0
+julia> bdm = DenseBlockLinearSystem{Float64}([2, 2]);
+
+julia> B = block(bdm, 1, 1, static(2), static(2));
+
+julia> B .= 1.0;
+
+julia> bdm.data[1:2, 1:2] == ones(2, 2)
+true
 ```
 """
 block
@@ -72,12 +89,16 @@ block
 Returns `true` if block `(i, j)` is structurally present in `M` (always `true` for [`DenseBlockLinearSystem`](@ref), and `M.indicestransposed[j, i] != 0` for [`SparseBlockLinearSystem`](@ref)).
 
 # Example
-```julia
-using BlockLinearSystems, SparseArrays
+```jldoctest
+julia> using BlockLinearSystems, SparseArrays
 
-bsm = SparseBlockLinearSystem{Float64}(sparse([true false; true true]), [2, 2], [2, 2])
-validblock(bsm, 1, 2) # true
-validblock(bsm, 2, 1) # false
+julia> bsm = SparseBlockLinearSystem{Float64}(sparse([true false; true true]), [2, 2], [2, 2]);
+
+julia> BlockLinearSystems.validblock(bsm, 2, 1)
+true
+
+julia> BlockLinearSystems.validblock(bsm, 1, 2)
+false
 ```
 """
 validblock
@@ -88,12 +109,17 @@ validblock
 Fills all stored entries of `M` (`SparseBlockLinearSystem`, `DenseBlockLinearSystem`, or `AbstractArray`) with zero in-place.
 
 # Example
-```julia
-using BlockLinearSystems
+```jldoctest
+julia> using BlockLinearSystems
 
-bdm = DenseBlockLinearSystem{Float64}([1, 3])
-bdm[1, 1] = 5.0
-zero!(bdm)
+julia> bdm = DenseBlockLinearSystem{Float64}([2]);
+
+julia> bdm[1, 1] = 5.0;
+
+julia> zero!(bdm);
+
+julia> bdm[1, 1]
+0.0
 ```
 """
 zero!
@@ -104,11 +130,17 @@ zero!
 Creates a new [`SparseBlockLinearSystem`](@ref) or [`DenseBlockLinearSystem`](@ref) sharing the block offset and sparsity index structures of `M`, with a freshly allocated zeroed `data` buffer.
 
 # Example
-```julia
-using BlockLinearSystems
+```jldoctest
+julia> using BlockLinearSystems
 
-bdm = DenseBlockLinearSystem{Float64}([1, 3, 5])
-bdm_copy = copy_structure(bdm)
+julia> bdm = DenseBlockLinearSystem{Float64}([2, 2]);
+
+julia> bdm[1, 1] = 5.0;
+
+julia> bdm_copy = copy_structure(bdm);
+
+julia> bdm_copy[1, 1], blocksizes(bdm_copy, 1)
+(0.0, [2, 2])
 ```
 """
 copy_structure
@@ -119,11 +151,15 @@ copy_structure
 Adds scalar `k` to the main diagonal of square matrix `M` (`SparseBlockLinearSystem`, `DenseBlockLinearSystem`, or `AbstractMatrix`) in-place: `M[i, i] += k`.
 
 # Example
-```julia
-using BlockLinearSystems
+```jldoctest
+julia> using BlockLinearSystems
 
-bdm = DenseBlockLinearSystem{Float64}([1, 3, 5])
-uniformscaling!(bdm, 2.0)
+julia> bdm = DenseBlockLinearSystem{Float64}([2, 2]);
+
+julia> uniformscaling!(bdm, 2.0);
+
+julia> bdm[3, 3], bdm[3, 1]
+(2.0, 0.0)
 ```
 """
 uniformscaling!
@@ -135,12 +171,17 @@ Constructs a full symmetric `Matrix{T}` from a lower-triangular block matrix `M`
 Allocates and returns a new symmetric `Matrix{T}`. See [`symmetrifyfull!`](@ref) for the in-place version.
 
 # Example
-```julia
-using BlockLinearSystems
+```jldoctest
+julia> using BlockLinearSystems
 
-bdm = DenseBlockLinearSystem{Float64}([1, 3, 5])
-bdm[3, 1] = 4.0
-mat = symmetrifyfull(bdm) # mat[1, 3] == 4.0, mat !== bdm.data
+julia> bdm = DenseBlockLinearSystem{Float64}([2, 2]);
+
+julia> bdm[3, 1] = 4.0;
+
+julia> mat = symmetrifyfull(bdm);
+
+julia> mat[1, 3], mat !== bdm.data
+(4.0, true)
 ```
 """
 symmetrifyfull
@@ -151,16 +192,22 @@ symmetrifyfull
 
 Symmetrifies a lower-triangular block matrix in-place:
 - For [`DenseBlockLinearSystem`](@ref): mirrors the lower triangle to the upper triangle of `bdm.data` in-place and returns `bdm.data`.
-- For [`SparseBlockLinearSystem`](@ref): populates preallocated dense matrix `mat` in-place. If `blocks` is a vector of block indices, extracts and symmetrifies only the principal submatrix corresponding to `blocks`.
+- For [`SparseBlockLinearSystem`](@ref): populates preallocated dense matrix `mat` in-place. If `blocks` is a vector of block indices, extracts and symmetrifies only the principal submatrix corresponding to `blocks`, with the blocks in the order listed (a block listed twice is an `ArgumentError`).
 
 # Example
-```julia
-using BlockLinearSystems, SparseArrays
+```jldoctest
+julia> using BlockLinearSystems, SparseArrays
 
-bsm = SparseBlockLinearSystem{Float64}(sparse([true true; false true]), [2, 2], [2, 2])
-block(bsm, 2, 1) .= 3.0
-mat = zeros(4, 4)
-symmetrifyfull!(mat, bsm)
+julia> bsm = SparseBlockLinearSystem{Float64}(sparse([true false; true true]), [2, 2], [2, 2]);
+
+julia> block(bsm, 2, 1) .= 3.0;
+
+julia> mat = zeros(4, 4);
+
+julia> symmetrifyfull!(mat, bsm);
+
+julia> mat[1, 3], mat[3, 1]
+(3.0, 3.0)
 ```
 """
 symmetrifyfull!
@@ -171,12 +218,17 @@ symmetrifyfull!
 Converts a block-lower-triangular [`SparseBlockLinearSystem`](@ref) into a full symmetric `SparseMatrixCSC{T, Int}` by mirroring off-diagonal blocks to the upper triangle.
 
 # Example
-```julia
-using BlockLinearSystems, SparseArrays
+```jldoctest
+julia> using BlockLinearSystems, SparseArrays
 
-bsm = SparseBlockLinearSystem{Float64}(sparse([true true; false true]), [2, 2], [2, 2])
-block(bsm, 2, 1) .= 5.0
-S = symmetrifysparse(bsm)
+julia> bsm = SparseBlockLinearSystem{Float64}(sparse([true false; true true]), [2, 2], [2, 2]);
+
+julia> block(bsm, 2, 1) .= 5.0;
+
+julia> S = BlockLinearSystems.symmetrifysparse(bsm);
+
+julia> S[1, 3], S[3, 1], nnz(S)
+(5.0, 5.0, 16)
 ```
 """
 symmetrifysparse
@@ -189,28 +241,37 @@ Precomputes a `SparseMatrixCSC{Int, Int}` whose `nzval` holds the 1-based indice
 This enables zero-allocation copying from `bsm.data` into an existing `SparseMatrixCSC` via `H.nzval[i] = bsm.data[sparseindices.nzval[i]]`.
 
 # Example
-```julia
-using BlockLinearSystems, SparseArrays
+```jldoctest
+julia> using BlockLinearSystems, SparseArrays
 
-bsm = SparseBlockLinearSystem{Float64}(sparse([true true; false true]), [2, 2], [2, 2])
-idx_csc = makesparseindices(bsm, true)
-S = sparse(bsm, idx_csc)
+julia> bsm = SparseBlockLinearSystem{Float64}(sparse([true false; true true]), [2, 2], [2, 2]);
+
+julia> idx_csc = BlockLinearSystems.makesparseindices(bsm, true);
+
+julia> S = sparse(bsm, idx_csc);
+
+julia> size(S), nnz(S)
+((4, 4), 16)
 ```
 """
 makesparseindices
 
 """
-    blocksizes(sys, dim) -> Vector{UInt8}
-    blocksizes(sys) -> Tuple{Vector{UInt8}, Vector{UInt8}}
+    blocksizes(sys, dim) -> BlockRLE
+    blocksizes(sys) -> Tuple{BlockRLE, BlockRLE}
 
 Returns the block dimensions along dimension `dim` (1 for rows, 2 for columns), or a tuple of `(rowblocksizes, columnblocksizes)`.
 
 # Example
-```julia
-using BlockLinearSystems
+```jldoctest
+julia> using BlockLinearSystems
 
-sys = DenseBlockLinearSystem{Float64}([2, 3])
-blocksizes(sys, 1) # [2, 3]
+julia> sys = DenseBlockLinearSystem{Float64}([2, 3]);
+
+julia> blocksizes(sys, 1)
+2-element BlockRLE{UInt16, Int64}:
+ 2
+ 3
 ```
 """
 blocksizes
@@ -222,12 +283,16 @@ blocksizes
 Returns the number of blocks along dimension `dim`, or `(n_rowblocks, n_colblocks)`.
 
 # Example
-```julia
-using BlockLinearSystems
+```jldoctest
+julia> using BlockLinearSystems
 
-sys = DenseBlockLinearSystem{Float64}([2, 3])
-nblocks(sys, 1) # 2
-nblocks(sys)    # (2, 2)
+julia> sys = DenseBlockLinearSystem{Float64}([2, 3]);
+
+julia> nblocks(sys, 1)
+2
+
+julia> nblocks(sys)
+(2, 2)
 ```
 """
 nblocks
@@ -245,13 +310,17 @@ blockdata
 Returns an iterator yielding `(i, j, block_view)` for every structurally non-zero block in `sys`.
 
 # Example
-```julia
-using BlockLinearSystems
+```jldoctest
+julia> using BlockLinearSystems
 
-sys = DenseBlockLinearSystem{Float64}([2, 2])
-for (i, j, B) in eachstoredblock(sys)
-    B .= 1.0
-end
+julia> sys = DenseBlockLinearSystem{Float64}([2, 2]);
+
+julia> for (i, j, B) in BlockLinearSystems.eachstoredblock(sys)
+           B .= i + j
+       end
+
+julia> sys.data[3, 1], sys.data[4, 4]
+(3.0, 4.0)
 ```
 """
 eachstoredblock
@@ -262,11 +331,11 @@ eachstoredblock
 Computes the total number of scalar non-zeros in a block-sparse matrix given its block `sparsity::SparseMatrixCSC` pattern and `blocksizes` vector.
 
 # Example
-```julia
-using BlockLinearSystems, SparseArrays
+```jldoctest
+julia> using BlockLinearSystems, SparseArrays
 
-sparsity = sparse([true true; false true])
-block_sparse_nnz(sparsity, [2, 3]) # 2*2 + 2*3 + 3*3 = 19
+julia> block_sparse_nnz(sparse([true true; false true]), [2, 3])   # 2*2 + 2*3 + 3*3
+19
 ```
 """
 block_sparse_nnz
@@ -277,10 +346,14 @@ block_sparse_nnz
 Computes the 1-based starting scalar index for each block given a vector of `blocksizes`.
 
 # Example
-```julia
-using BlockLinearSystems
+```jldoctest
+julia> using BlockLinearSystems
 
-computestartindices([2, 3, 4]) # [1, 3, 6]
+julia> computestartindices([2, 3, 4])
+3-element Vector{Int64}:
+ 1
+ 3
+ 6
 ```
 """
 computestartindices
@@ -289,13 +362,16 @@ computestartindices
     find_diag_inds(A::SparseMatrixCSC) -> Vector{Int}
 
 Finds the index `k` in `A.nzval` corresponding to the diagonal entry `A[col, col]` for each column `col in 1:size(A, 2)`.
+Throws `ArgumentError`, naming the column, if a column has no stored diagonal entry.
 
 # Example
-```julia
-using BlockLinearSystems, SparseArrays
+```jldoctest
+julia> using BlockLinearSystems, SparseArrays
 
-S = sparse([1, 2, 2], [1, 1, 2], [10.0, 20.0, 30.0], 2, 2)
-find_diag_inds(S) # [1, 3]
+julia> find_diag_inds(sparse([1, 2, 2], [1, 1, 2], [10.0, 20.0, 30.0], 2, 2))
+2-element Vector{Int64}:
+ 1
+ 3
 ```
 """
 find_diag_inds
@@ -307,22 +383,25 @@ find_diag_inds
 Precomputes a standard `SparseMatrixCSC{T, Int}` alongside a `scatter_map::Vector{Int}`.
 The `scatter_map` maps entries from `sparse_sys.data` to the CSC nonzeros vector.
 
-Subsequent updates can be performed in-place with **zero allocations** via:
-```julia
-copyto!(csc_mat, sparse_sys, scatter_map)
-```
+Subsequent updates can be performed in-place with **zero allocations** via
+`copyto!(csc_mat, sparse_sys, scatter_map)`.
 
 # Example
-```julia
-using BlockLinearSystems, SparseArrays
+```jldoctest
+julia> using BlockLinearSystems, SparseArrays
 
-sys = SparseBlockLinearSystem{Float64}(sparse([true true; true true]), [2, 2])
-block(sys, 1, 1) .= 1.0
-csc_mat, scatter_map = sparse_with_map(sys; symmetric=false)
+julia> sys = SparseBlockLinearSystem{Float64}(sparse([true true; true true]), [2, 2]);
 
-# In-place update in solver loop (0 allocations):
-block(sys, 1, 1) .= 2.0
-copyto!(csc_mat, sys, scatter_map)
+julia> block(sys, 1, 1) .= 1.0;
+
+julia> csc_mat, scatter_map = sparse_with_map(sys; symmetric=false);
+
+julia> block(sys, 1, 1) .= 2.0;   # in the solver loop
+
+julia> copyto!(csc_mat, sys, scatter_map);   # in place, without allocating
+
+julia> csc_mat[1, 1]
+2.0
 ```
 """
 sparse_with_map
@@ -333,21 +412,28 @@ sparse_with_map
     BlockRLE(vec::AbstractVector{<:Integer})
 
 Run-Length Encoded (RLE) block layout metadata capturing contiguous runs of uniform block sizes.
-Subtypes `AbstractVector{Int}` (storing the sizes compactly, normally as `UInt8`, but always returning `Int`) for transparent interop with all linear systems while providing
+Subtypes `AbstractVector{Int}` (storing the sizes compactly, as `UInt16` by default, but always returning `Int`) for transparent interop with all linear systems while providing
 \$O(1)\$ matrix dimension lookup, \$O(1)\$ run indexing, and \$O(\\log R)\$ block-to-coordinate mapping.
+
+Block dimensions must be between 1 and 65535 (for a `BlockRLE{T}` with another storage type, 1 and `typemax(T)`).
+Any other size is an `ArgumentError` that names the block, or the run for run-length input; zero-length runs are
+skipped without their size being checked.
 
 # Fields
 - `runlengths::Vector{Int}`: Number of blocks in each run.
-- `blocksizes::Vector{UInt8}`: Block dimension in each run.
+- `blocksizes::Vector{T}`: Block dimension in each run, stored as `T` (`UInt16` by default).
 - `cumblocks::Vector{Int}`: 1-based start block index for each run, terminated by `total_blocks + 1`.
 - `cummatrixdims::Vector{Int}`: 1-based start scalar matrix coordinate for each run, terminated by `total_dimension + 1`.
 
 # Example
-```julia
-# 100 blocks of dimension 6 followed by 50,000 blocks of dimension 3:
-rle = BlockRLE([100, 50_000], [6, 3])
-length(rle)            # 50100
-sum(rle)               # 150600, the matrix dimension
+```jldoctest
+julia> rle = BlockRLE([100, 50_000], [6, 3]);   # 100 blocks of dimension 6, then 50,000 of dimension 3
+
+julia> length(rle)
+50100
+
+julia> sum(rle)   # the matrix dimension
+150600
 ```
 """
 BlockRLE
@@ -403,23 +489,12 @@ for each uniform run in `rle`.
 eachrun
 
 """
-    sort_blocks_hierarchical(roles::AbstractVector, dimensions::AbstractVector{<:Integer}; rev_dim::Bool=true)
-        -> (permutation::Vector{Int}, rle::BlockRLE)
-
-Sorts blocks using a two-tier hierarchy `(Role, Dimension)` to cleanly separate Schur-eliminated
-variables from retained variables while grouping identical block dimensions into contiguous RLE runs.
-
-Returns the permutation vector `permutation` and the resulting `BlockRLE` metadata.
-"""
-sort_blocks_hierarchical
-
-"""
     blockrange(first, len) -> AbstractUnitRange
 
 Index range of a block of `len` entries starting at index `first`. A `StaticInt` `len` gives a statically
 sized range; any other integer `len` gives a plain `UnitRange{Int}`, so views built with it are type stable
 and allocation free even when the size is only known at run time. Integer sizes of any type (including
-the `UInt8` sizes stored by `BlockRLE`) are widened to `Int` before use.
+the `UInt16` sizes stored by `BlockRLE`) are widened to `Int` before use.
 """
 blockrange
 
@@ -460,12 +535,17 @@ a table with no rows, or a free group that references a retained block that does
 twice.
 
 # Example
-```julia
-using BlockLinearSystems
-# Two retained blocks (6 and 3), two eliminated blocks (3 and 3); 4 and 6 rows each; one free group of 2 rows
-jst = SchurJacobianStructure([6, 3], [3, 3], [[1, 2], [2]], [4, 6]; free_rows=[2], free_retained=[[1]])
-jst.ntables          # 3
-reduced_nrows(jst)   # 4 + 6 + 2
+```jldoctest
+julia> using BlockLinearSystems
+
+julia> # Two retained blocks (6 and 3), two eliminated blocks (3 and 3); 4 and 6 rows each; one free group of 2 rows
+       jst = SchurJacobianStructure([6, 3], [3, 3], [[1, 2], [2]], [4, 6]; free_rows=[2], free_retained=[[1]]);
+
+julia> jst.ntables
+3
+
+julia> reduced_nrows(jst)   # 4 + 6 + 2
+12
 ```
 """
 SchurJacobianStructure
@@ -477,13 +557,13 @@ SchurJacobianStructure
 Raw storage of a tall least-squares problem: the tables of `structure` (see
 [`SchurJacobianStructure`](@ref)), each column-major, in one flat vector `data` at
 `structure.table_offsets`. It is the Jacobian prototype a caller fills, the analogue of
-[`SchurBlockMatrix`](@ref) on the Hessian path. `T` may be any floating-point type; `Float64` and
+[`SchurBlockHessian`](@ref) on the Hessian path. `T` may be any floating-point type; `Float64` and
 `Float32` are tested.
 
 `RType` is the storage of the reduced system in the retained variables, `S = J̃ᵀJ̃` (and `J̃`), that a
 solver builds after [`reduce_qr!`](@ref): `Matrix{T}` (dense, filled by [`reduced_normal_dense!`](@ref))
 or `SparseMatrixCSC{T, Int}` (sparse, filled by [`reduced_normal_sparse!`](@ref)); anything else is an
-`ArgumentError`. It plays the part the type of `R` plays in `SchurBlockMatrix{T, RType}`, and is chosen
+`ArgumentError`. It plays the part the type of `R` plays in `SchurBlockHessian{T, RType}`, and is chosen
 by whoever builds the prototype (a modelling package, from its own storage option), so that a solver
 receiving only `J` can dispatch on `J isa SchurBlockJacobian{T, Matrix{T}}`. There is no default. This
 package's kernels do not read it: the tables, [`QRReductionWorkspace`](@ref) and every kernel are the
@@ -535,11 +615,22 @@ Throws `BoundsError` for an unknown entry or rows outside the table's data rows 
 never reachable), and `DimensionMismatch` for a wrong `ncols`.
 
 # Example
-```julia
-using BlockLinearSystems, Static, StaticArrays
-J = SchurBlockJacobian{Float64, Matrix{Float64}}(SchurJacobianStructure([6, 3], [3, 3], [[1, 2], [2]], [4, 6]))
-u = coupling_entry(J.structure, 1, 2)                 # retained block 2 in eliminated block 1's table
-coupling_block(J, u, 3, static(2), static(3)) .= @SMatrix rand(2, 3)   # rows 3:4 of that residual
+```jldoctest
+julia> using BlockLinearSystems, Static, StaticArrays
+
+julia> J = SchurBlockJacobian{Float64, Matrix{Float64}}(SchurJacobianStructure([6, 3], [3, 3], [[1, 2], [2]], [4, 6]));
+
+julia> u = coupling_entry(J.structure, 1, 2)   # retained block 2 in eliminated block 1's table
+2
+
+julia> coupling_block(J, u, 3, static(2), static(3)) .= @SMatrix [1.0 2.0 3.0; 4.0 5.0 6.0];   # rows 3:4 of that table
+
+julia> Matrix(coupling_block(J, u))   # all four data rows
+4×3 Matrix{Float64}:
+ 0.0  0.0  0.0
+ 0.0  0.0  0.0
+ 1.0  2.0  3.0
+ 4.0  5.0  6.0
 ```
 """
 coupling_block
@@ -612,7 +703,8 @@ Eliminate every eliminated block of `J` by QR, into `ws`. For each eliminated bl
 This solves the eliminated part of `(JᵀJ + λ·Diagonal(s)) x = Jᵀr`; `scaling_e` (length
 `sum(e_dims)`) is the eliminated part of `s`, in the units of `diag(JᵀJ)` (for Marquardt scaling,
 [`jtj_diag!`](@ref)). The retained part of the damping is the caller's business: append rows to `J̃`, or
-add `λ·s_r` to the diagonal of `J̃ᵀJ̃`. `lambda = 0` is undamped.
+add `λ·s_r` to the diagonal of `J̃ᵀJ̃`. `lambda = 0` is undamped. `lambda` and `scaling_e` must be finite and
+non-negative: anything else throws `ArgumentError` before any table is written.
 
 Returns `false` if an eliminated block is numerically singular — `|U_kk| ≤ M·eps(T)·‖column k‖`, with
 `M` the table's row count (the rounding left on an exactly dependent column grows with the number of
@@ -621,7 +713,7 @@ rows), which catches under-determined (`e_rows[e] < d_e`), rank-deficient and ze
 for the Schur reduction. Free tables are copied, not checked.
 
 Statically sized in the eliminated dimension (unrolled over the columns) up to
-`BlockLinearSystems.D_STATIC`, dynamic above, through the `e_groups` and `chunks` of the structure.
+`BlockLinearSystems.D_STATIC`, dynamic above, over the runs of the structure's `e_dims` and their `chunks`.
 Threaded over the chunks of eliminated blocks when Polyester is loaded and there is enough work
 (`BlockLinearSystems.SCHUR_THREAD_MIN_WORK`), serial otherwise; tables are independent, so there is no
 merge step. The raw tables are untouched, so calling it again with another `lambda` re-factors from them.
@@ -686,12 +778,32 @@ reduced_residual!
 
 """
     reduced_jacobian!(Jt::AbstractMatrix, rt::AbstractVector, ws::QRReductionWorkspace) -> Jt
+    reduced_jacobian!(Jt::SparseMatrixCSC, rt::AbstractVector, ws::QRReductionWorkspace) -> Jt
 
-Write the reduced problem densely: `Jt = J̃` (size `(reduced_nrows(structure), nr)`, overwritten) and
-`rt = r̃`, for a dense QR of the reduced problem. Solving that by QR, then [`backsubstitute!`](@ref),
+Write the reduced problem: `Jt = J̃` (size `(reduced_nrows(structure), nr)`) and `rt = r̃`, in the row order of
+[`reduced_mul!`](@ref), for a QR of the reduced problem. Solving that by QR, then [`backsubstitute!`](@ref),
 keeps the whole solve at the condition number of `J`; forming `J̃ᵀJ̃` squares it.
+
+A dense `Jt` is overwritten entirely. A `SparseMatrixCSC` `Jt` must have the pattern of
+[`build_reduced_jacobian_pattern`](@ref), and only its `nzval` is written: the same matrix as the dense form,
+entry for entry, filled in place. Its pattern is checked first (column heights and the first row of each table's
+run), and an `ArgumentError` is thrown if it differs. The sparse form allocates nothing and is threaded by retained
+column ownership, so no two threads write the same entry (but see [Threading](@ref) for Julia 1.10).
+
+The retained damping is left to the caller, as for every reduced kernel: rows `√(λ s_r)` appended to `J̃`.
 """
 reduced_jacobian!
+
+"""
+    build_reduced_jacobian_pattern(structure::SchurJacobianStructure, ::Type{T}=Float64) -> SparseMatrixCSC{T, Int}
+
+The sparse `J̃`, of size `(reduced_nrows(structure), nr)`, with every stored value zero, for
+[`reduced_jacobian!`](@ref) to fill. Its rows are the reduced rows of every table, in the order of
+[`reduced_mul!`](@ref). Each column of retained block `r` stores the reduced rows of every table that couples
+to `r`, whether an eliminated block's or a free group's. Build it once per structure; each fill writes only `nzval`.
+A table whose bottom rows are numerically zero (`λ = 0`, see [`reduced_nrows`](@ref)) still has its entries stored.
+"""
+build_reduced_jacobian_pattern
 
 """
     reduced_normal_dense!(S::Matrix, g_S, ws::QRReductionWorkspace) -> true
@@ -710,7 +822,7 @@ reduced_normal_dense!
 Sparse counterpart of [`reduced_normal_dense!`](@ref): overwrite `S.nzval` (upper triangle) and `g_S`.
 `pattern` and `S` come from `build_schur_pattern(structure.schur, T; extra_blocks=free_block_pairs(structure))`
 (copy `pattern.S_sparse` for `S`); add the retained damping at `pattern.diag_inds`. Throws an
-`AssertionError` if the pattern lacks a needed block.
+`ArgumentError` if the pattern lacks a needed block.
 """
 reduced_normal_sparse!
 
@@ -745,14 +857,14 @@ jtj_diag!
     jtj_quadform(src::Union{SchurBlockJacobian, QRReductionWorkspace}, v) -> Real
 
 `‖J v‖² = vᵀ(JᵀJ)v` for `v = [v_r; v_e]`, from the tables, without forming anything: the analogue of
-`dot(v, H, v)` for a [`SchurBlockMatrix`](@ref) holding the Hessian `H = JᵀJ`. From the factored tables
+`dot(v, H, v)` for a [`SchurBlockHessian`](@ref) holding the Hessian `H = JᵀJ`. From the factored tables
 the damped Jacobian is used, so the result includes `λ * Σ s_e v_e²` (equal at `λ = 0`). Any element type of `v`;
 the result has the promoted type.
 """
 jtj_quadform
 
 """
-    dot(x::AbstractVector{<:Real}, H::SchurBlockMatrix{<:Real}, y::AbstractVector{<:Real}) -> Real
+    dot(x::AbstractVector{<:Real}, H::SchurBlockHessian{<:Real}, y::AbstractVector{<:Real}) -> Real
 
 The bilinear form `xᵀ H y`, with `x` and `y` over `[retained; eliminated]` (length `nr + sum(e_dims)`), in
 O(N) operations without materializing `H`. The result has the promoted element type of `H`, `x` and `y`. A
@@ -766,10 +878,10 @@ the work is, is processed per group of eliminated blocks of uniform dimension wi
 statically (3.4x faster than per-block run-time sizes on a bundle-adjustment-like benchmark with 200 retained
 and 20000 eliminated blocks). Pass the same vector twice to get it.
 """
-LinearAlgebra.dot(::AbstractVector{<:Real}, ::SchurBlockMatrix{<:Real}, ::AbstractVector{<:Real})
+LinearAlgebra.dot(::AbstractVector{<:Real}, ::SchurBlockHessian{<:Real}, ::AbstractVector{<:Real})
 
 """
-    retained_block(H::SchurBlockMatrix, i, j[, rows, cols])
+    retained_block(H::SchurBlockHessian, i, j[, rows, cols])
 
 Mutable view of block `(i, j)` of `R`, `d_i × d_j`. For a dense `R` (a `Matrix`) any block may be
 viewed; for a sparse `R` (a [`SparseBlockLinearSystem`](@ref)) only stored blocks (the lower triangle,
@@ -777,26 +889,26 @@ viewed; for a sparse `R` (a [`SparseBlockLinearSystem`](@ref)) only stored block
 block's size (`DimensionMismatch` otherwise); static sizes give a `SizedMatrix`, as for [`block`](@ref).
 
 With [`eliminated_block`](@ref)`(H, e)` and [`coupling_block`](@ref)`(H, c)` this lets a caller assemble a
-[`SchurBlockMatrix`](@ref) without offset arithmetic. All forms are type stable and allocation free.
+[`SchurBlockHessian`](@ref) without offset arithmetic. All forms are type stable and allocation free.
 """
 retained_block
 
 """
-    eliminated_block(H::SchurBlockMatrix, e[, rows, cols])
+    eliminated_block(H::SchurBlockHessian, e[, rows, cols])
 
 Mutable view of the eliminated block `E_e` (`d_e × d_e`, column-major in `H.E_data`). Sizes and errors
 as for [`retained_block`](@ref).
 """
-eliminated_block(::SchurBlockMatrix, ::Integer)
+eliminated_block(::SchurBlockHessian, ::Integer)
 
 """
-    coupling_block(H::SchurBlockMatrix, c[, rows, cols])
+    coupling_block(H::SchurBlockHessian, c[, rows, cols])
 
 Mutable view of the coupling block `C_er` (`d_e × d_r`, column-major in `H.C_data`) of coupling entry `c`
 (an index into `H.structure.entry_retained`; [`coupling_entry`](@ref)`(H.structure, e, r)` finds it).
 Sizes and errors as for [`retained_block`](@ref).
 """
-coupling_block(::SchurBlockMatrix, ::Integer)
+coupling_block(::SchurBlockHessian, ::Integer)
 
 """
     coupling_entry(structure::SchurStructure, e, r) -> Int
@@ -819,18 +931,24 @@ The addresses do not keep their objects alive: keep `x` alive with `GC.@preserve
 loop runs. The methods come from the Polyester package extension, so `threadargs` has none unless
 Polyester is loaded.
 
-```julia
-using BlockLinearSystems, Polyester
-function scale!(ys::Vector{Vector{Float64}}, a)
-    args = threadargs((ys, a))
-    GC.@preserve ys begin
-        @batch for i in eachindex(ys)
-            ys_, a_ = fromthreadargs(args)
-            ys_[i] .*= a_
-        end
-    end
-    return ys
-end
+```jldoctest
+julia> using BlockLinearSystems, Polyester
+
+julia> function scale!(ys::Vector{Vector{Float64}}, a)
+           args = threadargs((ys, a))
+           GC.@preserve ys begin
+               @batch for i in eachindex(ys)
+                   ys_, a_ = fromthreadargs(args)
+                   ys_[i] .*= a_
+               end
+           end
+           return ys
+       end;
+
+julia> scale!([[1.0, 2.0], [3.0]], 2.0)
+2-element Vector{Vector{Float64}}:
+ [2.0, 4.0]
+ [6.0]
 ```
 
 This is the mechanism every threaded kernel of this package uses. It is here until it can be offered to

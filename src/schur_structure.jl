@@ -7,8 +7,8 @@ struct SchurStructure
     nr::Int                          # Total scalar dimension of retained variables
     nrblocks::Int                    # Number of retained blocks
     neblocks::Int                    # Number of eliminated blocks
-    r_dims::Vector{UInt8}            # Dimension of each retained block
-    e_dims::Vector{UInt8}            # Dimension of each eliminated block
+    r_dims::BlockRLE{BlockSize, Int} # Dimension of each retained block (indexing returns Int)
+    e_dims::BlockRLE{BlockSize, Int} # Dimension of each eliminated block; its runs group the blocks of uniform dimension
     boffsets_r::Vector{Int}          # Scalar start index of each retained block in x_r
     boffsets_e::Vector{Int}          # Scalar start index of each eliminated block in x_e
     eoffsets::Vector{Int}           # Start offset in flat E_data for each E_e block
@@ -16,13 +16,8 @@ struct SchurStructure
     entry_retained::Vector{Int}             # Retained block index for each coupling entry (sorted ascending per eliminated block!)
     coffsets::Vector{Int}           # Start offset in flat C_data for each coupling block
     max_coupled_dim::Int                 # Maximum over eliminated blocks e of sum_{r coupled to e} d_r
-    e_groups::Vector{UnitRange{Int}} # Groups of eliminated blocks by uniform dimension
-    e_sizes::Vector{Int}             # Dimension of the eliminated blocks in each group
-    chunks::Vector{Vector{UnitRange{Int}}} # chunks[group_idx][chunk_id]
+    chunks::Vector{Vector{UnitRange{Int}}} # chunks[run][chunk_id], for each run of e_dims
 end
-
-# Largest supported dimension of an eliminated block
-const MAX_ELIMINATED_DIM = 255
 
 function SchurStructure(
     r_dims::AbstractVector{<:Integer},
@@ -35,13 +30,10 @@ function SchurStructure(
     length(couplings) == neblocks || throw(DimensionMismatch("Number of coupling lists ($(length(couplings))) must match the number of eliminated blocks ($neblocks)"))
     nchunks >= 1 || throw(ArgumentError("nchunks must be at least 1, got $nchunks"))
 
-    # Validate inputs here, rather than failing (or silently going wrong) deep inside the reduction
-    for (i, d) in enumerate(r_dims)
-        1 <= d <= 255 || throw(ArgumentError("Retained block $i has dimension $d; dimensions must be between 1 and 255"))
-    end
-    for (e, d) in enumerate(e_dims)
-        1 <= d <= MAX_ELIMINATED_DIM || throw(ArgumentError("Eliminated block $e has dimension $d; supported dimensions are 1 to $MAX_ELIMINATED_DIM"))
-    end
+    # Validate inputs here, rather than failing (or silently going wrong) deep inside the reduction. BlockRLE
+    # checks the block dimensions.
+    r_rle = as_block_rle(r_dims)
+    e_rle = as_block_rle(e_dims)
     seen = zeros(Int, nrblocks)   # seen[r] == e once eliminated block e has been coupled to retained block r
     for (e, obs) in enumerate(couplings)
         for r in obs
@@ -51,32 +43,15 @@ function SchurStructure(
         end
     end
 
-    r_dims_u8 = UInt8.(r_dims)
-    e_dims_u8 = UInt8.(e_dims)
-
-    nr = sum(Int, r_dims; init=0)
-
-    boffsets_r = Vector{Int}(undef, nrblocks)
-    if nrblocks > 0
-        boffsets_r[1] = 1
-        for i in 2:nrblocks
-            boffsets_r[i] = boffsets_r[i-1] + Int(r_dims[i-1])
-        end
-    end
-
-    boffsets_e = Vector{Int}(undef, neblocks)
-    if neblocks > 0
-        boffsets_e[1] = 1
-        for i in 2:neblocks
-            boffsets_e[i] = boffsets_e[i-1] + Int(e_dims[i-1])
-        end
-    end
+    nr = sum(r_rle)
+    boffsets_r = computestartindices(r_rle)
+    boffsets_e = computestartindices(e_rle)
 
     eoffsets = Vector{Int}(undef, neblocks)
     if neblocks > 0
         eoffsets[1] = 1
         for i in 2:neblocks
-            eoffsets[i] = eoffsets[i-1] + Int(e_dims[i-1])^2
+            eoffsets[i] = eoffsets[i-1] + e_rle[i-1]^2
         end
     end
 
@@ -92,42 +67,25 @@ function SchurStructure(
     curr_c_off = 1
     idx = 1
     for e in 1:neblocks
-        de = Int(e_dims[e])
+        de = e_rle[e]
         sorted_retained = sort(couplings[e])
         for r in sorted_retained
             entry_retained[idx] = r
             coffsets[idx] = curr_c_off
-            curr_c_off += Int(r_dims[r]) * de
+            curr_c_off += r_rle[r] * de
             idx += 1
         end
     end
 
     max_coupled_dim = 0
     for e in 1:neblocks
-        obs_dim = sum(Int(r_dims[r]) for r in couplings[e]; init=0)
+        obs_dim = sum(r_rle[r] for r in couplings[e]; init=0)
         max_coupled_dim = max(max_coupled_dim, obs_dim)
     end
 
-    e_groups = UnitRange{Int}[]
-    e_sizes = Int[]
-    if neblocks > 0
-        curr_dim = Int(e_dims[1])
-        start_idx = 1
-        for e in 2:neblocks
-            d = Int(e_dims[e])
-            if d != curr_dim
-                push!(e_groups, start_idx:e-1)
-                push!(e_sizes, curr_dim)
-                curr_dim = d
-                start_idx = e
-            end
-        end
-        push!(e_groups, start_idx:neblocks)
-        push!(e_sizes, curr_dim)
-    end
-
-    chunks = Vector{Vector{UnitRange{Int}}}(undef, length(e_groups))
-    for (g_idx, grp) in enumerate(e_groups)
+    chunks = Vector{Vector{UnitRange{Int}}}(undef, nruns(e_rle))
+    for g_idx in 1:nruns(e_rle)
+        grp = runblockrange(e_rle, g_idx)
         len = length(grp)
         group_chunks = Vector{UnitRange{Int}}(undef, nchunks)
         chunk_sz = cld(len, nchunks)
@@ -141,9 +99,9 @@ function SchurStructure(
 
     return SchurStructure(
         nr, nrblocks, neblocks,
-        r_dims_u8, e_dims_u8, boffsets_r, boffsets_e,
+        r_rle, e_rle, boffsets_r, boffsets_e,
         eoffsets, eliminated_ptr, entry_retained, coffsets,
-        max_coupled_dim, e_groups, e_sizes, chunks
+        max_coupled_dim, chunks
     )
 end
 
@@ -154,7 +112,7 @@ Expand a block-level permutation into a scalar-level permutation vector.
 """
 function expand_block_perm(block_perm::AbstractVector{<:Integer}, block_sizes::AbstractVector{<:Integer})
     nblocks = length(block_sizes)
-    @assert length(block_perm) == nblocks "block_perm and block_sizes must have equal length"
+    length(block_perm) == nblocks || throw(DimensionMismatch("block_perm has length $(length(block_perm)), but there are $nblocks block sizes"))
     total_dim = sum(Int, block_sizes; init=0)
     scalar_perm = Vector{Int}(undef, total_dim)
     boffsets = Vector{Int}(undef, nblocks)
@@ -188,7 +146,8 @@ function sort_schur_blocks(
     couplings::AbstractVector{<:AbstractVector}
 )
     nblocks = length(is_eliminated)
-    @assert length(block_sizes) == nblocks "is_eliminated and block_sizes must have equal length"
+    length(block_sizes) == nblocks || throw(DimensionMismatch("block_sizes has length $(length(block_sizes)), but is_eliminated has length $nblocks"))
+    length(couplings) == nblocks || throw(DimensionMismatch("couplings has length $(length(couplings)), but is_eliminated has length $nblocks"))
 
     # Retained blocks (sorted by dimension descending)
     r_indices = findall(!, is_eliminated)
@@ -287,16 +246,7 @@ function build_schur_pattern(structure::SchurStructure, ::Type{T}=Float64; extra
     S_sparse = sparse(I_list, J_list, zeros(T, length(I_list)), nr, nr)
 
     # 4. Compute diagonal indices in S_sparse.nzval
-    diag_inds = zeros(Int, nr)
-    for j in 1:nr
-        for idx in S_sparse.colptr[j]:(S_sparse.colptr[j + 1] - 1)
-            if S_sparse.rowval[idx] == j
-                diag_inds[j] = idx
-                break
-            end
-        end
-        @assert diag_inds[j] != 0 "Missing diagonal entry for retained scalar $j"
-    end
+    diag_inds = find_diag_inds(S_sparse)
 
     return (
         block_pattern = block_pattern,
@@ -331,7 +281,7 @@ function build_r_to_s_map(R_sparse::SparseMatrixCSC, S_sparse::SparseMatrixCSC)
         for k in R_sparse.colptr[j]:(R_sparse.colptr[j + 1] - 1)
             i = R_sparse.rowval[k]
             s_k = find_in_column(S_sparse, i, j)
-            @assert s_k != 0 "R entry ($i, $j) not present in S sparsity pattern"
+            s_k != 0 || throw(ArgumentError("R entry ($i, $j) is not present in the sparsity pattern of S"))
             push!(r_to_s, s_k)
         end
     end
@@ -364,7 +314,7 @@ function build_r_to_s_map(R_sys::SparseBlockLinearSystem, S_sparse::SparseMatrix
                 for row in 1:col
                     srow = boffsets_r[brow] + row - 1
                     s_k = find_in_column(S_sparse, srow, scol)
-                    @assert s_k != 0 "Missing diagonal entry ($srow, $scol) in S"
+                    s_k != 0 || throw(ArgumentError("Entry ($srow, $scol) of a diagonal block of R is not present in the sparsity pattern of S"))
                     r_to_s[data_start + (col - 1)*drow + row - 1] = s_k
                 end
             end
@@ -374,7 +324,7 @@ function build_r_to_s_map(R_sys::SparseBlockLinearSystem, S_sparse::SparseMatrix
                 for row in 1:drow
                     scol = boffsets_r[brow] + row - 1
                     s_k = find_in_column(S_sparse, srow, scol)
-                    @assert s_k != 0 "Missing entry ($srow, $scol) in S"
+                    s_k != 0 || throw(ArgumentError("Entry ($srow, $scol) of R is not present in the sparsity pattern of S"))
                     r_to_s[data_start + (col - 1)*drow + row - 1] = s_k
                 end
             end
@@ -400,7 +350,7 @@ function build_r_to_s_map(R_sys::SparseBlockLinearSystem, pattern::NamedTuple, b
         # Block (bcol, brow) of the upper-triangle pattern: block column brow, block row bcol
         rng = pattern.block_colptr[brow]:(pattern.block_colptr[brow + 1] - 1)
         k = searchsortedfirst(view(pattern.block_rowval, rng), bcol)
-        (k <= length(rng) && pattern.block_rowval[rng[k]] == bcol) || throw(AssertionError("Block ($bcol, $brow) of R is not present in the pattern of S"))
+        (k <= length(rng) && pattern.block_rowval[rng[k]] == bcol) || throw(ArgumentError("Block ($bcol, $brow) of R is not present in the pattern of S"))
         row_offset = pattern.block_row_offsets[rng[k]]
         base = S_colptr[boffsets_r[brow]] + row_offset
         stride = pattern.col_heights[brow]

@@ -115,7 +115,7 @@ norm([x_r; x_e] - Jd \ rd) / norm(Jd \ rd)    # against a dense least-squares so
 
 ## The same problem by the Schur complement
 
-Form `H = JᵀJ` and `b = Jᵀr`, fill a [`SchurBlockMatrix`](@ref) as in the
+Form `H = JᵀJ` and `b = Jᵀr`, fill a [`SchurBlockHessian`](@ref) as in the
 [Schur tutorial](schur_reduction.md), and compare the two reduced systems, damped this time:
 
 ```@example qr
@@ -159,7 +159,7 @@ S_qr[diagind(S_qr)] .+= lambda .* s_r
 
 The second type parameter of [`SchurBlockJacobian`](@ref) names the storage of the reduced system:
 `Matrix{T}` for a dense `J̃` / `S = J̃ᵀJ̃`, or `SparseMatrixCSC{T, Int}` for the sparse `S` of
-[`reduced_normal_sparse!`](@ref). It is the counterpart of the type of `R` in a `SchurBlockMatrix`, and is
+[`reduced_normal_sparse!`](@ref). It is the counterpart of the type of `R` in a `SchurBlockHessian`, and is
 set by whoever builds the prototype (a modelling package, from its own dense-or-sparse option), so that a
 solver handed only `J` can dispatch on it. There is no default. The tables, the workspace and every kernel
 of this package are the same for both:
@@ -175,7 +175,23 @@ S_sp[diagind(S_sp)] .+= lambda .* s_r
 norm(triu(Matrix(S_sp)) - triu(S_qr)) / norm(triu(S_qr))
 ```
 
+A sparse `J̃` keeps the conditioning of `J` and the sparsity of the problem. Build its pattern once with
+[`build_reduced_jacobian_pattern`](@ref); then [`reduced_jacobian!`](@ref) fills its stored values in place, the
+same matrix as the dense form entry for entry. The retained damping is the caller's: append rows `√(λ s_r)`, as
+for a sparse `J`, and solve by a sparse QR:
+
+```@example qr
+Jt_sp = build_reduced_jacobian_pattern(jst)  # once per structure
+rt_sp = zeros(reduced_nrows(jst))
+reduced_jacobian!(Jt_sp, rt_sp, wss)         # each solve: writes nonzeros(Jt_sp) and rt_sp, allocates nothing
+x_sp = qr([Jt_sp; sparse(Diagonal(sqrt.(lambda .* s_r)))]) \ [rt_sp; zeros(nr)]
+S_qr_full = Symmetric(S_qr)                  # against the normal equations, damped, from the dense route
+(nnz(Jt_sp), length(Jt_sp), norm(x_sp - S_qr_full \ g_qr) / norm(S_qr_full \ g_qr))
+```
+
 - **Dense QR**: [`reduced_jacobian!`](@ref) writes `J̃` and `r̃` into a `Matrix` and `Vector`.
+- **Sparse QR**: [`reduced_jacobian!`](@ref) into the `SparseMatrixCSC` of [`build_reduced_jacobian_pattern`](@ref),
+  for SPQR, with the retained damping appended as rows.
 - **Iterative (LSMR, CG on the normal equations)**: [`reduced_mul!`](@ref) and [`reduced_tmul!`](@ref) give
   `J̃ v` and `J̃ᵀ w` without forming anything, [`reduced_residual!`](@ref) gives `r̃`, and
   [`reduced_diagonal_blocks!`](@ref) the diagonal blocks of `J̃ᵀJ̃` for a block-Jacobi preconditioner.

@@ -1,6 +1,3 @@
-using StaticArrays, HybridArrays, LinearAlgebra
-import SparseArrays
-
 """
     TransposedPattern(pattern::SparseMatrixCSC{Bool, Int})
 
@@ -15,13 +12,13 @@ struct SparseBlockLinearSystem{T}
     data::Vector{T}                                             # Storage for all the matrix data
     indices::SparseArrays.SparseMatrixCSC{Int, Int}             # Start indices for each block matrix
     indicestransposed::SparseArrays.SparseMatrixCSC{Int, Int}   # Start indices for each block matrix, stored transposed
-    rowblocksizes::BlockRLE{UInt8, Int}                         # Number of rows for each block of rows
-    columnblocksizes::BlockRLE{UInt8, Int}                      # Number of columns for each block of columns
+    rowblocksizes::BlockRLE{BlockSize, Int}                         # Number of rows for each block of rows
+    columnblocksizes::BlockRLE{BlockSize, Int}                      # Number of columns for each block of columns
     m::Int                                                      # Number of rows of the represented matrix
     n::Int                                                      # Number of columns of the represented matrix
 
-    function SparseBlockLinearSystem{T}(nnzvals::Integer, indicestransposed::SparseArrays.SparseMatrixCSC{Int, Int}, rowblocksizes::BlockRLE{UInt8, Int}, colblocksizes::BlockRLE{UInt8, Int}=rowblocksizes) where T
-        # Block sizes are already validated (1-255) by the BlockRLE constructor
+    function SparseBlockLinearSystem{T}(nnzvals::Integer, indicestransposed::SparseArrays.SparseMatrixCSC{Int, Int}, rowblocksizes::BlockRLE{BlockSize, Int}, colblocksizes::BlockRLE{BlockSize, Int}=rowblocksizes) where T
+        # Block sizes are already validated (1 to MAX_BLOCK_DIM) by the BlockRLE constructor
         sumrbs = Int(sum(rowblocksizes))
         sumcbs = rowblocksizes === colblocksizes ? sumrbs : Int(sum(colblocksizes))
         size(indicestransposed) == (length(colblocksizes), length(rowblocksizes)) || throw(DimensionMismatch("Size of indicestransposed must be ($(length(colblocksizes)), $(length(rowblocksizes))), got $(size(indicestransposed))"))
@@ -30,7 +27,7 @@ struct SparseBlockLinearSystem{T}
         return new{T}(zeros(T, nnzvals), indices, it, rowblocksizes, colblocksizes, sumrbs, sumcbs)
     end
 
-    function SparseBlockLinearSystem{T}(data::Vector{T}, indices::SparseArrays.SparseMatrixCSC{Int, Int}, indicestransposed::SparseArrays.SparseMatrixCSC{Int, Int}, rowblocksizes::BlockRLE{UInt8, Int}, colblocksizes::BlockRLE{UInt8, Int}, m::Integer, n::Integer) where T
+    function SparseBlockLinearSystem{T}(data::Vector{T}, indices::SparseArrays.SparseMatrixCSC{Int, Int}, indicestransposed::SparseArrays.SparseMatrixCSC{Int, Int}, rowblocksizes::BlockRLE{BlockSize, Int}, colblocksizes::BlockRLE{BlockSize, Int}, m::Integer, n::Integer) where T
         return new{T}(data, indices, indicestransposed, rowblocksizes, colblocksizes, Int(m), Int(n))
     end
 end
@@ -44,8 +41,9 @@ end
 function SparseBlockLinearSystem{T}(sparsity::SparseArrays.SparseMatrixCSC{Bool, Int}, rowblocksizes, colblocksizes=rowblocksizes; transposed::Bool=false) where T
     rbs = as_block_rle(rowblocksizes)
     cbs = rowblocksizes === colblocksizes ? rbs : as_block_rle(colblocksizes)
+    expected = transposed ? (length(cbs), length(rbs)) : (length(rbs), length(cbs))
+    size(sparsity) == expected || throw(DimensionMismatch("Size of sparsity pattern must match block dimensions: expected $expected, got $(size(sparsity))"))
     sparsitytransposed = transposed ? sparsity : SparseArrays.sparse(sparsity')
-    size(sparsitytransposed) == (length(cbs), length(rbs)) || throw(DimensionMismatch("Size of sparsity pattern must match block dimensions: expected ($(length(rbs)), $(length(cbs))), got $(size(sparsity))"))
     # Construct the block indices sparse matrix
     indicestransposed = SparseArrays.SparseMatrixCSC{Int, Int}(sparsitytransposed.m, sparsitytransposed.n, copy(sparsitytransposed.colptr), copy(sparsitytransposed.rowval), Vector{Int}(undef, length(sparsitytransposed.rowval)))
     # Compute the block pointers and length of data storage
@@ -74,10 +72,6 @@ function SparseBlockLinearSystem{T}(blockcoords::AbstractVector{<:Tuple{Integer,
     J = [Int(c[2]) for c in blockcoords]
     sparsity = SparseArrays.sparse(I, J, true, length(rbs), length(cbs))
     return SparseBlockLinearSystem{T}(sparsity, rbs, cbs; transposed=false)
-end
-
-function SparseBlockLinearSystem{T}(bsm::SparseBlockLinearSystem{T}, m::Int, n::Int=m) where T
-    return SparseBlockLinearSystem{T}(bsm.data, bsm.indices, bsm.indicestransposed, bsm.rowblocksizes, bsm.columnblocksizes, m, n)
 end
 
 function SparseBlockLinearSystem{T}(data::Vector{T}, indices, indicestransposed, rowblocksizes, colblocksizes, m, n) where T
@@ -313,7 +307,10 @@ function symmetrifyfull!(mat::AbstractMatrix{T}, bsm::SparseBlockLinearSystem{T}
         end
         all(b -> 1 <= b <= length(bsm.rowblocksizes), block_indices) || throw(BoundsError(bsm.rowblocksizes, block_indices))
         lengths = zeros(Int, length(bsm.rowblocksizes))
-        lengths[block_indices] .= bsm.rowblocksizes[block_indices]
+        for b in block_indices
+            lengths[b] == 0 || throw(ArgumentError("Block $b is listed more than once"))
+            lengths[b] = bsm.rowblocksizes[b]
+        end
         starts = zeros(Int, length(bsm.rowblocksizes))
         starts[block_indices] .= cumsum(vcat(1, bsm.rowblocksizes[block_indices[1:end-1]]))
     end

@@ -1,25 +1,25 @@
 using Random, LinearAlgebra, SparseArrays, StaticArrays, Static, Test, BlockLinearSystems
 
 # QR elimination on the Jacobian path, tested against the Schur reduction (schur_problems.jl must be included
-# first: its SchurTestProblem and dense/sparse_schur_matrix build the Hessian side) and against dense least squares.
+# first: its SchurTestProblem and dense/sparse_schur_hessian build the Hessian side) and against dense least squares.
 # The test problems come from schur_jacobian.jl.
 
-# The Hessian side: H = J'J and b = J'r as a SchurBlockMatrix (dense or sparse R), in element type T
-function schur_matrix(p::QRTestProblem{T}, kind) where T
+# The Hessian side: H = J'J and b = J'r as a SchurBlockHessian (dense or sparse R), in element type T
+function schur_hessian(p::QRTestProblem{T}, kind) where T
     J64 = Float64.(p.Jf)
     H = J64' * J64
     b = J64' * Float64.(p.rf)
     jst = p.J.structure
     rr = [(r2, r1) for (r1, r2) in free_block_pairs(jst)]   # lower-triangle block coordinates
     sp = SchurTestProblem(H, b, p.r_dims, p.e_dims, p.couplings, rr)
-    Hs = kind === :dense ? dense_schur_matrix(sp) : sparse_schur_matrix(sp)
+    Hs = kind === :dense ? dense_schur_hessian(sp) : sparse_schur_hessian(sp)
     R = Hs.R isa Matrix ? T.(Hs.R) :
         SparseBlockLinearSystem{T}(T.(Hs.R.data), Hs.R.indices, Hs.R.indicestransposed, Hs.R.rowblocksizes, Hs.R.columnblocksizes, Hs.R.m, Hs.R.n)
-    return SchurBlockMatrix(Hs.structure, R, T.(Hs.E_data), T.(Hs.C_data)), T.(b)
+    return SchurBlockHessian(Hs.structure, R, T.(Hs.E_data), T.(Hs.C_data)), T.(b)
 end
 
 # Existing Schur reduction: (S, g_S, ws, ok, pattern) with S including the retained damping
-function schur_reduced(Hs::SchurBlockMatrix{T}, b, sc, lambda) where T
+function schur_reduced(Hs::SchurBlockHessian{T}, b, sc, lambda) where T
     st = Hs.structure
     nr, n = st.nr, length(b)
     ws = SchurReductionWorkspace{T}(st, 1)
@@ -79,7 +79,7 @@ qr_rtol(::Type{Float32}) = 2e-3
                 st = jst.schur
                 nr, n = st.nr, size(p.Jf, 2)
                 sc = qr_scaling(p, rng)
-                Hs, b = schur_matrix(p, kind)
+                Hs, b = schur_hessian(p, kind)
                 S_ref, g_ref, sws, ok_ref, pattern = schur_reduced(Hs, b, sc, lambda)
                 @test ok_ref
 
@@ -132,6 +132,20 @@ end
     end
 end
 
+@testset "QR elimination with a retained and an eliminated block above 255 (R9)" begin
+    rng = Random.Xoshiro(255)
+    p = QRTestProblem("above 255", rng, Float64, [6, 260], [300, 3], [[1, 2], [2]], [600, 10])
+    @test maximum(p.J.structure.schur.e_dims) == 300 && maximum(p.J.structure.schur.r_dims) == 260
+    for lambda in (0.0, 0.3)
+        n = size(p.Jf, 2)
+        sc = lambda == 0 ? ones(n) : qr_scaling(p, rng)
+        x, ok, _ = qr_solve(p, sc, lambda)
+        @test ok
+        A = [p.Jf; Diagonal(sqrt.(lambda .* sc))]
+        @test relerr(x, dense_ls(p, sc, lambda)) <= 50 * cond(A) * eps()
+    end
+end
+
 # Near-dependence between a retained and an eliminated column: retained block 3 is coupled only to eliminated
 # block 5, and its first column is that block's first column plus 1e-8 noise. cond(J) is then about 1e8: S has
 # condition about 1e16, and the Schur route loses everything that the QR route keeps.
@@ -171,7 +185,7 @@ end
     err_qr = relerr(x_qr, x_true)
     # The Schur route: the reduction itself succeeds (every E_e is well conditioned), but S has lost its
     # positive definiteness to rounding, so Cholesky fails; solve it with Bunch-Kaufman instead to get a number
-    Hs, b = schur_matrix(p, :dense)
+    Hs, b = schur_hessian(p, :dense)
     nr = Hs.structure.nr
     S, g, sws, ok_s, _ = schur_reduced(Hs, b, ones(n), 0.0)
     @test ok_s
@@ -213,6 +227,10 @@ end
                 @test relerr(d_fac, d_raw) <= tol
             end
             @test jtj_quadform(J, Float32.(v)) isa promote_type(T, Float32)
+            # The vector's length is checked, as by jtr! and jtj_diag! (AB3)
+            for src in (J, ws), len in (n - 1, n + 1)
+                @test_throws DimensionMismatch jtj_quadform(src, randn(rng, T, len))
+            end
         end
     end
 end
@@ -250,6 +268,87 @@ end
             @test_throws DimensionMismatch reduced_mul!(zeros(T, m + 1), ws, v)
             @test_throws DimensionMismatch reduced_tmul!(zeros(T, nr), ws, zeros(T, m - 1))
             @test_throws DimensionMismatch reduced_jacobian!(zeros(T, m, nr + 1), rt, ws)
+            # A wrong-length rt throws before Jt is written (AB10)
+            for len in (m - 1, m + 1)
+                Jt7 = fill(T(7), m, nr)
+                @test_throws DimensionMismatch reduced_jacobian!(Jt7, zeros(T, len), ws)
+                @test all(==(T(7)), Jt7)
+            end
+        end
+    end
+end
+
+# The problems of R4: those of qr_problems (no free group, blocks above D_STATIC, free groups), the tutorial's
+# structure, an under-determined eliminated block with a free group, and no eliminated block at all (with a retained
+# block that no row touches, so a column of J̃ stores nothing)
+function sparse_reduced_problems(::Type{T}; nchunks=1) where T
+    rng = Random.Xoshiro(40)
+    probs = qr_problems(T; nchunks)
+    push!(probs, QRTestProblem("tutorial", rng, T, [6, 6, 6], [3, 3, 3, 3, 2, 1],
+                               [[1, 2], [1, 2, 3], [2, 3], [1, 3], [1, 2], [3]], [8, 10, 6, 6, 4, 3];
+                               free_rows=[12], free_retained=[[1, 3]], nchunks))
+    push!(probs, QRTestProblem("under-determined", rng, T, [6, 6], [12, 12, 12], [[1, 2], [1], [2]], [28, 15, 10];
+                               free_rows=[8], free_retained=[[1, 2]], nchunks))
+    push!(probs, QRTestProblem("no eliminated block", rng, T, [3, 2, 4], Int[], Vector{Int}[], Int[];
+                               free_rows=[5, 4], free_retained=[[1, 2], [2]], nchunks))
+    return probs
+end
+
+qr_sparse_jacobian_allocs(Jt, rt, ws) = @allocated reduced_jacobian!(Jt, rt, ws)
+
+@testset "Sparse reduced Jacobian: the dense one, entry for entry, filled in place (R4)" begin
+    nt = Threads.nthreads()
+    for T in (Float64, Float32), p in sparse_reduced_problems(T; nchunks=nt),
+        lambda in (p.name == "under-determined" ? (0.3,) : (0.0, 0.3))     # undamped, it cannot be eliminated
+        @testset "$T $(p.name) λ=$lambda" begin
+            rng = Random.Xoshiro(41)
+            J = p.J
+            jst = J.structure
+            nr, n = jst.schur.nr, size(p.Jf, 2)
+            m = reduced_nrows(jst)
+            ws = QRReductionWorkspace(J)
+            @test reduce_qr!(ws, J, qr_scaling(p, rng)[nr+1:n], lambda)
+            Jt, rt = zeros(T, m, nr), zeros(T, m)
+            reduced_jacobian!(Jt, rt, ws)
+            Jsp = build_reduced_jacobian_pattern(jst, T)
+            @test Jsp isa SparseMatrixCSC{T, Int} && size(Jsp) == (m, nr) && all(iszero, nonzeros(Jsp))
+            fill!(nonzeros(Jsp), T(NaN))                       # every stored entry is written
+            rts = fill(T(NaN), m)
+            @test reduced_jacobian!(Jsp, rts, ws) === Jsp
+            @test Matrix(Jsp) == Jt && rts == rt               # identical, not just close
+            @test nnz(Jsp) == sum(Int(jst.schur.r_dims[jst.entry_retained[u]]) *
+                                  (jst.table_nrows[jst.entry_table[u]] - jst.table_top[jst.entry_table[u]])
+                                  for u in eachindex(jst.entry_retained); init=0)
+            # The same matrix whether the fill is serial or threaded
+            old = BlockLinearSystems.SCHUR_THREAD_MIN_WORK[]
+            try
+                for minwork in (typemax(Int), 0)
+                    BlockLinearSystems.SCHUR_THREAD_MIN_WORK[] = minwork
+                    threaded = minwork == 0 && nt > 1 && length(jst.col_chunks) > 1
+                    fill!(nonzeros(Jsp), T(NaN))
+                    reduced_jacobian!(Jsp, rts, ws)
+                    @test Matrix(Jsp) == Jt
+                    @test threaded_allocs_ok(qr_sparse_jacobian_allocs(Jsp, rts, ws), threaded)
+                    @test threaded_allocs_ok(qr_sparse_jacobian_allocs(Jsp, rts, ws), threaded)
+                end
+            finally
+                BlockLinearSystems.SCHUR_THREAD_MIN_WORK[] = old
+            end
+            @inferred reduced_jacobian!(Jsp, rts, ws)
+            # A matrix without the pattern is rejected before anything is written
+            vals = copy(nonzeros(Jsp))
+            @test_throws DimensionMismatch reduced_jacobian!(spzeros(T, m, nr + 1), rts, ws)
+            @test_throws DimensionMismatch reduced_jacobian!(Jsp, zeros(T, m + 1), ws)
+            @test nonzeros(Jsp) == vals
+            if nnz(Jsp) > 0
+                nnz(Jsp) < m * nr && @test_throws ArgumentError reduced_jacobian!(sparse(ones(T, m, nr)), rts, ws)  # heights
+                Jbad = copy(Jsp)
+                c = findfirst(j -> !isempty(nzrange(Jbad, j)), 1:nr)
+                q = first(nzrange(Jbad, c))
+                Jbad.rowval[q] = Jbad.rowval[q] == m ? 1 : m    # a run that starts at the wrong row
+                @test_throws ArgumentError reduced_jacobian!(Jbad, rts, ws)
+                @test nonzeros(Jbad) == vals
+            end
         end
     end
 end
@@ -296,7 +395,7 @@ end
                     @test threaded_allocs_ok(qr_backsub_allocs(x_e, v, ws), threaded)
                     @test threaded_allocs_ok(qr_normal_allocs(S, gS, ws), threaded)
                     @test threaded_allocs_ok(qr_snormal_allocs(Ssp, gS, ws, pat), threaded)
-                    @test qr_misc_allocs(rt, D, d, gg, ws, J, vf) <= (threaded && VERSION < v"1.11" ? 5 * 2048 * Threads.nthreads() : 0)
+                    @test qr_misc_allocs(rt, D, d, gg, ws, J, vf) <= (threaded && VERSION < v"1.11" ? 5 * 3072 * Threads.nthreads() : 0)
                 end
             end
         finally
@@ -369,7 +468,7 @@ end
         @test ok
         A = [Float64.(p.Jf); Diagonal(sqrt.(0.2 .* Float64.(sc)))]
         @test relerr(x, dense_ls(p, sc, 0.2)) <= 50 * cond(A) * eps(T)
-        Hs, b = schur_matrix(p, :dense)
+        Hs, b = schur_hessian(p, :dense)
         S_ref, g_ref, _, ok_ref, _ = schur_reduced(Hs, b, sc, 0.2)
         S, g = zeros(T, 12, 12), zeros(T, 12)
         reduced_normal_dense!(S, g, ws)

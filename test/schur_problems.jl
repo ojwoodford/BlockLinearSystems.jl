@@ -8,7 +8,7 @@ using Random, LinearAlgebra, SparseArrays, StaticArrays, Static, Test, BlockLine
 
 A random, strictly diagonally dominant (hence positive definite) bipartite system with retained
 variables first and eliminated variables second, in full dense form plus everything needed to build
-`SchurBlockMatrix` objects from it.
+`SchurBlockHessian` objects from it.
 """
 struct SchurTestProblem
     H::Matrix{Float64}
@@ -74,17 +74,17 @@ function fill_ce!(p::SchurTestProblem, structure::SchurStructure, E_data, C_data
     return nothing
 end
 
-function dense_schur_matrix(p::SchurTestProblem; nchunks=1)
+function dense_schur_hessian(p::SchurTestProblem; nchunks=1)
     structure = schur_structure(p; nchunks)
     n_r = nr(p)
     R = p.H[1:n_r, 1:n_r]
     E_data = zeros(sum(abs2, p.e_dims))
     C_data = zeros(structure.coffsets[end] + Int(structure.r_dims[structure.entry_retained[end]]) * Int(structure.e_dims[end]) - 1)
     fill_ce!(p, structure, E_data, C_data)
-    return SchurBlockMatrix(structure, R, E_data, C_data)
+    return SchurBlockHessian(structure, R, E_data, C_data)
 end
 
-function sparse_schur_matrix(p::SchurTestProblem; nchunks=1)
+function sparse_schur_hessian(p::SchurTestProblem; nchunks=1)
     structure = schur_structure(p; nchunks)
     pattern = build_schur_pattern(structure)
     coords = Tuple{Int, Int}[]
@@ -103,7 +103,7 @@ function sparse_schur_matrix(p::SchurTestProblem; nchunks=1)
     E_data = zeros(sum(abs2, p.e_dims))
     C_data = zeros(structure.coffsets[end] + Int(structure.r_dims[structure.entry_retained[end]]) * Int(structure.e_dims[end]) - 1)
     fill_ce!(p, structure, E_data, C_data)
-    return SchurBlockMatrix(structure, R, E_data, C_data)
+    return SchurBlockHessian(structure, R, E_data, C_data)
 end
 
 "Reference solution: dense Cholesky of the full system with `lambda * diag(damping)` added to the diagonal."
@@ -155,7 +155,7 @@ using Polyester
 Solve `(H + lambda * diag(scaling)) x = b` with the public Schur kernels only: reduce, dense or sparse
 Cholesky of the reduced system, back-substitution.
 """
-function schur_solve(H::SchurBlockMatrix{T}, b, scaling, lambda; nchunks=1) where T
+function schur_solve(H::SchurBlockHessian{T}, b, scaling, lambda; nchunks=1) where T
     st = H.structure
     nr = st.nr
     n = length(b)
@@ -186,7 +186,7 @@ end
     for p in (standard_problem(), coupled_groups_problem(), mixed_dims_problem())
         n = length(p.b)
         scalings = ("I" => ones(n), "D'D" => abs.(diag(p.H)), "wide-range" => exp.(range(-4, 8; length=n)))
-        for make in (dense_schur_matrix, sparse_schur_matrix), nchunks in (1, 3), (sname, scaling) in scalings, lambda in (0.0, 0.3)
+        for make in (dense_schur_hessian, sparse_schur_hessian), nchunks in (1, 3), (sname, scaling) in scalings, lambda in (0.0, 0.3)
             x, ok = schur_solve(make(p; nchunks), p.b, scaling, lambda; nchunks)
             x_ref = reference_solve(p, lambda, scaling)
             @test ok
@@ -194,13 +194,20 @@ end
         end
     end
     # Each eliminated block size on its own, including the extremes and the static/dynamic boundary
-    for de in (1, 3, 4, 5, 7, 8, 9, 10, 20, 255)
+    for de in (1, 3, 4, 5, 7, 8, 9, 10, 20, 255, 300)
         q = SchurTestProblem(Random.Xoshiro(de), [6, 6], [de, de], [[1, 2], [1]])
-        for make in (dense_schur_matrix, sparse_schur_matrix)
+        for make in (dense_schur_hessian, sparse_schur_hessian)
             x, ok = schur_solve(make(q), q.b, ones(length(q.b)), 0.2)
             x_ref = reference_solve(q, 0.2, ones(length(q.b)))
             @test ok && norm(x - x_ref) <= 1e-8 * norm(x_ref)
         end
+    end
+    # A retained and an eliminated block above 255, the old limit (R9)
+    q = SchurTestProblem(Random.Xoshiro(256), [6, 260], [300, 4], [[1, 2], [2]])
+    for make in (dense_schur_hessian, sparse_schur_hessian)
+        x, ok = schur_solve(make(q), q.b, ones(length(q.b)), 0.2)
+        x_ref = reference_solve(q, 0.2, ones(length(q.b)))
+        @test ok && norm(x - x_ref) <= 1e-8 * norm(x_ref)
     end
 end
 
@@ -234,7 +241,7 @@ end
     @test cond(p.H) > 1e7                        # ill conditioned: a forward-error check would be meaningless
     ev = eigvals(Symmetric(p.H))
     @test ev[1] > -1e-12 && ev[1] < 1e-12        # exactly singular along the gauge direction
-    for make in (dense_schur_matrix, sparse_schur_matrix), lambda in (1e-6, 1e-3, 0.1)
+    for make in (dense_schur_hessian, sparse_schur_hessian), lambda in (1e-6, 1e-3, 0.1)
         scaling = ones(n)
         x, ok = schur_solve(make(p), p.b, scaling, lambda)
         @test ok
@@ -250,7 +257,7 @@ end
         @test cond(p.H) <= 1e4
         n = length(p.b)
         nr_ = nr(p)
-        for make in (dense_schur_matrix, sparse_schur_matrix), lambda in (0.0, 0.3)
+        for make in (dense_schur_hessian, sparse_schur_hessian), lambda in (0.0, 0.3)
             x, ok = schur_solve(make(p), p.b, ones(n), lambda)
             x_ref = reference_solve(p, lambda, ones(n))
             @test ok
@@ -261,8 +268,8 @@ end
     end
 end
 
-@testset "copy_structure(::SchurBlockMatrix) shares nothing mutable (B1)" begin
-    for make in (dense_schur_matrix, sparse_schur_matrix)
+@testset "copy_structure(::SchurBlockHessian) shares nothing mutable (B1)" begin
+    for make in (dense_schur_hessian, sparse_schur_hessian)
         H = make(standard_problem())
         T = copy_structure(H)
         @test T.structure === H.structure
@@ -283,7 +290,7 @@ end
     for de in (1, 2, 6, 12)   # closed forms (1 and 2), generic static tier and dynamic tier
         rng = Random.Xoshiro(de)
         q = SchurTestProblem(rng, [6, 6], [de, de], [[1, 2], [1, 2]])
-        H = dense_schur_matrix(q)
+        H = dense_schur_hessian(q)
         eo = H.structure.eoffsets[2]
         v = randn(rng, de)
         H.E_data[eo:eo+de^2-1] .= de == 1 ? [0.0] : vec(v * v')   # rank 1 is singular only for de > 1
@@ -298,7 +305,7 @@ end
         @test ok2
     end
     q = SchurTestProblem(Random.Xoshiro(3), [6, 6], [12, 12, 5, 5], [[1, 2], [1], [2], [1, 2]])
-    for make in (dense_schur_matrix, sparse_schur_matrix)
+    for make in (dense_schur_hessian, sparse_schur_hessian)
         H = make(q)
         n = length(q.b)
         st = H.structure
@@ -316,6 +323,45 @@ end
         @test run1()
         bp, onesp = collect(view(q.b, 13:n)), ones(n - 12)
         @test (@allocated run1()) < 2048   # views and the closure only; the kernels themselves allocate nothing
+    end
+end
+
+@testset "λ and the scalings must be finite and non-negative, checked before any work (AB5)" begin
+    p = standard_problem()
+    n = length(p.b)
+    bad = (-0.1, NaN, Inf)
+    for make in (dense_schur_hessian, sparse_schur_hessian)
+        H = make(p)
+        st = H.structure
+        nr = st.nr
+        b_r, b_e = p.b[1:nr], p.b[nr+1:n]
+        ws = SchurReductionWorkspace{Float64}(st, 1)
+        ok_r, ok_e = ones(nr), ones(n - nr)
+        if H.R isa Matrix
+            S = zeros(nr, nr)
+            reset! = (sc_r, lambda) -> reset_schur_dense!(S, H.R, sc_r, lambda, ws)
+            reduce! = (sc_e, lambda) -> reduce_schur_dense!(S, zeros(nr), b_r, b_e, sc_e, lambda, st, H.E_data, H.C_data, ws)
+            Sdata = S
+        else
+            pattern = build_schur_pattern(st, Float64; extra_blocks=retained_block_pairs(H.R))
+            S = pattern.S_sparse
+            r_to_s = build_r_to_s_map(H.R, pattern, st.boffsets_r)
+            reset! = (sc_r, lambda) -> reset_schur_sparse!(S.nzval, H.R.data, r_to_s, pattern.diag_inds, sc_r, lambda, ws)
+            reduce! = (sc_e, lambda) -> reduce_schur_sparse!(S, zeros(nr), b_r, b_e, sc_e, lambda, st, H.E_data, H.C_data,
+                pattern.block_colptr, pattern.block_rowval, pattern.block_row_offsets, pattern.col_heights, ws)
+            Sdata = S.nzval
+        end
+        badvecs(m) = ([fill(1.0, m - 1); -1.0], [NaN; ones(m - 1)], [ones(m - 1); Inf])
+        cases = [[(reset!, ok_r, l) for l in bad]; [(reset!, v, 0.1) for v in badvecs(nr)];
+                 [(reduce!, ok_e, l) for l in bad]; [(reduce!, v, 0.1) for v in badvecs(n - nr)]]
+        for (f, sc, lambda) in cases
+            fill!(Sdata, 7.0); fill!(ws.E_inv_data, 7.0)
+            @test_throws ArgumentError f(sc, lambda)
+            @test all(==(7.0), Sdata)
+            @test all(==(7.0), ws.E_inv_data)
+        end
+        reset!(zeros(nr), 0.0)                              # zero is allowed
+        @test reduce!(zeros(n - nr), 0.0)
     end
 end
 
@@ -338,7 +384,7 @@ end
     try
         BlockLinearSystems.SCHUR_THREAD_MIN_WORK[] = 0
         x_ref = reference_solve(p, 0.4, ones(length(p.b)))
-        for make in (dense_schur_matrix, sparse_schur_matrix)
+        for make in (dense_schur_hessian, sparse_schur_hessian)
             x, ok = schur_solve(make(p; nchunks=3), p.b, ones(length(p.b)), 0.4; nchunks=3)
             @test ok && norm(x - x_ref) <= 1e-10 * norm(x_ref)
         end
@@ -351,11 +397,11 @@ end
     p = standard_problem()
     n = length(p.b)
     x_ref = reference_solve(p, 0.3, ones(n))
-    for make in (dense_schur_matrix, sparse_schur_matrix)
+    for make in (dense_schur_hessian, sparse_schur_hessian)
         H = make(p)
         B32 = H.R isa Matrix ? Float32.(H.R) :
               SparseBlockLinearSystem{Float32}(Float32.(H.R.data), H.R.indices, H.R.indicestransposed, H.R.rowblocksizes, H.R.columnblocksizes, H.R.m, H.R.n)
-        H32 = SchurBlockMatrix(H.structure, B32, Float32.(H.E_data), Float32.(H.C_data))
+        H32 = SchurBlockHessian(H.structure, B32, Float32.(H.E_data), Float32.(H.C_data))
         x, ok = schur_solve(H32, Float32.(p.b), ones(Float32, n), 0.3)
         @test ok && eltype(x) == Float32
         @test norm(Float64.(x) - x_ref) <= 1e-3 * norm(x_ref)
@@ -365,15 +411,51 @@ end
 # Measured inside a function: @allocated at a testset's top level counts spurious boxing on Julia 1.10
 allocs_dot(x, H, y) = @allocated dot(x, H, y)
 
+# The grouping SchurStructure built by hand before R10: maximal ranges of adjacent eliminated blocks of one dimension
+function old_e_groups(e_dims)
+    groups, sizes = UnitRange{Int}[], Int[]
+    for (e, d) in enumerate(e_dims)
+        if !isempty(sizes) && sizes[end] == d
+            groups[end] = first(groups[end]):e
+        else
+            push!(groups, e:e)
+            push!(sizes, d)
+        end
+    end
+    return groups, sizes
+end
+
+@testset "SchurStructure holds its block sizes as BlockRLEs; the runs of e_dims are the old groups (R10)" begin
+    for (e_dims, nchunks) in (([3, 3, 9, 9, 9, 1, 3], 1), ([3, 3, 9, 9, 9, 1, 3], 3), (Int[], 2), ([12], 4))
+        st = SchurStructure([6, 3, 6], e_dims, [[1 + (e % 3)] for e in eachindex(e_dims)]; nchunks)
+        @test st.r_dims isa BlockRLE{UInt16, Int} && st.e_dims isa BlockRLE{UInt16, Int}
+        @test st.r_dims == [6, 3, 6] && st.e_dims == e_dims
+        groups, sizes = old_e_groups(e_dims)
+        runs = BlockLinearSystems.nruns(st.e_dims)
+        @test [BlockLinearSystems.runblockrange(st.e_dims, k) for k in 1:runs] == groups
+        @test [BlockLinearSystems.runblocksize(st.e_dims, k) for k in 1:runs] == sizes
+        # chunks is indexed by run, and each run's chunks cover it
+        @test length(st.chunks) == runs
+        @test all(reduce(vcat, collect.(st.chunks[k])) == collect(groups[k]) for k in 1:runs)
+        @test st.boffsets_r == [1, 7, 10] && st.boffsets_e == cumsum([1; e_dims])[1:end-1]
+        @test !hasfield(SchurStructure, :e_groups) && !hasfield(SchurStructure, :e_sizes)
+    end
+    # The dimension errors come from BlockRLE, in its generic wording
+    msg(f) = try f(); "no error" catch e; e isa ArgumentError ? e.msg : string(typeof(e)) end
+    @test msg(() -> SchurStructure([6, 0], [3], [[1]])) == "Block 2 has dimension 0; dimensions must be between 1 and 65535"
+    @test msg(() -> SchurStructure([6], [3, 65536], [[1], [1]])) == "Block 2 has dimension 65536; dimensions must be between 1 and 65535"
+end
+
 @testset "SchurStructure validates its inputs (B13)" begin
     ok = SchurStructure([6, 6], [3, 3], [[1, 2], [2]])
     @test ok.neblocks == 2
     @test_throws DimensionMismatch SchurStructure([6, 6], [3, 3], [[1, 2]])
-    @test_throws ArgumentError SchurStructure([6, 6], [3, 256], [[1, 2], [2]])    # eliminated block over 255
-    @test SchurStructure([6, 6], [4, 255], [[1, 2], [2]]).neblocks == 2            # any size up to 255 is supported
+    @test_throws ArgumentError SchurStructure([6, 6], [3, 65536], [[1, 2], [2]])  # eliminated block over 65535
+    @test SchurStructure([6, 6], [4, 65535], [[1, 2], [2]]).neblocks == 2          # any size up to 65535 is supported
+    @test SchurStructure([6, 65535], [4, 256], [[1, 2], [2]]).nr == 65541
     @test_throws ArgumentError SchurStructure([6, 6], [3, 0], [[1, 2], [2]])      # empty eliminated block
     @test_throws ArgumentError SchurStructure([6, 0], [3, 3], [[1, 2], [2]])      # empty retained block
-    @test_throws ArgumentError SchurStructure([6, 300], [3, 3], [[1, 2], [2]])    # retained block over 255
+    @test_throws ArgumentError SchurStructure([6, 65536], [3, 3], [[1, 2], [2]])  # retained block over 65535
     @test_throws ArgumentError SchurStructure([6, 6], [3, 3], [[1, 2], [3]])      # retained block out of range
     @test_throws ArgumentError SchurStructure([6, 6], [3, 3], [[1, 0], [2]])
     @test_throws ArgumentError SchurStructure([6, 6], [3, 3], [[1, 2, 1], [2]])   # duplicate coupling
@@ -384,7 +466,7 @@ end
 
 @testset "build_r_to_s_map: block-level and scalar-level searches agree (M6)" begin
     for p in (standard_problem(), coupled_groups_problem())
-        H = sparse_schur_matrix(p)
+        H = sparse_schur_hessian(p)
         pattern = build_schur_pattern(H.structure; extra_blocks=retained_block_pairs(H.R))
         boffsets = H.structure.boffsets_r
         m_scalar = build_r_to_s_map(H.R, pattern.S_sparse, boffsets)
@@ -400,9 +482,9 @@ end
     end
     # Missing block gives an assertion rather than a wrong slot
     p = coupled_groups_problem()
-    H = sparse_schur_matrix(p)
+    H = sparse_schur_hessian(p)
     plain = build_schur_pattern(H.structure)
-    @test_throws AssertionError build_r_to_s_map(H.R, plain, H.structure.boffsets_r)
+    @test_throws ArgumentError build_r_to_s_map(H.R, plain, H.structure.boffsets_r)
 end
 
 @testset "retained-retained couplings without a shared eliminated variable (B4)" begin
@@ -419,9 +501,9 @@ end
     @test_throws ArgumentError build_schur_pattern(structure; extra_blocks=[(1, 5)])
 
     # The sparse system fails to build a slot for R's coupling without the extra pairs ...
-    H = sparse_schur_matrix(p)
+    H = sparse_schur_hessian(p)
     @test Set(retained_block_pairs(H.R)) ⊇ Set([(3, 1), (4, 2)])
-    @test_throws AssertionError build_r_to_s_map(H.R, plain.S_sparse, structure.boffsets_r)
+    @test_throws ArgumentError build_r_to_s_map(H.R, plain.S_sparse, structure.boffsets_r)
     # ... and builds one with them
     pattern = build_schur_pattern(structure; extra_blocks=retained_block_pairs(H.R))
     r_to_s = build_r_to_s_map(H.R, pattern.S_sparse, structure.boffsets_r)
@@ -448,21 +530,21 @@ end
 # Measured inside functions: @allocated at a testset's top level counts spurious boxing on Julia 1.10
 allocs_zero!(H) = @allocated zero!(H)
 
-@testset "SchurBlockMatrix carries an optional pattern (A1)" begin
-    for make in (dense_schur_matrix, sparse_schur_matrix)
+@testset "SchurBlockHessian carries an optional pattern (A1)" begin
+    for make in (dense_schur_hessian, sparse_schur_hessian)
         H0 = make(standard_problem())
         st = H0.structure
         @test H0.pattern === nothing
         extra = H0.R isa Matrix ? () : retained_block_pairs(H0.R)
         pat = build_schur_pattern(st; extra_blocks=extra)
-        H = SchurBlockMatrix(st, H0.R, H0.E_data, H0.C_data; pattern=pat)
+        H = SchurBlockHessian(st, H0.R, H0.E_data, H0.C_data; pattern=pat)
         @test H.pattern === pat
         @test H.R === H0.R
         # positional (field-order) forms still work and carry no pattern
-        @test SchurBlockMatrix(H0.R, H0.E_data, H0.C_data, st).pattern === nothing
-        @test SchurBlockMatrix{Float64, typeof(H0.R)}(H0.R, H0.E_data, H0.C_data, st).pattern === nothing
+        @test SchurBlockHessian(H0.R, H0.E_data, H0.C_data, st).pattern === nothing
+        @test SchurBlockHessian{Float64, typeof(H0.R)}(H0.R, H0.E_data, H0.C_data, st).pattern === nothing
         # extra entries on the named tuple are accepted
-        @test SchurBlockMatrix(st, H0.R, H0.E_data, H0.C_data; pattern=merge(pat, (S_factor = 1,))).pattern.S_factor == 1
+        @test SchurBlockHessian(st, H0.R, H0.E_data, H0.C_data; pattern=merge(pat, (S_factor = 1,))).pattern.S_factor == 1
 
         # copy shares the pattern, nothing mutable
         Tc = copy_structure(H)
@@ -471,7 +553,7 @@ allocs_zero!(H) = @allocated zero!(H)
 
         # wrong size
         bad = (S_sparse = spzeros(st.nr + 1, st.nr + 1),)
-        @test_throws ArgumentError SchurBlockMatrix(st, H0.R, H0.E_data, H0.C_data; pattern=bad)
+        @test_throws ArgumentError SchurBlockHessian(st, H0.R, H0.E_data, H0.C_data; pattern=bad)
 
         # concrete types and allocation-free hot paths with a pattern attached
         @test isconcretetype(typeof(H))
@@ -484,4 +566,43 @@ allocs_zero!(H) = @allocated zero!(H)
         zero!(H)
         @test all(iszero, H.E_data) && all(iszero, H.C_data)
     end
+end
+
+@testset "Input validation throws ArgumentError or DimensionMismatch, not AssertionError (AB12)" begin
+    # expand_block_perm and sort_schur_blocks: lengths
+    @test_throws DimensionMismatch BlockLinearSystems.expand_block_perm([1, 2], [2, 3, 4])
+    @test_throws DimensionMismatch sort_schur_blocks([true, false], [2, 3, 4], [[2], Int[]])
+    @test_throws DimensionMismatch sort_schur_blocks([true, false], [2, 3], [[2]])
+    @test sort_schur_blocks([true, false], [2, 3], [[2], Int[]]) isa Vector{Int}
+
+    # build_r_to_s_map, all three methods: an entry of R missing from S
+    st = SchurStructure([2, 2], [1, 1], [[1], [2]])                  # S block diagonal: blocks (1, 1) and (2, 2)
+    pattern = build_schur_pattern(st)
+    R_sys = SparseBlockLinearSystem{Float64}([(1, 1), (2, 1), (2, 2)], [2, 2])   # R couples retained blocks 1 and 2
+    @test_throws ArgumentError build_r_to_s_map(R_sys, pattern, st.boffsets_r)
+    @test_throws ArgumentError build_r_to_s_map(R_sys, pattern.S_sparse, st.boffsets_r)           # off-diagonal entry
+    S_nodiag = sparse([2, 3, 4], [2, 3, 4], 1.0, 4, 4)                                           # no (1, 1)
+    @test_throws ArgumentError build_r_to_s_map(SparseBlockLinearSystem{Float64}([(1, 1), (2, 2)], [2, 2]), S_nodiag, st.boffsets_r)
+    @test_throws ArgumentError build_r_to_s_map(sparse([1, 2], [1, 2], 1.0, 4, 4), S_nodiag)
+
+    # reduce_schur_sparse!: a pattern that lacks a block the reduction needs
+    st2 = SchurStructure([2, 2], [1], [[1, 2]])                       # couples retained blocks 1 and 2
+    p2 = build_schur_pattern(st2)
+    H2 = SchurBlockHessian(st2, R_sys, ones(1), ones(4))
+    ws2 = SchurReductionWorkspace{Float64}(st2, 1)
+    S = copy(pattern.S_sparse)                                        # block diagonal: (1, 2) missing
+    @test_throws ArgumentError reduce_schur_sparse!(S, zeros(4), zeros(4), zeros(1), ones(1), 0.0, st2, H2.E_data, H2.C_data,
+        pattern.block_colptr, pattern.block_rowval, pattern.block_row_offsets, pattern.col_heights, ws2)
+    S2 = copy(p2.S_sparse)
+    @test reduce_schur_sparse!(S2, zeros(4), zeros(4), zeros(1), ones(1), 0.0, st2, H2.E_data, H2.C_data,
+        p2.block_colptr, p2.block_rowval, p2.block_row_offsets, p2.col_heights, ws2)
+
+    # reduced_normal_sparse!: the same, on the QR path
+    jst = SchurJacobianStructure(st2, [3])
+    J = SchurBlockJacobian{Float64, Matrix{Float64}}(jst)
+    J.data .= 1:length(J.data)
+    ws = QRReductionWorkspace(J)
+    @test reduce_qr!(ws, J, ones(1), 1.0)
+    @test_throws ArgumentError reduced_normal_sparse!(copy(pattern.S_sparse), zeros(4), ws, pattern)
+    @test reduced_normal_sparse!(copy(p2.S_sparse), zeros(4), ws, p2)
 end

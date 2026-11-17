@@ -26,6 +26,11 @@ end
     block(b, 1, 3, static(3), static(1)) .= [10.; 11; 12]
     block(b, 3, 3) .= 13.
 
+    # A pattern of the wrong size: the message states the size the check requires, in the orientation given (AB6)
+    @test_throws DimensionMismatch("Size of sparsity pattern must match block dimensions: expected (3, 4), got (4, 3)") SparseBlockLinearSystem{Float64}(TransposedPattern(sparse(pattern_t')), [3, 3, 1, 1], [2, 3, 1])
+    @test_throws DimensionMismatch("Size of sparsity pattern must match block dimensions: expected (3, 4), got (4, 3)") SparseBlockLinearSystem{Float64}(sparse(pattern_t'), [3, 3, 1, 1], [2, 3, 1]; transposed=true)
+    @test_throws DimensionMismatch("Size of sparsity pattern must match block dimensions: expected (4, 3), got (3, 4)") SparseBlockLinearSystem{Float64}(pattern_t, [3, 3, 1, 1], [2, 3, 1])
+
     # 2. Construct using standard (natural orientation) pattern
     pattern_natural = sparse(pattern_t')
     b_nat = SparseBlockLinearSystem{Float64}(pattern_natural, [3, 3, 1, 1], [2, 3, 1])
@@ -120,8 +125,8 @@ end
     test_block_alloc(b) # warmup
     @test (@allocated test_block_alloc(b)) == 0
 
-    # Block dimensions limit (> 255)
-    @test_throws ArgumentError SparseBlockLinearSystem{Float64}(sparse([true;;]), [300], [300])
+    # Block dimensions limit (> 65535)
+    @test_throws ArgumentError SparseBlockLinearSystem{Float64}(sparse([true;;]), [65536], [65536])
 
     # Symmetric lower-triangular BSM tests
     out2 = [0  0  0   0   0   0 ;
@@ -183,6 +188,16 @@ end
     @test isempty(empty_mat)
     @test_throws DimensionMismatch symmetrifyfull!(zeros(Int64, 3, 3), bs, [2, 3])
     @test_throws BoundsError symmetrifyfull!(zeros(Int64, 2, 2), bs, [10])
+    # A repeated block is an error that names it; a list in any order gives the permuted principal submatrix (AB9)
+    @test_throws ArgumentError("Block 2 is listed more than once") symmetrifyfull!(zeros(Int64, 7, 7), bs, [2, 3, 2])
+    @test_throws ArgumentError("Block 1 is listed more than once") symmetrifyfull!(zeros(Int64, 4, 4), bs, [1, 1])
+    scalar = (1:2, 3:5, 6:6)   # the scalar indices of blocks 1, 2 and 3
+    for order in ([3, 1], [2, 1], [3, 2, 1], [2, 3, 1], [1, 3])
+        idx = reduce(vcat, collect.(scalar[order]))
+        sub = zeros(Int64, length(idx), length(idx))
+        symmetrifyfull!(sub, bs, order)
+        @test sub == outsym[idx, idx]
+    end
 
     # Val static sizing
     @test block(bs, 2, 2, Val(3), Val(3)) isa SizedMatrix{3, 3}
@@ -235,11 +250,6 @@ end
     @test sbls_vec_sq.columnblocksizes isa BlockRLE
     sbls_vec_rect = SparseBlockLinearSystem{Float64}(5, sp_mat, [2, 2], [3, 1])
     @test sbls_vec_rect.rowblocksizes !== sbls_vec_rect.columnblocksizes
-
-    sbls_sub1 = SparseBlockLinearSystem{Float64}(bs_diag, 2)
-    @test sbls_sub1.m == 2 && sbls_sub1.n == 2
-    sbls_sub2 = SparseBlockLinearSystem{Float64}(bs_diag, 2, 4)
-    @test sbls_sub2.m == 2 && sbls_sub2.n == 4
 
     rbs_sq = [2, 2]
     sbls_raw_sq = SparseBlockLinearSystem{Float64}(bs_diag.data, bs_diag.indices, bs_diag.indicestransposed, rbs_sq, rbs_sq, 4, 4)
