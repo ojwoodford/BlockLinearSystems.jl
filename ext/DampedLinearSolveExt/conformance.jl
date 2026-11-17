@@ -78,7 +78,34 @@ function dense_residual(J::SchurBlockJacobian)
     return reduce(vcat, [table_view(J, t)[1:data_rows(jst, t), end] for t in 1:jst.ntables])
 end
 
-DampedLinearSolve.conformance_matrix(A::SchurJacobianHessian) = DampedLinearSolve.conformance_gram(dense_jacobian(A.J))
+DampedLinearSolve.conformance_matrix(A::SchurJacobianHessian) = conformance_gram(dense_jacobian(A.J))
+# JᵀJ, summed in row order (as the column norms are summed), so its diagonal equals them exactly
+function conformance_gram(J::AbstractMatrix)
+    n = size(J, 2)
+    M = Matrix{Float64}(undef, n, n)
+    @inbounds for j in 1:n, i in 1:n
+        total = 0.0
+        for k in axes(J, 1)
+            total += J[k, i] * J[k, j]
+        end
+        M[i, j] = total
+    end
+    return M
+end
+# A dense m × n factor J with JᵀJ = M (its largest min(m, n) eigenpairs, through a fixed orthonormal basis; a
+# non-finite diagonal entry of M is written into the first row of J), as DampedLinearSolve's tall storage is filled
+function conformance_factor(M::AbstractMatrix, m::Integer, n::Integer)
+    k = min(m, n)
+    Mf = [isfinite(M[i, j]) ? Float64(M[i, j]) : 0.0 for i in 1:n, j in 1:n]
+    E = eigen(Symmetric((Mf + Mf') / 2))
+    idx = n-k+1:n
+    W = Matrix(qr([sin(0.9 * i + 1.1 * j + 0.2 * i * j) for i in 1:m, j in 1:k]).Q)[:, 1:k]
+    J = W * Diagonal(sqrt.(max.(E.values[idx], 0.0))) * E.vectors[:, idx]'
+    for i in 1:n
+        isfinite(M[i, i]) || (J[1, i] = M[i, i])
+    end
+    return J
+end
 # A factor Jd with JᵀJ = M that the tables can hold exactly, when M has the pattern of JᵀJ and is positive
 # definite: the Cholesky factor U of M with the eliminated variables first. Its rows for eliminated block e are
 # [coupling | U_e], nonzero only in e's coupled retained blocks, and go in the first d_e rows of e's table; its
@@ -114,7 +141,7 @@ end
 
 function DampedLinearSolve.conformance_fill!(A::SchurJacobianHessian, M::AbstractMatrix)
     J = A.J
-    Jd = something(exact_factor(J, M), DampedLinearSolve.conformance_factor(M, jacobian_nrows(J), jacobian_ncols(J)))
+    Jd = something(exact_factor(J, M), conformance_factor(M, jacobian_nrows(J), jacobian_ncols(J)))
     foreach_table_block(J) do t, rows, cols, tcols
         table_view(J, t)[1:length(rows), tcols] .= Jd[rows, cols]
     end

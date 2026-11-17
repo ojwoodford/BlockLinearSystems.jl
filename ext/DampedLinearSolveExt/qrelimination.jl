@@ -48,7 +48,7 @@ Base.size(A::SchurJacobianHessian) = (n = length(A.colnorm2); (n, n))
 Base.size(A::SchurJacobianHessian, d::Integer) = size(A)[d]
 DampedLinearSolve.markstale!(A::SchurJacobianHessian) = (A.normsstale = true; A)
 DampedLinearSolve.quadform(A::SchurJacobianHessian, v::AbstractVector) = jtj_quadform(A.J, v)
-function DampedLinearSolve.colnorms2!(A::SchurJacobianHessian)
+function colnorms2!(A::SchurJacobianHessian)
     if A.normsstale
         jtj_diag!(A.colnorm2, A.J)
         A.normsstale = false
@@ -57,7 +57,7 @@ function DampedLinearSolve.colnorms2!(A::SchurJacobianHessian)
 end
 function DampedLinearSolve.max_diag(A::SchurJacobianHessian)
     md = 0.0
-    for d in DampedLinearSolve.colnorms2!(A)
+    for d in colnorms2!(A)
         md = max(md, d)
     end
     return md
@@ -68,21 +68,24 @@ DampedLinearSolve.getJ(A::SchurJacobianHessian) = A.J
 DampedLinearSolve.getr(A::SchurJacobianHessian) = A.r
 DampedLinearSolve.gradient!(g::AbstractVector, A::SchurJacobianHessian) = BlockLinearSystems.jtr!(g, A.J)
 
-# The reduced solvers' storage, built once by `make_reduced` (the Krylov extension adds :lsmr's)
-struct DenseQRReduced
-    Aug::Matrix{Float64}       # (m̃ + n_r) × (n_r + 1): [J̃ r̃; √(λ s_r) 0], factored in place
-    tau::Vector{Float64}
-    work::Vector{Float64}
+# The reduced systems, built once with the system. Each but the sparse normal equations is a DampedLinearSolve system,
+# filled per solve from the QR-reduction workspace and solved through the contract:
+#   DenseQRReduced: min ‖[J̃; √(λ s_r)] x_r − [r̃; 0]‖ as an undamped dense tall system of m̃ + n_r rows, so that its one
+#     Householder QR is of the whole augmented matrix (the damping changes J̃, so nothing is kept between solves);
+#   DenseNormalReduced: S = J̃ᵀJ̃ + λ diag(s_r) (upper triangle) as an undamped dense system;
+#   SparseQRReduced: J̃ (fixed pattern) and r̃ as a sparse tall system damped by λ s_r (SPQR, analysed once);
+#   SparseNormalReduced: S (upper triangle) solved here, as the sparse Schur system is (see `sparse_reduced_solve!`);
+#   :lsmr: the system DampedLinearSolveKrylovExt builds for a QRReductionWorkspace (matrix-free LSMR on J̃).
+struct DenseQRReduced{S}
+    sys::S
 end
-struct DenseNormalReduced
-    S::Matrix{Float64}         # J̃ᵀJ̃ + λ diag(s_r), upper triangle, factored in place
-    g::Vector{Float64}         # J̃ᵀr̃
-    ldl::DenseLDLWorkspace     # Bunch-Kaufman, for :ldl and when Cholesky fails
+struct DenseNormalReduced{S}
+    sys::S
 end
-struct SparseQRReduced
-    Jt::SparseMatrixCSC{Float64, Int}   # J̃, its pattern fixed, filled per solve
-    rt::Vector{Float64}                 # r̃
-    spqr::SPQRWorkspace                 # the symbolic analysis of [J̃; √(λ s_r)], done once
+struct SparseQRReduced{S}
+    sys::S
+    Jt::SparseMatrixCSC{Float64, Int}   # getJ(getA(sys)): J̃, its pattern fixed
+    rt::Vector{Float64}                 # getr(getA(sys)): r̃
 end
 struct SparseNormalReduced{TF, TL, TC, P}
     S::SparseMatrixCSC{Float64, Int}
@@ -96,23 +99,25 @@ end
 
 const ReducedSym = Union{StaticSymbol{:auto}, StaticSymbol{:qr}, StaticSymbol{:cholesky}, StaticSymbol{:ldl}, StaticSymbol{:lsmr}}
 
-DampedLinearSolve.make_reduced(J::SchurBlockJacobian, linsolver) = make_reduced(J, static(DampedLinearSolve.linsolver_symbol(linsolver)))
-function DampedLinearSolve.make_reduced(J::SchurBlockJacobian{Float64, Matrix{Float64}}, ::Union{StaticSymbol{:auto}, StaticSymbol{:qr}})
+reduced_system(J::SchurBlockJacobian, ws, linsolver) = reduced_system(J, ws, static(linsolver_symbol(linsolver)))
+function reduced_system(J::SchurBlockJacobian{Float64, Matrix{Float64}}, ws, ::Union{StaticSymbol{:auto}, StaticSymbol{:qr}})
     jst = J.structure
     nr, mt = jst.schur.nr, reduced_nrows(jst)
-    lwork = DampedLinearSolve.geqrf_worksize(mt + nr, nr + 1)
-    return DenseQRReduced(zeros(mt + nr, nr + 1), zeros(min(mt + nr, nr + 1)), zeros(lwork))
+    sys = DampedLinearSolve.maketallsystem(mt + nr, nr, static(:qr))
+    dampen!(sys, 0.0)
+    return DenseQRReduced(sys)
 end
-function DampedLinearSolve.make_reduced(J::SchurBlockJacobian{Float64, Matrix{Float64}}, ::Union{StaticSymbol{:cholesky}, StaticSymbol{:ldl}})
-    nr = J.structure.schur.nr
-    return DenseNormalReduced(zeros(nr, nr), zeros(nr), DenseLDLWorkspace(nr))
+function reduced_system(J::SchurBlockJacobian{Float64, Matrix{Float64}}, ws, ::Union{StaticSymbol{:cholesky}, StaticSymbol{:ldl}})
+    sys = makelinearsystem(J.structure.schur.nr, static(:ldl))   # holds the Bunch-Kaufman workspace
+    return DenseNormalReduced(sys)
 end
 # QR whatever the storage: `:auto` is QR of J̃ for a sparse RType too (decided 2026-11-15, TP6)
-function DampedLinearSolve.make_reduced(J::SchurBlockJacobian{Float64, SparseMatrixCSC{Float64, Int}}, ::Union{StaticSymbol{:auto}, StaticSymbol{:qr}})
+function reduced_system(J::SchurBlockJacobian{Float64, SparseMatrixCSC{Float64, Int}}, ws, ::Union{StaticSymbol{:auto}, StaticSymbol{:qr}})
     Jt = build_reduced_jacobian_pattern(J.structure, Float64)
-    return SparseQRReduced(Jt, zeros(size(Jt, 1)), SPQRWorkspace(Jt))
+    sys = DampedLinearSolve.maketallsystem(Jt, J.structure.schur.nr, static(:qr))
+    return SparseQRReduced(sys, getJ(getA(sys)), getr(getA(sys)))
 end
-function DampedLinearSolve.make_reduced(J::SchurBlockJacobian{Float64, SparseMatrixCSC{Float64, Int}}, ::Union{StaticSymbol{:cholesky}, StaticSymbol{:ldl}})
+function reduced_system(J::SchurBlockJacobian{Float64, SparseMatrixCSC{Float64, Int}}, ws, ::Union{StaticSymbol{:cholesky}, StaticSymbol{:ldl}})
     jst = J.structure
     pattern = build_schur_pattern(jst.schur, Float64; extra_blocks = free_block_pairs(jst))
     S = copy(pattern.S_sparse)
@@ -121,7 +126,12 @@ function DampedLinearSolve.make_reduced(J::SchurBlockJacobian{Float64, SparseMat
     S_factor_ldl = ldl_analyze(Symmetric(S, :U))
     return SparseNormalReduced(S, zeros(jst.schur.nr), pattern, collect(Int, pattern.diag_inds), S_chol, S_factor, S_factor_ldl)
 end
-DampedLinearSolve.make_reduced(J::SchurBlockJacobian, ::StaticSymbol{S}) where S = throw(ArgumentError(linsolver_message(J, S)))
+# LSMR on J̃, matrix-free: DampedLinearSolveKrylovExt adds the system, for the reduction workspace it reads J̃ from
+function reduced_system(J::SchurBlockJacobian, ws, s::StaticSymbol{:lsmr})
+    hasmethod(DampedLinearSolve.maketallsystem, Tuple{typeof(ws), Int, typeof(s)}) || throw(ArgumentError(linsolver_message(J, :lsmr)))
+    return DampedLinearSolve.maketallsystem(ws, J.structure.schur.nr, s)
+end
+reduced_system(J::SchurBlockJacobian, ws, ::StaticSymbol{S}) where S = throw(ArgumentError(linsolver_message(J, S)))
 
 # The solvers accepted for each reduced storage, checked before anything is built or called
 reduced_linsolvers(::Type{Matrix{Float64}}) = (:auto, :qr, :cholesky, :ldl, :lsmr)
@@ -142,23 +152,26 @@ The linear system of a [`JacobianObjective`](@ref) with a `SchurBlockJacobian` p
 `(JᵀJ + λD) x = Jᵀr` solved by QR elimination of the eliminated blocks and a solve of the reduced problem in the
 retained variables. Nothing allocates after construction.
 """
-mutable struct QRSchurLinearSystem{RType, R} <: AbstractTallLinearSystem
+mutable struct QRSchurLinearSystem{RType, R} <: AbstractLinearSystem
     const A::SchurJacobianHessian{RType}
     const b::Vector{Float64}           # Jᵀr
     const x::Vector{Float64}
     const ws::QRReductionWorkspace{Float64}
-    const reduced::R                   # the reduced solver's storage
+    const reduced::R                   # the reduced system
+    const linsolver::Symbol            # the solver the reduced system was built for
     const unit::Vector{Float64}        # ones: the scaling of uniform damping
     const xr::Vector{Float64}          # x_r, n_r
     const xe::Vector{Float64}          # x_e
+    const sr::Vector{Float64}          # s_r, the retained part of the scaling, for a reduced system that is damped
     lambda::Float64
     scaling::Union{Nothing, Vector{Float64}}
 end
 function QRSchurLinearSystem(J::SchurBlockJacobian{Float64}, linsolver)
     n = jacobian_ncols(J)
     nr = J.structure.schur.nr
-    return QRSchurLinearSystem(SchurJacobianHessian(J), zeros(n), zeros(n), QRReductionWorkspace(J), make_reduced(J, linsolver),
-                               ones(n), zeros(nr), zeros(n - nr), 0.0, nothing)
+    ws = QRReductionWorkspace(J)
+    return QRSchurLinearSystem(SchurJacobianHessian(J), zeros(n), zeros(n), ws, reduced_system(J, ws, linsolver),
+                               linsolver_symbol(linsolver), ones(n), zeros(nr), zeros(n - nr), zeros(nr), 0.0, nothing)
 end
 DampedLinearSolve.isfinitesystem(ls::QRSchurLinearSystem) = all(isfinite, ls.A.J.data)   # the tables hold J and r
 
@@ -166,19 +179,26 @@ DampedLinearSolve.maketallsystem(J::SchurBlockJacobian{Float64}, n, linsolver) =
 
 DampedLinearSolve.zero!(ls::QRSchurLinearSystem) = (fill!(ls.b, 0.0); DampedLinearSolve.markstale!(ls.A); ls)
 
-# The trial system: its own tables (with the same entries), factored tables and gradient; the reduced solver's
-# storage and the scratch are shared, since only one of the two is solved at a time
+# The trial system: its own tables (with the same entries), factored tables and gradient; the reduced system and the
+# scratch are shared, since only one of the two is solved at a time and every solve refills the reduced system. LSMR's
+# reduced system reads J̃ from its own reduction workspace, so the trial system has its own.
 function DampedLinearSolve.copy_structure(ls::QRSchurLinearSystem{RType}) where RType
     J = ls.A.J
     At = SchurJacobianHessian(SchurBlockJacobian{Float64, RType}(copy(J.data), J.structure))
-    return QRSchurLinearSystem(At, zeros(length(ls.b)), ls.x, trial_workspace(ls.ws), ls.reduced, ls.unit, ls.xr, ls.xe, ls.lambda, ls.scaling)
+    ws = trial_workspace(ls.ws)
+    reduced = ls.linsolver === :lsmr ? reduced_system(J, ws, static(:lsmr)) : ls.reduced
+    return QRSchurLinearSystem(At, zeros(length(ls.b)), ls.x, ws, reduced, ls.linsolver, ls.unit, ls.xr, ls.xe, ls.sr, ls.lambda, ls.scaling)
 end
 DampedLinearSolve.sharex(ls::QRSchurLinearSystem, from) = ls.x === from.x ? ls :
-    QRSchurLinearSystem(ls.A, ls.b, from.x, ls.ws, ls.reduced, ls.unit, ls.xr, ls.xe, ls.lambda, ls.scaling)
+    QRSchurLinearSystem(ls.A, ls.b, from.x, ls.ws, ls.reduced, ls.linsolver, ls.unit, ls.xr, ls.xe, ls.sr, ls.lambda, ls.scaling)
 
 # The QR routes resolve a damping down to about eps² of the diagonal (as the tall systems do); those that form
 # S = J̃ᵀJ̃ only to about eps (as Cholesky of the normal equations)
+DampedLinearSolve.dampingfloor(ls::QRSchurLinearSystem) = eps(Float64)^2
 DampedLinearSolve.dampingfloor(ls::QRSchurLinearSystem{<:Any, <:Union{DenseNormalReduced, SparseNormalReduced}}) = eps(Float64)
+
+# The diagonal of JᵀJ, the squared column norms of J (from the tables, once per linearization)
+DampedLinearSolve.getdiag!(d::AbstractVector, ls::QRSchurLinearSystem) = copyto!(d, colnorms2!(ls.A))
 
 scaling_of(ls::QRSchurLinearSystem) = isnothing(ls.scaling) ? ls.unit : ls.scaling
 
@@ -191,7 +211,7 @@ function DampedLinearSolve.solve!(ls::QRSchurLinearSystem, s::ReducedSym)
     # A failed block (non-finite, or numerically singular, as an under-determined block is undamped) is reported
     # as the Schur systems report a singular eliminated block
     reduce_qr!(ls.ws, J, view(sc, nr+1:length(sc)), lambda) || return NotPositiveDefinite
-    status = solve_reduced!(ls, ls.reduced, s, lambda, view(sc, 1:nr))
+    status = reduced_solve!(ls, ls.reduced, s, lambda, view(sc, 1:nr))
     status == Success || return status
     backsubstitute!(ls.xe, ls.xr, ls.ws)
     @inbounds for i in 1:nr
@@ -203,70 +223,74 @@ function DampedLinearSolve.solve!(ls::QRSchurLinearSystem, s::ReducedSym)
     all(isfinite, ls.x) || return NotPositiveDefinite
     return Success
 end
-DampedLinearSolve.solve!(ls::QRSchurLinearSystem, ::StaticSymbol{S}) where S = solvermismatch(ls, S)
-DampedLinearSolve.builtfor(::DenseQRReduced) = ":auto or :qr"
-DampedLinearSolve.builtfor(::DenseNormalReduced) = ":cholesky or :ldl"
-DampedLinearSolve.builtfor(::SparseQRReduced) = ":auto or :qr"
-DampedLinearSolve.builtfor(::SparseNormalReduced) = ":cholesky or :ldl"
-DampedLinearSolve.solverworkspace(ls::QRSchurLinearSystem) = ls.reduced
+DampedLinearSolve.solve!(ls::QRSchurLinearSystem, ::StaticSymbol{S}) where S = reducedmismatch(ls, S)
+@noinline reducedmismatch(ls, asked) = throw(ArgumentError("solve! was asked for linsolver = :$asked, but this QRSchurLinearSystem was built for linsolver = :$(ls.linsolver). A linear system must be solved with the linsolver it was built with."))
+reduced_solve!(ls, red, s::StaticSymbol{S}, lambda, s_r) where S = reducedmismatch(ls, S)
 
-# Dense QR of [J̃ r̃; √(λ s_r) 0], then R x_r = q
-function DampedLinearSolve.solve_reduced!(ls::QRSchurLinearSystem, red::DenseQRReduced, ::Union{StaticSymbol{:auto}, StaticSymbol{:qr}}, lambda, s_r)
+# Dense: [J̃ r̃; √(λ s_r) 0] written into the undamped tall system, whose QR of the whole matrix then gives R x_r = q
+function reduced_solve!(ls::QRSchurLinearSystem, red::DenseQRReduced, ::Union{StaticSymbol{:auto}, StaticSymbol{:qr}}, lambda, s_r)
     nr = length(ls.xr)
-    Aug = red.Aug
-    mt = size(Aug, 1) - nr
-    reduced_jacobian!(view(Aug, 1:mt, 1:nr), view(Aug, 1:mt, nr + 1), ls.ws)
-    @inbounds for j in 1:nr+1, i in mt+1:mt+nr
-        Aug[i, j] = 0.0
+    sys = red.sys
+    A = getA(sys)
+    Jm, r = getJ(A), getr(A)
+    mt = size(Jm, 1) - nr
+    reduced_jacobian!(view(Jm, 1:mt, 1:nr), view(r, 1:mt), ls.ws)
+    @inbounds for j in 1:nr, i in mt+1:mt+nr
+        Jm[i, j] = 0.0
+    end
+    @inbounds for i in mt+1:mt+nr
+        r[i] = 0.0
     end
     @inbounds for i in 1:nr
-        Aug[mt + i, i] = sqrt(lambda * s_r[i])
+        Jm[mt + i, i] = sqrt(lambda * s_r[i])
     end
-    all(isfinite, Aug) || return NotPositiveDefinite
-    DampedLinearSolve.geqrf_ws!(Aug, red.tau, red.work)
-    (mt + nr >= nr && DampedLinearSolve.fullrank_upper(Aug, nr)) || return NotPositiveDefinite
-    @inbounds for i in 1:nr
-        ls.xr[i] = Aug[i, nr + 1]
-    end
-    DampedLinearSolve.backsubstitute!(ls.xr, Aug, nr)
-    return Success
+    markstale!(A)
+    status = solve!(sys, static(:qr))
+    status == Success && copyto!(ls.xr, getx(sys))
+    return status
 end
 
 # Sparse J̃ and r̃, then the damped least-squares problem by SPQR, as for a sparse Jacobian
-function DampedLinearSolve.solve_reduced!(ls::QRSchurLinearSystem, red::SparseQRReduced, ::Union{StaticSymbol{:auto}, StaticSymbol{:qr}}, lambda, s_r)
+function reduced_solve!(ls::QRSchurLinearSystem, red::SparseQRReduced, ::Union{StaticSymbol{:auto}, StaticSymbol{:qr}}, lambda, s_r)
     reduced_jacobian!(red.Jt, red.rt, ls.ws)
-    (all(isfinite, nonzeros(red.Jt)) && all(isfinite, red.rt)) || return NotPositiveDefinite
-    return spqr_solve!(ls.xr, red.spqr, red.Jt, red.rt, lambda, s_r)
+    markstale!(getA(red.sys))
+    copyto!(ls.sr, s_r)
+    dampen!(red.sys, lambda, ls.sr)
+    status = solve!(red.sys, static(:qr))
+    status == Success && copyto!(ls.xr, getx(red.sys))
+    return status
 end
 
-# S = J̃ᵀJ̃ + λ diag(s_r) (upper triangle), then Cholesky, falling back to Bunch-Kaufman, or Bunch-Kaufman for
-# :ldl: the dense Schur system's rule
-function build_normal!(red::DenseNormalReduced, ws, lambda, s_r)
-    reduced_normal_dense!(red.S, red.g, ws)
+# S = J̃ᵀJ̃ + λ diag(s_r) (upper triangle), then the dense Schur system's rule: Cholesky, falling back to
+# Bunch-Kaufman, or Bunch-Kaufman for :ldl
+function reduced_solve!(ls::QRSchurLinearSystem, red::DenseNormalReduced, s::Union{StaticSymbol{:cholesky}, StaticSymbol{:ldl}}, lambda, s_r)
+    sys = red.sys
+    S, g = getA(sys), getb(sys)
+    reduced_normal_dense!(S, g, ls.ws)
     @inbounds for i in eachindex(s_r)
-        red.S[i, i] += lambda * s_r[i]
+        S[i, i] += lambda * s_r[i]
     end
-    return red
+    all(isfinite, S) || return NotPositiveDefinite
+    status = solve_reduced_dense!(sys, s)
+    status == NotPositiveDefinite || copyto!(ls.xr, getx(sys))   # an Indefinite solve has solved, too
+    return status
 end
-function DampedLinearSolve.solve_reduced!(ls::QRSchurLinearSystem, red::DenseNormalReduced, s::Union{StaticSymbol{:cholesky}, StaticSymbol{:ldl}}, lambda, s_r)
-    build_normal!(red, ls.ws, lambda, s_r)
-    all(isfinite, red.S) || return NotPositiveDefinite
-    if s isa StaticSymbol{:cholesky}
-        F = cholesky!(Symmetric(red.S, :U); check = false)
-        if issuccess(F)
-            ldiv!(ls.xr, F, red.g)
-            return Success
-        end
-        build_normal!(red, ls.ws, lambda, s_r)   # Cholesky overwrote S
-    end
-    DampedLinearSolve.sytrf_ws!(red.S, red.ldl) == 0 || return NotPositiveDefinite
-    copyto!(ls.xr, red.g)
-    LinearAlgebra.LAPACK.sytrs!('U', red.S, red.ldl.ipiv, ls.xr)
-    return is_indefinite_packed(red.S, red.ldl.ipiv, 'U') ? Indefinite : Success
+
+# Any other reduced system (LSMR's): damped by λ s_r and solved through the contract
+function reduced_solve!(ls::QRSchurLinearSystem, red::AbstractLinearSystem, s::StaticSymbol{:lsmr}, lambda, s_r)
+    copyto!(ls.sr, s_r)
+    dampen!(red, lambda, ls.sr)
+    status = solve!(red, s)
+    status == Success && copyto!(ls.xr, getx(red))
+    return status
 end
 
 # Sparse S, then CHOLMOD Cholesky falling back to LDLᵀ, or LDLᵀ for :ldl: the sparse Schur system's rule
-function DampedLinearSolve.solve_reduced!(ls::QRSchurLinearSystem, red::SparseNormalReduced, s::Union{StaticSymbol{:cholesky}, StaticSymbol{:ldl}}, lambda, s_r)
+# The sparse reduced normal equations are solved here, not through a DampedLinearSolve sparse system: the reduction
+# writes one triangle of S, which a DampedLinearSolve sparse system (full symmetric storage) would need mirrored every
+# solve, and its LDLᵀ is LDLFactorizations' full-matrix path, not the upper-triangle one used here, so the iterates
+# would change in rounding. The persistent CHOLMOD copy also saves a conversion per solve.
+function reduced_solve!(ls::QRSchurLinearSystem, red::SparseNormalReduced, s::Union{StaticSymbol{:cholesky}, StaticSymbol{:ldl}}, lambda, s_r)
     reduced_normal_sparse!(red.S, red.g, ls.ws, red.pattern)
     nz = nonzeros(red.S)
     @inbounds for i in eachindex(s_r)

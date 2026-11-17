@@ -3,7 +3,7 @@
 const REDUCED_SOLVERS = (:auto, :cholesky, :ldl)
 const ReducedSolver = Union{StaticSymbol{:auto}, StaticSymbol{:cholesky}, StaticSymbol{:ldl}}
 function check_reduced_solver(linsolver)
-    sym = DampedLinearSolve.linsolver_symbol(linsolver)
+    sym = linsolver_symbol(linsolver)
     sym in REDUCED_SOLVERS || throw(ArgumentError("linsolver = :$sym is not implemented for the reduced system of a SchurBlockHessian; use :auto or :cholesky (Cholesky, falling back to Bunch-Kaufman) or :ldl (Bunch-Kaufman)."))
     return nothing
 end
@@ -13,7 +13,7 @@ end
 
 Linear system solving bipartite normal equations via dense Schur reduction.
 """
-mutable struct DenseSchurLinearSystem{T} <: AbstractLinearSystem
+mutable struct DenseSchurLinearSystem{T, R} <: AbstractLinearSystem
     H::SchurBlockHessian{T, Matrix{T}}
     b::Vector{T}
     x::Vector{T}
@@ -21,9 +21,9 @@ mutable struct DenseSchurLinearSystem{T} <: AbstractLinearSystem
     b_e::SubArray{T, 1, Vector{T}, Tuple{UnitRange{Int}}, true}
     x_r::SubArray{T, 1, Vector{T}, Tuple{UnitRange{Int}}, true}
     x_e::SubArray{T, 1, Vector{T}, Tuple{UnitRange{Int}}, true}
-    g_S::Vector{T}
-    S::Matrix{T}
-    ldl::DenseLDLWorkspace            # Bunch-Kaufman of S, for :ldl and when Cholesky fails (Float64: checkhessian)
+    red::R                            # the reduced system S x_r = g_S: a dense DampedLinearSolve system, undamped
+    g_S::Vector{T}                    # getb(red)
+    S::Matrix{T}                      # getA(red): the reduction writes its upper triangle
     lambda::T
     scaling::Vector{T}
     scaling_r::SubArray{T, 1, Vector{T}, Tuple{UnitRange{Int}}, true}
@@ -48,14 +48,14 @@ function DenseSchurLinearSystem(
     scaling_r = view(scaling, 1:nr)
     scaling_e = view(scaling, nr+1:tot_dim)
 
-    g_S = zeros(T, nr)
-    S = zeros(T, nr, nr)
+    # Built for :ldl, so that it holds the Bunch-Kaufman workspace; :cholesky needs none
+    red = makelinearsystem(nr, static(:ldl))
 
     K = nchunks > 0 ? nchunks : (isempty(H.structure.chunks) ? 1 : length(H.structure.chunks[1]))
     ws = SchurReductionWorkspace{T}(H.structure, K)
 
-    return DenseSchurLinearSystem{T}(
-        H, b, x, b_r, b_e, x_r, x_e, g_S, S, DenseLDLWorkspace(nr), zero(T), scaling, scaling_r, scaling_e, ws
+    return DenseSchurLinearSystem{T, typeof(red)}(
+        H, b, x, b_r, b_e, x_r, x_e, red, getb(red), getA(red), zero(T), scaling, scaling_r, scaling_e, ws
     )
 end
 
@@ -250,8 +250,7 @@ function DampedLinearSolve.zero!(ls::SparseSchurLinearSystem)
     return ls
 end
 
-# Build the reduced system S and g_S from scratch. Called at the start of each solve, and again if an
-# in-place factorization has overwritten S and a fallback factorization is needed.
+# Build the reduced system S and g_S, with the damping, from scratch. Called at the start of each solve.
 function build_reduced!(ls::DenseSchurLinearSystem)
     reset_schur_dense!(ls.S, ls.H.R, ls.scaling_r, ls.lambda, ls.workspace)
     return reduce_schur_dense!(
@@ -260,33 +259,23 @@ function build_reduced!(ls::DenseSchurLinearSystem)
     )
 end
 
-# Bunch-Kaufman of the upper triangle of S in place, in the system's preallocated workspace
-function solve_bunchkaufman!(ls::DenseSchurLinearSystem)
-    DampedLinearSolve.sytrf_ws!(ls.S, ls.ldl) == 0 || return NotPositiveDefinite
-    copyto!(ls.x_r, ls.g_S)
-    LinearAlgebra.LAPACK.sytrs!('U', ls.S, ls.ldl.ipiv, ls.x_r)
-    return is_indefinite_packed(ls.S, ls.ldl.ipiv, 'U') ? Indefinite : Success
+# The reduced solve of a dense S, through the DampedLinearSolve system holding it (which factors a copy, so S
+# is left as built): Cholesky, falling back to Bunch-Kaufman, for :auto and :cholesky; Bunch-Kaufman for :ldl
+function solve_reduced_dense!(red, ::StaticSymbol{:ldl})
+    return solve!(red, static(:ldl))
+end
+function solve_reduced_dense!(red, ::Union{StaticSymbol{:auto}, StaticSymbol{:cholesky}})
+    status = solve!(red, static(:cholesky))
+    status == Success && return status
+    return solve!(red, static(:ldl))
 end
 
 DampedLinearSolve.solve!(ls::DenseSchurLinearSystem) = DampedLinearSolve.solve!(ls, static(:auto))
 DampedLinearSolve.solve!(ls::DenseSchurLinearSystem, s::StaticSymbol) = check_reduced_solver(s)   # throws: not a ReducedSolver
 function DampedLinearSolve.solve!(ls::DenseSchurLinearSystem, solver_opt::ReducedSolver)
     build_reduced!(ls) || return NotPositiveDefinite
-
-    if solver_opt isa StaticSymbol{:ldl}
-        status = solve_bunchkaufman!(ls)
-    else
-        # Cholesky first, whether or not there is damping. It works in place on S (which is rebuilt on
-        # every solve anyway); only if it fails do we rebuild S and fall back to Bunch-Kaufman.
-        cholfac = cholesky!(Symmetric(ls.S, :U); check=false)
-        if issuccess(cholfac)
-            ldiv!(ls.x_r, cholfac, ls.g_S)
-            status = Success
-        else
-            build_reduced!(ls) || return NotPositiveDefinite
-            status = solve_bunchkaufman!(ls)
-        end
-    end
+    status = solve_reduced_dense!(ls.red, solver_opt)
+    status == NotPositiveDefinite || copyto!(ls.x_r, getx(ls.red))   # an Indefinite solve has solved, too
     status == Success || return status
 
     backsubstitute!(ls.x_e, ls.x_r, ls.H.structure, ls.H.C_data, ls.workspace)
@@ -367,18 +356,20 @@ DampedLinearSolve.solve!(ls::SparseSchurLinearSystem, s::Symbol) = DampedLinearS
 # SchurBlockHessian. (An earlier override added the damping term with the wrong sign, and used a
 # damping value the iterators have already reset to zero when a step is scored.)
 
-function DampedLinearSolve.copy_structure(ls::DenseSchurLinearSystem{T}) where T
-    # New storage for the Hessian and gradient (the original is kept for retries); x is shared
+function DampedLinearSolve.copy_structure(ls::DenseSchurLinearSystem{T, R}) where {T, R}
+    # New storage for the Hessian and gradient (the original is kept for retries); x is shared. The reduced
+    # system's copy has its own S and g_S and shares its workspace, as the contract allows.
     nr = ls.H.structure.nr
     b = copy(ls.b)
     x = ls.x
     scaling = copy(ls.scaling)
     ws_trial = trial_workspace(ls.workspace)
-    return DenseSchurLinearSystem{T}(
+    red = DampedLinearSolve.copy_structure(ls.red)
+    return DenseSchurLinearSystem{T, R}(
         BlockLinearSystems.copy_structure(ls.H), b, x,
         view(b, 1:nr), view(b, nr+1:length(b)),
         view(x, 1:nr), view(x, nr+1:length(x)),
-        similar(ls.g_S), similar(ls.S), DenseLDLWorkspace(nr), ls.lambda, scaling,
+        red, getb(red), getA(red), ls.lambda, scaling,
         view(scaling, 1:nr), view(scaling, nr+1:length(scaling)),
         ws_trial
     )
@@ -408,15 +399,15 @@ end
 BlockLinearSystems.copy_structure(ls::DenseSchurLinearSystem) = DampedLinearSolve.copy_structure(ls)
 BlockLinearSystems.copy_structure(ls::SparseSchurLinearSystem) = DampedLinearSolve.copy_structure(ls)
 
-function DampedLinearSolve.sharex(ls::DenseSchurLinearSystem{T}, from) where T
+function DampedLinearSolve.sharex(ls::DenseSchurLinearSystem{T, R}, from) where {T, R}
     ls.x === from.x && return ls
     nr = ls.H.structure.nr
     x = from.x
-    return DenseSchurLinearSystem{T}(
+    return DenseSchurLinearSystem{T, R}(
         ls.H, ls.b, x,
         ls.b_r, ls.b_e,
         view(x, 1:nr), view(x, nr+1:length(x)),
-        ls.g_S, ls.S, ls.ldl, ls.lambda, ls.scaling,
+        ls.red, ls.g_S, ls.S, ls.lambda, ls.scaling,
         ls.scaling_r, ls.scaling_e,
         ls.workspace
     )
