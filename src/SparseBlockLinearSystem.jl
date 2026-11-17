@@ -41,8 +41,9 @@ end
 function SparseBlockLinearSystem{T}(sparsity::SparseArrays.SparseMatrixCSC{Bool, Int}, rowblocksizes, colblocksizes=rowblocksizes; transposed::Bool=false) where T
     rbs = as_block_rle(rowblocksizes)
     cbs = rowblocksizes === colblocksizes ? rbs : as_block_rle(colblocksizes)
+    expected = transposed ? (length(cbs), length(rbs)) : (length(rbs), length(cbs))
+    size(sparsity) == expected || throw(DimensionMismatch("Size of sparsity pattern must match block dimensions: expected $expected, got $(size(sparsity))"))
     sparsitytransposed = transposed ? sparsity : SparseArrays.sparse(sparsity')
-    size(sparsitytransposed) == (length(cbs), length(rbs)) || throw(DimensionMismatch("Size of sparsity pattern must match block dimensions: expected ($(length(rbs)), $(length(cbs))), got $(size(sparsity))"))
     # Construct the block indices sparse matrix
     indicestransposed = SparseArrays.SparseMatrixCSC{Int, Int}(sparsitytransposed.m, sparsitytransposed.n, copy(sparsitytransposed.colptr), copy(sparsitytransposed.rowval), Vector{Int}(undef, length(sparsitytransposed.rowval)))
     # Compute the block pointers and length of data storage

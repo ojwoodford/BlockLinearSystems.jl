@@ -26,6 +26,11 @@ end
     block(b, 1, 3, static(3), static(1)) .= [10.; 11; 12]
     block(b, 3, 3) .= 13.
 
+    # A pattern of the wrong size: the message states the size the check requires, in the orientation given (AB6)
+    @test_throws DimensionMismatch("Size of sparsity pattern must match block dimensions: expected (3, 4), got (4, 3)") SparseBlockLinearSystem{Float64}(TransposedPattern(sparse(pattern_t')), [3, 3, 1, 1], [2, 3, 1])
+    @test_throws DimensionMismatch("Size of sparsity pattern must match block dimensions: expected (3, 4), got (4, 3)") SparseBlockLinearSystem{Float64}(sparse(pattern_t'), [3, 3, 1, 1], [2, 3, 1]; transposed=true)
+    @test_throws DimensionMismatch("Size of sparsity pattern must match block dimensions: expected (4, 3), got (3, 4)") SparseBlockLinearSystem{Float64}(pattern_t, [3, 3, 1, 1], [2, 3, 1])
+
     # 2. Construct using standard (natural orientation) pattern
     pattern_natural = sparse(pattern_t')
     b_nat = SparseBlockLinearSystem{Float64}(pattern_natural, [3, 3, 1, 1], [2, 3, 1])
