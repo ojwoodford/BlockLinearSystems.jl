@@ -1,5 +1,7 @@
 using Random, LinearAlgebra, SparseArrays, StaticArrays, Static, HybridArrays, Test, BlockLinearSystems
 using BlockLinearSystems: validblock   # internal names
+include("fixtures/load.jl")
+using Main.SchurFixtures
 
 # Sized views into SchurBlockHessian storage (E5). Uses SchurTestProblem and the matrix builders of schur_problems.jl.
 

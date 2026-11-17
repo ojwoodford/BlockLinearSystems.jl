@@ -1,74 +1,11 @@
 using Random, LinearAlgebra, SparseArrays, StaticArrays, Static, Test, BlockLinearSystems
+include("fixtures/load.jl")
+using Main.SchurFixtures, Main.QRFixtures, Main.AllocFixtures
 
 # QR elimination on the Jacobian path, tested against the Schur reduction (schur_problems.jl must be included
 # first: its SchurTestProblem and dense/sparse_schur_hessian build the Hessian side) and against dense least squares.
 # The test problems come from schur_jacobian.jl.
 
-# The Hessian side: H = J'J and b = J'r as a SchurBlockHessian (dense or sparse R), in element type T
-function schur_hessian(p::QRTestProblem{T}, kind) where T
-    J64 = Float64.(p.Jf)
-    H = J64' * J64
-    b = J64' * Float64.(p.rf)
-    jst = p.J.structure
-    rr = [(r2, r1) for (r1, r2) in free_block_pairs(jst)]   # lower-triangle block coordinates
-    sp = SchurTestProblem(H, b, p.r_dims, p.e_dims, p.couplings, rr)
-    Hs = kind === :dense ? dense_schur_hessian(sp) : sparse_schur_hessian(sp)
-    R = Hs.R isa Matrix ? T.(Hs.R) :
-        SparseBlockLinearSystem{T}(T.(Hs.R.data), Hs.R.indices, Hs.R.indicestransposed, Hs.R.rowblocksizes, Hs.R.columnblocksizes, Hs.R.m, Hs.R.n)
-    return SchurBlockHessian(Hs.structure, R, T.(Hs.E_data), T.(Hs.C_data)), T.(b)
-end
-
-# Existing Schur reduction: (S, g_S, ws, ok, pattern) with S including the retained damping
-function schur_reduced(Hs::SchurBlockHessian{T}, b, sc, lambda) where T
-    st = Hs.structure
-    nr, n = st.nr, length(b)
-    ws = SchurReductionWorkspace{T}(st, 1)
-    g = zeros(T, nr)
-    lambda = T(lambda)
-    b_r, b_e, sc_r, sc_e = b[1:nr], b[nr+1:n], sc[1:nr], sc[nr+1:n]
-    if Hs.R isa Matrix
-        S = zeros(T, nr, nr)
-        reset_schur_dense!(S, Hs.R, sc_r, lambda, ws)
-        ok = reduce_schur_dense!(S, g, b_r, b_e, sc_e, lambda, st, Hs.E_data, Hs.C_data, ws)
-        return (S, g, ws, ok, nothing)
-    else
-        pattern = build_schur_pattern(st, T; extra_blocks=retained_block_pairs(Hs.R))
-        S = copy(pattern.S_sparse)
-        reset_schur_sparse!(S.nzval, Hs.R.data, build_r_to_s_map(Hs.R, pattern, st.boffsets_r), pattern.diag_inds, sc_r, lambda, ws)
-        ok = reduce_schur_sparse!(S, g, b_r, b_e, sc_e, lambda, st, Hs.E_data, Hs.C_data,
-                                  pattern.block_colptr, pattern.block_rowval, pattern.block_row_offsets, pattern.col_heights, ws)
-        return (S, g, ws, ok, pattern)
-    end
-end
-
-# The QR route to the full solution: eliminate, dense QR of [J̃; √(λ s_r)], back-substitute
-function qr_solve(p::QRTestProblem{T}, sc, lambda) where T
-    J = p.J
-    jst = J.structure
-    nr = jst.schur.nr
-    n = size(p.Jf, 2)
-    ws = QRReductionWorkspace(J)
-    reduce_qr!(ws, J, sc[nr+1:n], T(lambda)) || return (zeros(T, n), false, ws)
-    Jt = zeros(T, reduced_nrows(jst), nr)
-    rt = zeros(T, reduced_nrows(jst))
-    reduced_jacobian!(Jt, rt, ws)
-    A = [Jt; Diagonal(sqrt.(T(lambda) .* sc[1:nr]))]
-    x_r = qr(A) \ [rt; zeros(T, nr)]
-    x_e = zeros(T, n - nr)
-    backsubstitute!(x_e, x_r, ws)
-    return ([x_r; x_e], true, ws)
-end
-
-# Dense reference: min ‖J x - r‖² + λ Σ s_i x_i², by QR in Float64
-function dense_ls(p::QRTestProblem, sc, lambda)
-    J64 = Float64.(p.Jf)
-    n = size(J64, 2)
-    A = [J64; Diagonal(sqrt.(lambda .* Float64.(sc)))]
-    return qr(A) \ [Float64.(p.rf); zeros(n)]
-end
-
-qr_rtol(::Type{Float64}) = 1e-9
-qr_rtol(::Type{Float32}) = 2e-3
 
 @testset "QR elimination equals the Schur reduction of J'J (E4)" begin
     for T in (Float64, Float32)
@@ -276,22 +213,6 @@ end
             end
         end
     end
-end
-
-# The problems of R4: those of qr_problems (no free group, blocks above D_STATIC, free groups), the tutorial's
-# structure, an under-determined eliminated block with a free group, and no eliminated block at all (with a retained
-# block that no row touches, so a column of J̃ stores nothing)
-function sparse_reduced_problems(::Type{T}; nchunks=1) where T
-    rng = Random.Xoshiro(40)
-    probs = qr_problems(T; nchunks)
-    push!(probs, QRTestProblem("tutorial", rng, T, [6, 6, 6], [3, 3, 3, 3, 2, 1],
-                               [[1, 2], [1, 2, 3], [2, 3], [1, 3], [1, 2], [3]], [8, 10, 6, 6, 4, 3];
-                               free_rows=[12], free_retained=[[1, 3]], nchunks))
-    push!(probs, QRTestProblem("under-determined", rng, T, [6, 6], [12, 12, 12], [[1, 2], [1], [2]], [28, 15, 10];
-                               free_rows=[8], free_retained=[[1, 2]], nchunks))
-    push!(probs, QRTestProblem("no eliminated block", rng, T, [3, 2, 4], Int[], Vector{Int}[], Int[];
-                               free_rows=[5, 4], free_retained=[[1, 2], [2]], nchunks))
-    return probs
 end
 
 qr_sparse_jacobian_allocs(Jt, rt, ws) = @allocated reduced_jacobian!(Jt, rt, ws)

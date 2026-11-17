@@ -1,4 +1,6 @@
 using Random, LinearAlgebra, SparseArrays, StaticArrays, Static, Test, BlockLinearSystems
+include("fixtures/load.jl")
+using Main.QRFixtures, Main.AllocFixtures
 
 # The QR elimination kernel. Test problems come from schur_jacobian.jl.
 

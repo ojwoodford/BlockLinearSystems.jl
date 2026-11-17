@@ -1,3 +1,5 @@
+include("fixtures/load.jl")
+using Main.SchurFixtures
 @testset "dot(v, H, v) equals the full quadratic form (B6)" begin
     for p in (standard_problem(), coupled_groups_problem())
         n = length(p.b)
