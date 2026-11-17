@@ -193,8 +193,9 @@ end
             @test norm(x - x_ref) <= 1e-9 * norm(x_ref)
         end
     end
-    # Each eliminated block size on its own, including the extremes and the static/dynamic boundary
-    for de in (1, 3, 4, 5, 7, 8, 9, 10, 20, 255, 300)
+    # Each eliminated block size on its own: static sizes (each its own method), the first dynamic size (D_STATIC = 8) and one
+    # above the old UInt8 limit; other dynamic sizes take the same path with the same types
+    for de in (1, 3, 4, 5, 7, 8, 9, 300)
         q = SchurTestProblem(Random.Xoshiro(de), [6, 6], [de, de], [[1, 2], [1]])
         for make in (dense_schur_hessian, sparse_schur_hessian)
             x, ok = schur_solve(make(q), q.b, ones(length(q.b)), 0.2)
