@@ -1,9 +1,10 @@
 using Random, LinearAlgebra, SparseArrays, Test, BlockLinearSystems
+using Polyester   # BlockLinearSystems' kernels thread only with Polyester loaded
 include("fixtures/load.jl")
 using Main.SchurFixtures, Main.QRFixtures, Main.AllocFixtures
 
 # Every kernel that threads allocates nothing on a warm call, threaded or serial (R2, R3), apart from the bounded
-# allocation of a threaded call on Julia 1.10 (`threaded_allocs_ok`, runtests.jl). Run on 1 and on 4 threads:
+# allocation of a threaded call on Julia 1.10 (`threaded_allocs_ok`, fixtures/AllocFixtures.jl). Run on 1 and on 4 threads:
 # the threshold is forced to 0 and the structures have one chunk per thread, so on 4 threads every kernel threads.
 # The problems have eliminated blocks of 9 and 12, above D_STATIC, as well as static ones.
 

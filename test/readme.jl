@@ -1,3 +1,5 @@
+using Test, BlockLinearSystems
+
 # Every ```julia block of the README, run in order in one module (later examples may use earlier ones' variables),
 # so that the README's examples are kept working (AB7)
 @testset "README examples run" begin

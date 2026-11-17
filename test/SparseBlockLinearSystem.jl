@@ -1,3 +1,4 @@
+using Test, LinearAlgebra, SparseArrays, StaticArrays, Static, HybridArrays
 using BlockLinearSystems
 using BlockLinearSystems: blockdata, eachstoredblock, symmetrifysparse, validblock   # internal names
 # Helper to verify zero allocations in inner block accumulation

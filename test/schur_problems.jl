@@ -1,7 +1,7 @@
 using Random, LinearAlgebra, SparseArrays, StaticArrays, Static, Test, BlockLinearSystems
 using Polyester
 include("fixtures/load.jl")
-using Main.SchurFixtures
+using Main.SchurFixtures, Main.AllocFixtures
 
 # Schur-complement data structures and kernels, tested with the public API only (no optimizer needed).
 # The linear systems that plug these into SecondOrderOptimization are tested in that package.
@@ -210,9 +210,6 @@ end
         @test norm(Float64.(x) - x_ref) <= 1e-3 * norm(x_ref)
     end
 end
-
-# Measured inside a function: @allocated at a testset's top level counts spurious boxing on Julia 1.10
-allocs_dot(x, H, y) = @allocated dot(x, H, y)
 
 # The grouping SchurStructure built by hand before R10: maximal ranges of adjacent eliminated blocks of one dimension
 function old_e_groups(e_dims)

@@ -1,3 +1,4 @@
+using Test, SparseArrays
 using BlockLinearSystems
 using BlockLinearSystems: validblock   # internal names
 @testset "Helper Functions" begin

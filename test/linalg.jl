@@ -1,5 +1,6 @@
+using Test, Random, LinearAlgebra, SparseArrays, BlockLinearSystems
 include("fixtures/load.jl")
-using Main.SchurFixtures
+using Main.SchurFixtures, Main.AllocFixtures
 @testset "dot(v, H, v) equals the full quadratic form (B6)" begin
     for p in (standard_problem(), coupled_groups_problem())
         n = length(p.b)

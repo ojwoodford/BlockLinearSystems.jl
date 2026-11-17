@@ -1,3 +1,4 @@
+using Test, Random, LinearAlgebra, StaticArrays, Static, HybridArrays
 using BlockLinearSystems
 using BlockLinearSystems: BlockOffsets, blockdata, eachstoredblock, validblock   # internal names
 @testset "DenseBlockLinearSystem" begin

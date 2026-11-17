@@ -3,6 +3,8 @@ module DampedLinearSolveSchurTests
 using Test, Random, LinearAlgebra, SparseArrays, StaticArrays, Static
 using DampedLinearSolve, BlockLinearSystems, Polyester   # Polyester: BlockLinearSystems' threaded kernels
 using DampedLinearSolve: check_linear_system
+include("fixtures/load.jl")
+using Main.SchurFixtures, Main.AllocFixtures
 
 # Tests for DampedLinearSolveExt (ext/DampedLinearSolveExt/schurhessian.jl, conformance.jl): the Schur-complement
 # linear systems of a SchurBlockHessian, through DampedLinearSolve's contract. Moved from SecondOrderOptimization's
@@ -11,151 +13,13 @@ using DampedLinearSolve: check_linear_system
 
 const SOOExt = Base.get_extension(BlockLinearSystems, :DampedLinearSolveExt)
 
-# rules.md 21: a warm kernel call allocates nothing, except that on Julia 1.10 a threaded call may allocate up to
-# 3 072 bytes per thread. BlockLinearSystems R2 set 2 048 (2026-11-15); from its R10 the mixed-dims reduction takes
-# 8 304 bytes on 4 threads, 2 076 per thread, so this is raised by half (decided 2026-11-16)
-threaded_allocs_ok(bytes) = bytes == 0 || (VERSION < v"1.11" && Threads.nthreads() > 1 && bytes <= 3072 * Threads.nthreads())
-
-"""
-    SchurTestProblem
-
-A random, strictly diagonally dominant (hence positive definite) bipartite system with retained
-variables first and eliminated variables second, in full dense form plus everything needed to build
-`SchurBlockHessian` objects from it.
-"""
-struct SchurTestProblem
-    H::Matrix{Float64}
-    b::Vector{Float64}
-    r_dims::Vector{Int}
-    e_dims::Vector{Int}
-    couplings::Vector{Vector{Int}}
-    rr_pairs::Vector{Tuple{Int, Int}}   # retained-retained block couplings (r > r), beyond the diagonal
-end
-
-function SchurTestProblem(rng, r_dims, e_dims, couplings; rr_pairs=Tuple{Int, Int}[])
-    nr, ne = sum(r_dims), sum(e_dims)
-    n = nr + ne
-    roff = cumsum([1; r_dims[1:end-1]])
-    eoff = nr .+ cumsum([1; e_dims[1:end-1]])
-    H = zeros(n, n)
-    function fillblock!(r0, nrow, c0, ncol)
-        H[r0:r0+nrow-1, c0:c0+ncol-1] .= 2 .* rand(rng, nrow, ncol) .- 1
-    end
-    for (r, d) in enumerate(r_dims)
-        fillblock!(roff[r], d, roff[r], d)
-    end
-    for (e, d) in enumerate(e_dims)
-        fillblock!(eoff[e], d, eoff[e], d)
-    end
-    for (e, coupled) in enumerate(couplings), r in coupled
-        fillblock!(roff[r], r_dims[r], eoff[e], e_dims[e])
-    end
-    for (r1, r2) in rr_pairs
-        fillblock!(roff[r1], r_dims[r1], roff[r2], r_dims[r2])
-    end
-    # Symmetrize from the upper triangle (block diagonals are symmetrized element-wise)
-    H = Matrix(Symmetric(H, :U))
-    # Make strictly diagonally dominant, but keep the conditioning moderate
-    for i in 1:n
-        H[i, i] = sum(abs, view(H, i, :)) - abs(H[i, i]) + 0.5 + rand(rng)
-    end
-    return SchurTestProblem(H, randn(rng, n), r_dims, e_dims, couplings, rr_pairs)
-end
-
-nr(p::SchurTestProblem) = sum(p.r_dims)
-
-function schur_structure(p::SchurTestProblem; nchunks=1)
-    return SchurStructure(p.r_dims, p.e_dims, p.couplings; nchunks)
-end
-
-function fill_ce!(p::SchurTestProblem, structure::SchurStructure, E_data, C_data)
-    nr_ = nr(p)
-    for e in eachindex(p.e_dims)
-        de = p.e_dims[e]
-        eo = structure.eoffsets[e]
-        eoff = nr_ + structure.boffsets_e[e]
-        E_data[eo:eo+de^2-1] .= vec(p.H[eoff:eoff+de-1, eoff:eoff+de-1])
-        for c in structure.eliminated_ptr[e]:structure.eliminated_ptr[e+1]-1
-            r = structure.entry_retained[c]
-            dr = p.r_dims[r]
-            ro = structure.boffsets_r[r]
-            co = structure.coffsets[c]
-            # Stored as de x dr column-major: C_data[co + (r-1)*de + i-1] = H[c_r, p_i]
-            C_data[co:co+dr*de-1] .= vec(p.H[ro:ro+dr-1, eoff:eoff+de-1]')
-        end
-    end
-    return nothing
-end
-
-function dense_schur_matrix(p::SchurTestProblem; nchunks=1)
-    structure = schur_structure(p; nchunks)
-    n_r = nr(p)
-    R = p.H[1:n_r, 1:n_r]
-    E_data = zeros(sum(abs2, p.e_dims))
-    C_data = zeros(structure.coffsets[end] + Int(structure.r_dims[structure.entry_retained[end]]) * Int(structure.e_dims[end]) - 1)
-    fill_ce!(p, structure, E_data, C_data)
-    return SchurBlockHessian(structure, R, E_data, C_data)
-end
-
-function sparse_schur_matrix(p::SchurTestProblem; nchunks=1)
-    structure = schur_structure(p; nchunks)
-    pattern = build_schur_pattern(structure)
-    coords = Tuple{Int, Int}[]
-    cb = pattern.block_colptr
-    for r2 in 1:structure.nrblocks, k in cb[r2]:cb[r2+1]-1
-        r1 = pattern.block_rowval[k]       # r1 <= r2 in the upper-triangle pattern
-        push!(coords, (r2, r1))            # store lower-triangle block (row = r2, col = r1)
-    end
-    append!(coords, p.rr_pairs)
-    unique!(coords)
-    R = SparseBlockLinearSystem{Float64}(coords, p.r_dims)
-    roff = structure.boffsets_r
-    for (r1, r2) in coords
-        block(R, r1, r2) .= p.H[roff[r1]:roff[r1]+p.r_dims[r1]-1, roff[r2]:roff[r2]+p.r_dims[r2]-1]
-    end
-    E_data = zeros(sum(abs2, p.e_dims))
-    C_data = zeros(structure.coffsets[end] + Int(structure.r_dims[structure.entry_retained[end]]) * Int(structure.e_dims[end]) - 1)
-    fill_ce!(p, structure, E_data, C_data)
-    return SchurBlockHessian(structure, R, E_data, C_data)
-end
-
 function make_schur_ls(kind::Symbol, p::SchurTestProblem, scaling=ones(length(p.b)); nchunks=1)
     n = length(p.b)
     if kind === :dense
-        return SOOExt.DenseSchurLinearSystem(dense_schur_matrix(p; nchunks), copy(p.b), zeros(n), copy(scaling))
+        return SOOExt.DenseSchurLinearSystem(dense_schur_hessian(p; nchunks), copy(p.b), zeros(n), copy(scaling))
     else
-        return SOOExt.SparseSchurLinearSystem(sparse_schur_matrix(p; nchunks), copy(p.b), zeros(n), copy(scaling))
+        return SOOExt.SparseSchurLinearSystem(sparse_schur_hessian(p; nchunks), copy(p.b), zeros(n), copy(scaling))
     end
-end
-
-"Reference solution: dense Cholesky of the full system with `lambda * diag(damping)` added to the diagonal."
-function reference_solve(p::SchurTestProblem, lambda, damping)
-    Hd = p.H + lambda * Diagonal(damping)
-    return cholesky(Symmetric(Hd)) \ p.b
-end
-
-function standard_problem(seed=1; rr_pairs=Tuple{Int, Int}[])
-    rng = Random.Xoshiro(seed)
-    r_dims = [6, 6, 6, 6]
-    e_dims = [3, 3, 3, 3, 3, 3, 3, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1]
-    # Retained blocks 1-2 and 3-4 are coupled to eliminated blocks together; 2-3 are linked through a few eliminated blocks
-    couplings = [
-        [1, 2], [1, 2], [1, 2, 3], [2, 3], [3, 4], [3, 4], [1, 4],
-        [1, 2], [2, 3], [3, 4], [1, 2, 3, 4], [4],
-        [1], [2], [3], [4], [1, 2], [3, 4], [2, 3], [1, 4],
-    ]
-    return SchurTestProblem(rng, r_dims, e_dims, couplings; rr_pairs)
-end
-
-# Eliminated blocks of every size class: tiny closed forms (1-3), the generic static tier (4..D_STATIC)
-# and the dynamic tier above D_STATIC
-function mixed_dims_problem(seed=11)
-    rng = Random.Xoshiro(seed)
-    r_dims = [6, 3, 9, 6]
-    e_dims = [12, 12, 9, 9, 8, 8, 5, 5, 4, 4, 3, 3, 2, 2, 1, 1]
-    coupled = 1:4
-    couplings = [sort(unique([rand(rng, coupled) for _ in 1:3])) for _ in e_dims]
-    return SchurTestProblem(rng, r_dims, e_dims, couplings)
 end
 
 @testset "BlockLinearSystemsExt: Schur solve equals full Cholesky solve" begin
@@ -225,16 +89,6 @@ end
     end
 end
 
-# Two groups of retained blocks ({1, 2} and {3, 4}) that share no eliminated block with each other, coupled only by
-# direct retained-retained blocks (odometry / loop-closure style), which have no eliminated variable.
-function coupled_groups_problem(seed=3)
-    rng = Random.Xoshiro(seed)
-    r_dims = [6, 6, 6, 6]
-    e_dims = [3, 3, 3, 3, 2, 2, 1, 1]
-    couplings = [[1, 2], [1, 2], [3, 4], [3, 4], [1], [4], [2, 1], [3, 4]]
-    return SchurTestProblem(rng, r_dims, e_dims, couplings; rr_pairs=[(3, 1), (4, 2), (2, 1)])
-end
-
 @testset "BlockLinearSystemsExt: retained-retained couplings without a shared eliminated variable (B4)" begin
     p = coupled_groups_problem()
     n = length(p.b)
@@ -249,7 +103,7 @@ end
     @test_throws ArgumentError build_schur_pattern(structure; extra_blocks=[(1, 5)])
 
     # The sparse system fails to build a slot for R's coupling without the extra pairs ...
-    H = sparse_schur_matrix(p)
+    H = sparse_schur_hessian(p)
     @test Set(retained_block_pairs(H.R)) ⊇ Set([(3, 1), (4, 2)])
     @test_throws ArgumentError build_r_to_s_map(H.R, plain.S_sparse, structure.boffsets_r)
     # ... and builds one with them
@@ -271,7 +125,7 @@ end
 
 @testset "A precomputed pattern passed to SparseSchurLinearSystem gives the same system (B8)" begin
     p = coupled_groups_problem()
-    H = sparse_schur_matrix(p)
+    H = sparse_schur_hessian(p)
     pre = build_schur_pattern(H.structure; extra_blocks=retained_block_pairs(H.R))
     ls1 = SOOExt.SparseSchurLinearSystem(H, copy(p.b), zeros(length(p.b)))
     ls2 = SOOExt.SparseSchurLinearSystem(H, copy(p.b), zeros(length(p.b)); pattern=pre)
@@ -493,7 +347,7 @@ end
     for de in (6, 12)   # generic static tier and dynamic tier
         rng = Random.Xoshiro(de)
         q = SchurTestProblem(rng, [6, 6], [de, de], [[1, 2], [1, 2]])
-        H = dense_schur_matrix(q)
+        H = dense_schur_hessian(q)
         # Make eliminated block 2 rank deficient: an outer product of one vector
         st = H.structure
         eo = st.eoffsets[2]
@@ -541,30 +395,6 @@ end
     @test ls.S_chol === S_chol_before          # refreshed in place, not rebuilt
     tr = DampedLinearSolve.copy_structure(ls)
     @test tr.S_chol !== ls.S_chol
-end
-
-# A gauge-deficient problem: every coupling constrains only the *difference* x_retained[1:3] - x_eliminated, so
-# translating all retained and eliminated blocks together changes nothing and H is singular along that direction.
-# Dimensions 4:6 of the retained blocks only have a tiny prior, which makes H ill conditioned.
-function gauge_problem(seed=21; prior=1e-8)
-    rng = Random.Xoshiro(seed)
-    r_dims = [6, 6, 6, 6]
-    e_dims = [3, 3, 3, 3, 3, 3]
-    couplings = [[1, 2], [1, 2, 3], [2, 3, 4], [3, 4], [1, 4], [1, 2, 3, 4]]
-    nr_, np_ = sum(r_dims), sum(e_dims)
-    H = zeros(nr_ + np_, nr_ + np_)
-    for (e, coupled) in enumerate(couplings), r in coupled
-        w = 0.5 + rand(rng)
-        ci = 6 * (r - 1) .+ (1:3)
-        li = nr_ + 3 * (e - 1) .+ (1:3)
-        H[ci, ci] .+= w * I(3); H[li, li] .+= w * I(3)
-        H[ci, li] .-= w * I(3); H[li, ci] .-= w * I(3)
-    end
-    for r in 1:4
-        ci = 6 * (r - 1) .+ (4:6)
-        H[ci, ci] .+= prior * I(3)
-    end
-    return SchurTestProblem(H, randn(rng, nr_ + np_), r_dims, e_dims, couplings, Tuple{Int, Int}[])
 end
 
 @testset "BlockLinearSystemsExt: well-conditioned problems, forward error of x_r and x_e (T1)" begin
@@ -625,7 +455,7 @@ end
 @testset "Sparse Schur system takes its pattern from H (M26)" begin
     p = coupled_groups_problem()
     n = length(p.b)
-    H0 = sparse_schur_matrix(p)
+    H0 = sparse_schur_hessian(p)
     pre = build_schur_pattern(H0.structure; extra_blocks=retained_block_pairs(H0.R))
     Hp = SchurBlockHessian(H0.structure, H0.R, H0.E_data, H0.C_data; pattern=pre)
     x_ref = reference_solve(p, 0.3, ones(n))
@@ -671,7 +501,7 @@ end
     @test norm(ls_f.x - x_ref) <= 1e-10 * norm(x_ref)
 
     # The dense system ignores a pattern
-    Hd = dense_schur_matrix(p)
+    Hd = dense_schur_hessian(p)
     Hdp = SchurBlockHessian(Hd.structure, Hd.R, Hd.E_data, Hd.C_data; pattern=build_schur_pattern(Hd.structure))
     @test DampedLinearSolve.makehessiansystem(Hdp, :auto) isa SOOExt.DenseSchurLinearSystem
 end
@@ -702,15 +532,15 @@ end
                       ("mixed eliminated sizes", mixed_dims_problem()))
         n = length(p.b)
         @testset "$name, dense R" begin
-            @test check_linear_system(s -> DampedLinearSolve.makehessiansystem(dense_schur_matrix(p), s); n, linsolvers=(:auto, :cholesky, :ldl)) === nothing
+            @test check_linear_system(s -> DampedLinearSolve.makehessiansystem(dense_schur_hessian(p), s); n, linsolvers=(:auto, :cholesky, :ldl)) === nothing
         end
         @testset "$name, sparse R" begin
-            @test check_linear_system(s -> DampedLinearSolve.makehessiansystem(sparse_schur_matrix(p), s); n, linsolvers=(:auto, :cholesky, :ldl)) === nothing
+            @test check_linear_system(s -> DampedLinearSolve.makehessiansystem(sparse_schur_hessian(p), s); n, linsolvers=(:auto, :cholesky, :ldl)) === nothing
         end
     end
     # The helpers read back exactly the full matrix the problem was built from
     p = standard_problem()
-    for H in (dense_schur_matrix(p), sparse_schur_matrix(p))
+    for H in (dense_schur_hessian(p), sparse_schur_hessian(p))
         @test DampedLinearSolve.conformance_matrix(H) ≈ p.H
     end
 end

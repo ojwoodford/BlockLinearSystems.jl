@@ -1,4 +1,4 @@
-using Random, BlockLinearSystems, SparseArrays, StaticArrays, Static, HybridArrays, LinearAlgebra, Test, Aqua, Polyester
+using Test   # each test file loads the packages and fixtures it needs
 
 # Each test file is included through `timed_include`, which logs its wall time and compile time in seconds
 # (`compile_time` is reported by `@timed` from Julia 1.11; NaN before) and keeps them for a table at the end.

@@ -1,8 +1,9 @@
 using Random, LinearAlgebra, SparseArrays, StaticArrays, Static, Test, BlockLinearSystems
+using Polyester   # BlockLinearSystems' kernels thread only with Polyester loaded
 include("fixtures/load.jl")
 using Main.QRFixtures, Main.AllocFixtures
 
-# The QR elimination kernel. Test problems come from schur_jacobian.jl.
+# The QR elimination kernel. Test problems come from fixtures/QRFixtures.jl.
 
 # U, B and q of table e (the top d_e rows), and the rows below U in the eliminated columns
 function qr_factors(ws::QRReductionWorkspace, e)

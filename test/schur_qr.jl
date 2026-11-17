@@ -1,10 +1,10 @@
 using Random, LinearAlgebra, SparseArrays, StaticArrays, Static, Test, BlockLinearSystems
+using Polyester   # BlockLinearSystems' kernels thread only with Polyester loaded
 include("fixtures/load.jl")
 using Main.SchurFixtures, Main.QRFixtures, Main.AllocFixtures
 
-# QR elimination on the Jacobian path, tested against the Schur reduction (schur_problems.jl must be included
-# first: its SchurTestProblem and dense/sparse_schur_hessian build the Hessian side) and against dense least squares.
-# The test problems come from schur_jacobian.jl.
+# QR elimination on the Jacobian path, tested against the Schur reduction (fixtures/SchurFixtures.jl builds the
+# Hessian side) and against dense least squares. The test problems and comparison helpers are in fixtures/QRFixtures.jl.
 
 
 @testset "QR elimination equals the Schur reduction of J'J (E4)" begin

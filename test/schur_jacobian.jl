@@ -2,7 +2,7 @@ using Random, LinearAlgebra, SparseArrays, StaticArrays, Static, HybridArrays, T
 include("fixtures/load.jl")
 using Main.QRFixtures
 
-# Storage and assembly API of the tall (Jacobian) form, and the random test problems the QR elimination tests use.
+# Storage and assembly API of the tall (Jacobian) form. Its test problems are in fixtures/QRFixtures.jl.
 
 
 @testset "SchurJacobianStructure: layout and validation (E1)" begin

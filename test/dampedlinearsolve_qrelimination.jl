@@ -137,7 +137,7 @@ function tp3_schur(p, x)
 end
 
 # A warm threaded run allocates nothing, except on Julia 1.10, where each threaded BlockLinearSystems kernel call
-# may allocate a few KB per thread (rules.md 21; `threaded_allocs_ok` in blocklinearsystems_ext.jl). A run makes many such calls, so
+# may allocate a few KB per thread (rules.md 21; `threaded_allocs_ok` in fixtures/AllocFixtures.jl). A run makes many such calls, so
 # on 1.10 the bound is per run: 48 KB per thread, a starting value above the largest measured (2026-11-15, 4
 # threads, nchunks = 4: 140 640 bytes for :lsmr, 35 160 per thread). 1.11 and later, and every serial run: zero.
 const TP3_110_RUN_BYTES_PER_THREAD = 48 * 1024

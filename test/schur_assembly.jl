@@ -3,7 +3,7 @@ using BlockLinearSystems: validblock   # internal names
 include("fixtures/load.jl")
 using Main.SchurFixtures
 
-# Sized views into SchurBlockHessian storage (E5). Uses SchurTestProblem and the matrix builders of schur_problems.jl.
+# Sized views into SchurBlockHessian storage (E5). Uses SchurTestProblem and the matrix builders of fixtures/SchurFixtures.jl.
 
 # Fill a zeroed copy of H through the views only, from the dense Hessian of p
 function fill_through_views!(Hv::SchurBlockHessian, p::SchurTestProblem)
