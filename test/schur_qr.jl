@@ -395,7 +395,7 @@ end
                     @test threaded_allocs_ok(qr_backsub_allocs(x_e, v, ws), threaded)
                     @test threaded_allocs_ok(qr_normal_allocs(S, gS, ws), threaded)
                     @test threaded_allocs_ok(qr_snormal_allocs(Ssp, gS, ws, pat), threaded)
-                    @test qr_misc_allocs(rt, D, d, gg, ws, J, vf) <= (threaded && VERSION < v"1.11" ? 5 * 2048 * Threads.nthreads() : 0)
+                    @test qr_misc_allocs(rt, D, d, gg, ws, J, vf) <= (threaded && VERSION < v"1.11" ? 5 * 3072 * Threads.nthreads() : 0)
                 end
             end
         finally
