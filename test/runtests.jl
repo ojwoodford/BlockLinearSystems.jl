@@ -20,34 +20,37 @@ function print_file_times()
             lpad(round(sum(x -> x[3], FILE_TIMES; init = 0.0); digits = 1), 8))
 end
 
+# Test groups, run by name: `julia --project=<test env> test/runtests.jl threaded`, or
+# `Pkg.test(test_args = ["threaded"])`; all groups when none is named. The full check before a push is every group on
+# 1 thread, then `threaded` on 4 threads (rules.md 30).
+#   threaded: every test whose behaviour depends on Threads.nthreads() (threaded kernels, threaded allocation bounds)
+#   process:  the test that starts a fresh Julia process
+#   serial:   everything else, which behaves the same on any number of threads
+const TEST_GROUPS = (
+    serial = ["aqua.jl", "exports.jl", "SparseBlockLinearSystem.jl", "DenseBlockLinearSystem.jl", "BlockRLE.jl",
+              "typestability.jl", "helpers.jl", "kernels.jl", "schur.jl", "schur_problems.jl", "linalg.jl",
+              "schur_jacobian.jl", "diagonal_blocks.jl", "schur_assembly.jl", "zero.jl", "readme.jl",
+              # the DampedLinearSolve extension: the QR-eliminated systems through the linear-system contract
+              "dampedlinearsolve_qrelimination.jl"],
+    threaded = ["schur_problems_threaded.jl", "schur_jacobian_threaded.jl", "qr_reduction.jl", "schur_qr.jl",
+                "threading.jl",
+                # the DampedLinearSolve extension: the Schur systems through the linear-system contract
+                "dampedlinearsolve_schurhessian.jl"],
+    process = ["threading_process.jl"],
+)
+const RUN_GROUPS = isempty(ARGS) ? collect(keys(TEST_GROUPS)) : Symbol.(ARGS)
+for g in RUN_GROUPS
+    g in keys(TEST_GROUPS) || throw(ArgumentError("unknown test group $g; the groups are $(join(keys(TEST_GROUPS), ", "))"))
+end
+
 # The table is printed even when a test fails
 try
 @testset "BlockLinearSystems.jl" verbose = true begin
-    timed_include("aqua.jl")
-    timed_include("exports.jl")
-    timed_include("SparseBlockLinearSystem.jl")
-    timed_include("DenseBlockLinearSystem.jl")
-    timed_include("BlockRLE.jl")
-    timed_include("typestability.jl")
-    timed_include("helpers.jl")
-    timed_include("kernels.jl")
-    timed_include("schur.jl")
-    timed_include("schur_problems.jl")
-    timed_include("schur_problems_threaded.jl")
-    timed_include("linalg.jl")
-    timed_include("schur_jacobian.jl")
-    timed_include("schur_jacobian_threaded.jl")
-    timed_include("qr_reduction.jl")
-    timed_include("schur_qr.jl")
-    timed_include("diagonal_blocks.jl")
-    timed_include("schur_assembly.jl")
-    timed_include("zero.jl")
-    timed_include("threading.jl")
-    timed_include("threading_process.jl")
-    timed_include("readme.jl")
-    # The DampedLinearSolve extension: the Schur and QR-eliminated systems through the linear-system contract
-    timed_include("dampedlinearsolve_schurhessian.jl")
-    timed_include("dampedlinearsolve_qrelimination.jl")
+    for g in RUN_GROUPS
+        @testset "$g" verbose = true begin
+            foreach(timed_include, TEST_GROUPS[g])
+        end
+    end
 end
 finally
     print_file_times()
