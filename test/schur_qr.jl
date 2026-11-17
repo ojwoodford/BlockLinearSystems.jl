@@ -480,7 +480,8 @@ end
 
 @testset "The lowest failing block is reported under threads (C1)" begin
     # Eight chunks of 50 blocks each, threaded whatever the work: a chunk must not stop at a failure recorded
-    # by another chunk while it still has lower blocks to check. Repeated, since the interleaving varies.
+    # by another chunk while it still has lower blocks to check. Repeated, since the interleaving varies; on one
+    # thread there is no interleaving, so once.
     ne = 400
     jst = SchurJacobianStructure(fill(6, 4), fill(3, ne), [[mod1(e, 4)] for e in 1:ne], fill(5, ne); nchunks=8)
     st = jst.schur
@@ -501,7 +502,7 @@ end
                 E_data[st.eoffsets[e] .+ (0:8)] .= ok ? vec(Matrix(1.0I(3))) : zeros(9)
             end
             qr_found, schur_found = Set{Int}(), Set{Int}()
-            for _ in 1:200
+            for _ in 1:(Threads.nthreads() == 1 ? 1 : 200)
                 reduce_qr!(qws, J, ones(3ne), 0.0)
                 push!(qr_found, qws.failed_block[])
                 reset_schur_dense!(S, R, ones(24), 0.0, sws)
