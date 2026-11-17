@@ -91,7 +91,7 @@ symmetrifyfull!(bdm)
 ### 3. Schur Complement Submatrix Extraction
 
 ```julia
-# Extract only the submatrix of blocks 1 and 2 in-place:
+# Extract only the submatrix of blocks 1 and 2 of `bsm` (from example 1) in-place:
 H_sub = Matrix{Float64}(undef, 12, 12)
 symmetrifyfull!(H_sub, bsm, [1, 2])
 ```
@@ -99,13 +99,33 @@ symmetrifyfull!(H_sub, bsm, [1, 2])
 ### 4. Schur Complement Reduction
 
 ```julia
+using BlockLinearSystems, LinearAlgebra
+
 st = SchurStructure([6, 6, 6], [3, 3, 3, 1], [[1, 2], [1, 2, 3], [2, 3], [3]])  # retained block dims, eliminated block dims, retained blocks coupled to each eliminated block
+nr, ne = st.nr, sum(st.e_dims)
+n_E = sum(abs2, st.e_dims)                                                # E_e blocks, each d_e × d_e
+n_C = sum(st.e_dims[e] * st.r_dims[st.entry_retained[c]]                  # C_er blocks, each d_e × d_r
+          for e in 1:st.neblocks for c in st.eliminated_ptr[e]:st.eliminated_ptr[e+1]-1)
+H = SchurBlockHessian(st, zeros(nr, nr), zeros(n_E), zeros(n_C))
+# Fill R, E and C through block views (here a diagonally dominant H):
+H.R .= Matrix(10.0I, nr, nr)
+for e in 1:st.neblocks
+    eliminated_block(H, e) .= Matrix(4.0I, st.e_dims[e], st.e_dims[e])
+end
+for c in eachindex(st.entry_retained)
+    coupling_block(H, c) .= 0.1
+end
+b_r, b_e = ones(nr), ones(ne)
+scaling_r, scaling_e, lambda = ones(nr), ones(ne), 0.1   # damping lambda * diag(scaling)
+
 ws = SchurReductionWorkspace{Float64}(st, 1)
-# ... fill R, E_data, C_data in a SchurBlockHessian, then:
-reset_schur_dense!(S, R, scaling_r, lambda, ws)
-reduce_schur_dense!(S, g, b_r, b_e, scaling_e, lambda, st, E_data, C_data, ws)   # false if a block is singular
-# solve S x_r = g, then recover the eliminated variables:
-backsubstitute!(x_e, x_r, st, C_data, ws)
+S, g = zeros(nr, nr), zeros(nr)
+reset_schur_dense!(S, H.R, scaling_r, lambda, ws)
+reduce_schur_dense!(S, g, b_r, b_e, scaling_e, lambda, st, H.E_data, H.C_data, ws)   # false if a block is singular
+# solve S x_r = g (S holds its upper triangle), then recover the eliminated variables:
+x_r = Symmetric(S, :U) \ g
+x_e = zeros(ne)
+backsubstitute!(x_e, x_r, st, H.C_data, ws)
 ```
 
 See the [Schur reduction tutorial](https://ojwoodford.github.io/BlockLinearSystems.jl/dev/tutorials/schur_reduction/) for a complete, runnable example.
@@ -120,14 +140,30 @@ eliminated columns to the whole table; the remaining rows of every table form th
 `min ‖J̃ x_r − r̃‖²`, with `J̃ᵀJ̃` equal to the Schur complement of `JᵀJ`.
 
 ```julia
+using BlockLinearSystems, LinearAlgebra
+
 jst = SchurJacobianStructure([6, 6, 6], [3, 3, 3, 1], [[1, 2], [1, 2, 3], [2, 3], [3]], [8, 10, 6, 3])  # ..., rows per eliminated block
 J = SchurBlockJacobian{Float64, Matrix{Float64}}(jst)   # reduced-system storage: Matrix{T} or SparseMatrixCSC{T, Int}
-# ... fill through coupling_block(J, u, row, nrows), eliminated_block(J, e, ...), residual_block(J, t, ...), then:
+# Fill each table through coupling_block(J, u[, row, nrows]), eliminated_block(J, e[, ...]) and residual_block(J, t[, ...]):
+for u in eachindex(jst.entry_retained)
+    coupling_block(J, u) .= randn.()
+end
+for e in 1:jst.schur.neblocks
+    eliminated_block(J, e) .= randn.()
+end
+for t in 1:jst.ntables
+    residual_block(J, t) .= randn.()
+end
+nr, ne = jst.schur.nr, sum(jst.schur.e_dims)
+scaling_e, lambda = ones(ne), 0.1
+
 ws = QRReductionWorkspace(J)
 reduce_qr!(ws, J, scaling_e, lambda)          # false if a block is rank deficient (e.g. too few rows, undamped)
+Jt, rt = zeros(reduced_nrows(jst), nr), zeros(reduced_nrows(jst))
 reduced_jacobian!(Jt, rt, ws)                 # J̃ and r̃: Jt a Matrix, or build_reduced_jacobian_pattern(jst) for a
 x_r = qr(Jt) \ rt                             # sparse J̃; or reduced_mul! / reduced_tmul! for LSMR,
                                               # or reduced_normal_dense! / _sparse! for J̃ᵀJ̃ and Cholesky
+x_e = zeros(ne)
 backsubstitute!(x_e, x_r, ws)
 ```
 

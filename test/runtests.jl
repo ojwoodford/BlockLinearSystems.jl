@@ -24,4 +24,5 @@ threaded_allocs_ok(bytes, threaded=Threads.nthreads() > 1) =
     include("schur_assembly.jl")
     include("zero.jl")
     include("threading.jl")
+    include("readme.jl")
 end
