@@ -173,10 +173,12 @@ blocks seen by many residuals this is far more than the Schur route needs. `schu
 reports it from the structure alone, before anything is allocated. See the
 [QR elimination tutorial](https://ojwoodford.github.io/BlockLinearSystems.jl/dev/tutorials/qr_elimination/).
 
-### Use with SecondOrderOptimization.jl
+### Use with DampedLinearSolve.jl and SecondOrderOptimization.jl
 
-Loading `BlockLinearSystems` together with [SecondOrderOptimization.jl](https://github.com/ojwoodford/SecondOrderOptimization.jl)
-activates an extension (defined in that package) with `DenseSchurLinearSystem` and `SparseSchurLinearSystem`.
+Loading `BlockLinearSystems` together with [DampedLinearSolve.jl](https://github.com/ojwoodford/DampedLinearSolve.jl)
+(which [SecondOrderOptimization.jl](https://github.com/ojwoodford/SecondOrderOptimization.jl) loads) activates this
+package's extension `DampedLinearSolveExt`, with `DenseSchurLinearSystem`, `SparseSchurLinearSystem` and the
+QR-eliminated systems, which meet DampedLinearSolve's linear-system contract.
 Passing a `SchurBlockHessian` as the Hessian prototype selects elimination; there is no option to set.
 Whether the reduced system is dense or sparse follows the storage of `R` (a `Matrix` or a `SparseBlockLinearSystem`),
 and `linsolver` names the solver applied to the reduced system (`:auto`, `:cholesky` or `:ldl`).

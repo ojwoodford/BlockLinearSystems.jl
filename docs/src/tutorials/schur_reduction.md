@@ -15,8 +15,9 @@ retained block `r`. The normal equations
 are solved cheaply by eliminating `E`, which is block diagonal, then solving the much smaller reduced
 system $S x_r = g$ with $S = R - C^\top E^{-1} C$ and $g = b_r - C^\top E^{-1} b_e$, then recovering
 $x_e = E^{-1}(b_e - C x_r)$. BlockLinearSystems provides the data structures and the parallel kernels
-for this; the optimizer-facing linear systems built on them live in
-[SecondOrderOptimization.jl](https://github.com/ojwoodford/SecondOrderOptimization.jl).
+for this; the optimizer-facing linear systems built on them are this package's extension for
+[DampedLinearSolve.jl](https://github.com/ojwoodford/DampedLinearSolve.jl) (see
+[Solving with DampedLinearSolve.jl](dampedlinearsolve.md)).
 
 ## Describing the problem
 
@@ -154,11 +155,12 @@ Optimizers that linearize at a trial point keep the current system for retries.
 [`copy_structure`](@ref)`(::SchurBlockHessian)` allocates new zeroed `R`, `E_data` and `C_data` sharing only
 the immutable structure (and the read-only `pattern`, if any), and [`trial_workspace`](@ref) gives a workspace with its own caches.
 
-## Using it with SecondOrderOptimization.jl
+## Using it with an optimizer
 
-Loading both `BlockLinearSystems` and `SecondOrderOptimization` activates an extension that wraps all of this
-in `DenseSchurLinearSystem` and `SparseSchurLinearSystem`, for use with its Levenberg–Marquardt, dogleg and Newton
-iterators. Passing a [`SchurBlockHessian`](@ref) as the Hessian prototype `H` (for example
+Loading `BlockLinearSystems` with [DampedLinearSolve.jl](https://github.com/ojwoodford/DampedLinearSolve.jl) (as
+SecondOrderOptimization.jl does) activates an extension that wraps all of this in `DenseSchurLinearSystem` and
+`SparseSchurLinearSystem`, which meet DampedLinearSolve's linear-system contract, so that SecondOrderOptimization's
+Levenberg–Marquardt, dogleg and Newton iterators run on them (see [Solving with DampedLinearSolve.jl](dampedlinearsolve.md)). Passing a [`SchurBlockHessian`](@ref) as the Hessian prototype `H` (for example
 `HessianObjective(f, fdf!; H)`, then `optimize!(x0, obj, options)`) is what selects elimination; there is no option
 to set. Whether the reduced system is dense or sparse follows the storage of `R` (a `Matrix` or a
 [`SparseBlockLinearSystem`](@ref)), and `linsolver` names the solver applied to the reduced system: `:auto`,

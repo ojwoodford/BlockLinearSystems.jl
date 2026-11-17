@@ -24,6 +24,7 @@ makedocs(
             "Symmetrification & CSC Scatter" => "tutorials/symmetrification_and_schur.md",
             "Schur Complement Reduction" => "tutorials/schur_reduction.md",
             "QR Elimination (Jacobian Path)" => "tutorials/qr_elimination.md",
+            "Solving with DampedLinearSolve.jl" => "tutorials/dampedlinearsolve.md",
         ],
     ]
 )
