@@ -162,6 +162,23 @@ function (t::TallFill)(b::AbstractVector, A, x)
     return cost
 end
 
+# LP1: the TP3 problem with the retained columns of each block scaled by powers of ten from 1e-2 to 1e2, so that
+# the reduced Jacobian is badly scaled within each (coupled) retained block
+function tp3_scaled_problem(; seed = 1)
+    p = TP3Problem(tp3_structure(); seed)
+    st = p.jst.schur
+    for r in 1:st.nrblocks
+        dr = Int(st.r_dims[r])
+        for k in 1:dr
+            p.V[:, st.boffsets_r[r] + k - 1] .*= exp10(-2 + 4 * (k - 1) / (dr - 1))
+        end
+    end
+    return p
+end
+# (a literal static(:lsmr): `static(s)` of a Symbol variable is a dynamic call, which allocates)
+lp1_solve!(ls, lambda, scaling) = (dampen!(ls, lambda, scaling); solve!(ls, static(:lsmr)))
+lp1_bytes(ls, lambda, scaling) = (lp1_solve!(ls, lambda, scaling); @allocated lp1_solve!(ls, lambda, scaling))
+
 @testset "qrelimination.jl" begin
     @testset "Steps equal the Schur system's: $RT, under-determined block = $under" for RT in keys(TP3_SOLVERS), under in (false, true)
         p = TP3Problem(tp3_structure(; under))
@@ -195,6 +212,20 @@ end
         jst = tp3_structure()
         n = jst.schur.nr + sum(jst.schur.e_dims)
         @test isnothing(check_linear_system(s -> QREXT.QRSchurLinearSystem(SchurBlockJacobian{Float64, RT}(jst), s); n, linsolvers = TP3_SOLVERS[RT], rtol = 1e-6))
+    end
+
+    @testset "LSMR on a badly scaled reduced Jacobian equals QR (LP1): $RT" for RT in keys(TP3_SOLVERS)
+        p = tp3_scaled_problem()
+        x = 0.1 .* randn(Xoshiro(2), p.lay.n)
+        lsq = tp3_system(p, RT, :qr, x)
+        lsl = tp3_system(p, RT, :lsmr, x)
+        d = DampedLinearSolve.getdiag!(zeros(p.lay.n), lsq)   # a Marquardt scaling
+        for (lambda, scaling) in ((0.0, nothing), (1e-8, nothing), (1e-4, nothing), (1e-8, d), (1e-4, d))
+            @test tp3_solve!(lsq, :qr, lambda, scaling) == Success
+            @test tp3_solve!(lsl, :lsmr, lambda, scaling) == Success
+            @test getx(lsl) ≈ getx(lsq) rtol = 1e-6
+        end
+        @test lp1_bytes(lsl, 1e-4, d) == 0
     end
 end
 
