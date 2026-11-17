@@ -84,10 +84,21 @@ end
     H32 = SchurBlockHessian(H.structure, R32, Float32.(H.E_data), Float32.(H.C_data))
     Hd32 = SchurBlockHessian(H.structure, Float32.(dense_schur_hessian(p).R), Float32.(H.E_data), Float32.(H.C_data))
     x, y = randn(rng, n), randn(rng, n)
-    for Hk in (H32, Hd32)
+    # The quadratic form accumulates in the promoted type (AB4): type stable, and equal to rounding to the Float64
+    # result of the same (Float32-valued) matrix
+    R64 = SparseBlockLinearSystem{Float64}(Float64.(R32.data), H.R.indices, H.R.indicestransposed, H.R.rowblocksizes, H.R.columnblocksizes, H.R.m, H.R.n)
+    H64 = SchurBlockHessian(H.structure, R64, Float64.(H32.E_data), Float64.(H32.C_data))
+    Hd64 = SchurBlockHessian(H.structure, Float64.(Hd32.R), Float64.(H32.E_data), Float64.(H32.C_data))
+    for (Hk, Hk64) in ((H32, H64), (Hd32, Hd64))
         @test @inferred(dot(x, Hk, y)) isa Float64
         @test dot(x, Hk, y) ≈ dot(x, H, y) rtol = 1e-5
         @test dot(x, Hk, x) ≈ dot(x, H, x) rtol = 1e-5
+        @test @inferred(BlockLinearSystems.schur_quadform(Hk, x)) isa Float64
+        @test BlockLinearSystems.schur_quadform(Hk, x) ≈ BlockLinearSystems.schur_quadform(Hk64, x) rtol = 1e-13
+        # No accumulator changes type inside the loop (the result above is inferred even when one does, since the
+        # union is split, so the slot types are what show it)
+        ci = first(code_typed(BlockLinearSystems.schur_quadform, (typeof(Hk), Vector{Float64}); optimize=false))[1]
+        @test !any(t -> t isa Union && Float32 <: t, ci.slottypes)
     end
     @test !isdefined(BlockLinearSystems, :fast_bAb)
 end

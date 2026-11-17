@@ -20,7 +20,7 @@ function schur_quadform(H::SchurBlockHessian{T}, dx::AbstractVector) where T
     if H.R isa Matrix{T}
         R = H.R
         @inbounds for j in 1:nr
-            val = zero(T)
+            val = zero(Tacc)
             for i in 1:j
                 r_val = R[i, j]
                 if i == j
@@ -49,11 +49,11 @@ function schur_quadform(H::SchurBlockHessian{T}, dx::AbstractVector) where T
                 ptr = nzval[k]
                 col_start = boffsets[j]
                 dcol = R_sys.columnblocksizes[j]
-                blk_total = zero(T)
+                blk_total = zero(Tacc)
                 for jc in 1:dcol
                     dx_jc = dx_r[col_start + jc - 1]
                     col_ptr = ptr + (jc - 1) * drow - 1
-                    col_total = zero(T)
+                    col_total = zero(Tacc)
                     for ir in 1:drow
                         col_total += data[col_ptr + ir] * dx_r[row_start + ir - 1]
                     end
