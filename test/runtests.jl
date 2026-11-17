@@ -1,4 +1,4 @@
-using Random, BlockLinearSystems, SparseArrays, StaticArrays, Static, HybridArrays, LinearAlgebra, Test, Aqua, JET, Polyester
+using Random, BlockLinearSystems, SparseArrays, StaticArrays, Static, HybridArrays, LinearAlgebra, Test, Aqua, Polyester
 
 # The kernels allocate nothing, serial or threaded, except a threaded call on Julia 1.10 (accepted 2026-11-15:
 # rebuilding a nested closure inside the threaded loop allocates there, about 300 bytes per chunk), which is held to a
