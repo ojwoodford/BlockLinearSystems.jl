@@ -72,7 +72,8 @@ end
         ok = min_ratio > singular_tol(T) && isfinite(min_ratio)
     end
     ok || return (invH = zeros(SMatrix{D, D, T, D * D}), success = false)
-    return (invH = SMatrix{D, D, T, D * D}(chol \ one(SMatrix{D, D, T})), success = true)
+    # inv(chol) is U⁻¹U⁻ᵀ: one triangular solve and a product, exactly symmetric; `chol \ I` is two solves
+    return (invH = SMatrix{D, D, T, D * D}(inv(chol)), success = true)
 end
 
 # Block dimensions up to D_STATIC use statically sized (register) arithmetic, dispatched on StaticInt;
