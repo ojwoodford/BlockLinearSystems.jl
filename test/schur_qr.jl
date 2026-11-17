@@ -227,6 +227,10 @@ end
                 @test relerr(d_fac, d_raw) <= tol
             end
             @test jtj_quadform(J, Float32.(v)) isa promote_type(T, Float32)
+            # The vector's length is checked, as by jtr! and jtj_diag! (AB3)
+            for src in (J, ws), len in (n - 1, n + 1)
+                @test_throws DimensionMismatch jtj_quadform(src, randn(rng, T, len))
+            end
         end
     end
 end

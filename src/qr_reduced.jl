@@ -580,6 +580,7 @@ function jtj_quadform(src::SchurTables{T}, v::AbstractVector) where T
     jst = src.structure
     st = jst.schur
     D = table_data(src)
+    length(v) == st.nr + sum(Int, st.e_dims; init=0) || throw(DimensionMismatch("v has length $(length(v)), expected $(st.nr + sum(Int, st.e_dims; init=0))"))
     total = zero(promote_type(T, eltype(v)))
     for t in 1:jst.ntables
         total += table_quadratic(D, jst, v, t, total)
