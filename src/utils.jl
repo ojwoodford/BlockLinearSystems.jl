@@ -105,5 +105,7 @@ function check_damping(lambda::Real, scaling::AbstractVector, name::Symbol)
     end
     return nothing
 end
+# A sparse reduced system's pattern given by the caller lacks block (r1, r2) of the upper triangle
+@noinline throw_missing_block(r1, r2) = throw(ArgumentError("The sparse pattern has no block ($r1, $r2)"))
 @noinline throw_bad_lambda(lambda) = throw(ArgumentError("lambda must be finite and non-negative, got $lambda"))
 @noinline throw_bad_scaling(name, i, x) = throw(ArgumentError("$name must be finite and non-negative, but entry $i is $x"))

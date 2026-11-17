@@ -457,7 +457,7 @@ function reduced_normal_sparse!(S::SparseMatrixCSC{T}, g_S::AbstractVector{T}, w
                     r1 = jst.entry_retained[u1]
                     rng = b_lo:b_hi
                     idx = searchsortedfirst(view(block_rowval, rng), r1)
-                    (idx <= length(rng) && block_rowval[rng[idx]] == r1) || throw(AssertionError("Sparse pattern missing entry ($r1, $r2)"))
+                    (idx <= length(rng) && block_rowval[rng[idx]] == r1) || throw_missing_block(r1, r2)
                     row_offset = block_row_offsets[rng[idx]]
                     (row, col) -> col_base + (col - 1) * stride + row_offset + row - 1
                 end

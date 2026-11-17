@@ -822,7 +822,7 @@ reduced_normal_dense!
 Sparse counterpart of [`reduced_normal_dense!`](@ref): overwrite `S.nzval` (upper triangle) and `g_S`.
 `pattern` and `S` come from `build_schur_pattern(structure.schur, T; extra_blocks=free_block_pairs(structure))`
 (copy `pattern.S_sparse` for `S`); add the retained damping at `pattern.diag_inds`. Throws an
-`AssertionError` if the pattern lacks a needed block.
+`ArgumentError` if the pattern lacks a needed block.
 """
 reduced_normal_sparse!
 

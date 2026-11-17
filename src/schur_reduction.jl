@@ -311,7 +311,7 @@ end
         while b_row_idx <= b_row_end && block_rowval[b_row_idx] < r1
             b_row_idx += 1
         end
-        @assert b_row_idx <= b_row_end && block_rowval[b_row_idx] == r1 "Sparse pattern missing entry ($r1, $r2)"
+        (b_row_idx <= b_row_end && block_rowval[b_row_idx] == r1) || throw_missing_block(r1, r2)
         row_offset = block_row_offsets[b_row_idx]
         for col in 1:dr2
             c_off = co2 + (col - 1) * de

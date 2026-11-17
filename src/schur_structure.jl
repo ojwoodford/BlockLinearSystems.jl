@@ -112,7 +112,7 @@ Expand a block-level permutation into a scalar-level permutation vector.
 """
 function expand_block_perm(block_perm::AbstractVector{<:Integer}, block_sizes::AbstractVector{<:Integer})
     nblocks = length(block_sizes)
-    @assert length(block_perm) == nblocks "block_perm and block_sizes must have equal length"
+    length(block_perm) == nblocks || throw(DimensionMismatch("block_perm has length $(length(block_perm)), but there are $nblocks block sizes"))
     total_dim = sum(Int, block_sizes; init=0)
     scalar_perm = Vector{Int}(undef, total_dim)
     boffsets = Vector{Int}(undef, nblocks)
@@ -146,7 +146,8 @@ function sort_schur_blocks(
     couplings::AbstractVector{<:AbstractVector}
 )
     nblocks = length(is_eliminated)
-    @assert length(block_sizes) == nblocks "is_eliminated and block_sizes must have equal length"
+    length(block_sizes) == nblocks || throw(DimensionMismatch("block_sizes has length $(length(block_sizes)), but is_eliminated has length $nblocks"))
+    length(couplings) == nblocks || throw(DimensionMismatch("couplings has length $(length(couplings)), but is_eliminated has length $nblocks"))
 
     # Retained blocks (sorted by dimension descending)
     r_indices = findall(!, is_eliminated)
@@ -280,7 +281,7 @@ function build_r_to_s_map(R_sparse::SparseMatrixCSC, S_sparse::SparseMatrixCSC)
         for k in R_sparse.colptr[j]:(R_sparse.colptr[j + 1] - 1)
             i = R_sparse.rowval[k]
             s_k = find_in_column(S_sparse, i, j)
-            @assert s_k != 0 "R entry ($i, $j) not present in S sparsity pattern"
+            s_k != 0 || throw(ArgumentError("R entry ($i, $j) is not present in the sparsity pattern of S"))
             push!(r_to_s, s_k)
         end
     end
@@ -313,7 +314,7 @@ function build_r_to_s_map(R_sys::SparseBlockLinearSystem, S_sparse::SparseMatrix
                 for row in 1:col
                     srow = boffsets_r[brow] + row - 1
                     s_k = find_in_column(S_sparse, srow, scol)
-                    @assert s_k != 0 "Missing diagonal entry ($srow, $scol) in S"
+                    s_k != 0 || throw(ArgumentError("Entry ($srow, $scol) of a diagonal block of R is not present in the sparsity pattern of S"))
                     r_to_s[data_start + (col - 1)*drow + row - 1] = s_k
                 end
             end
@@ -323,7 +324,7 @@ function build_r_to_s_map(R_sys::SparseBlockLinearSystem, S_sparse::SparseMatrix
                 for row in 1:drow
                     scol = boffsets_r[brow] + row - 1
                     s_k = find_in_column(S_sparse, srow, scol)
-                    @assert s_k != 0 "Missing entry ($srow, $scol) in S"
+                    s_k != 0 || throw(ArgumentError("Entry ($srow, $scol) of R is not present in the sparsity pattern of S"))
                     r_to_s[data_start + (col - 1)*drow + row - 1] = s_k
                 end
             end
@@ -349,7 +350,7 @@ function build_r_to_s_map(R_sys::SparseBlockLinearSystem, pattern::NamedTuple, b
         # Block (bcol, brow) of the upper-triangle pattern: block column brow, block row bcol
         rng = pattern.block_colptr[brow]:(pattern.block_colptr[brow + 1] - 1)
         k = searchsortedfirst(view(pattern.block_rowval, rng), bcol)
-        (k <= length(rng) && pattern.block_rowval[rng[k]] == bcol) || throw(AssertionError("Block ($bcol, $brow) of R is not present in the pattern of S"))
+        (k <= length(rng) && pattern.block_rowval[rng[k]] == bcol) || throw(ArgumentError("Block ($bcol, $brow) of R is not present in the pattern of S"))
         row_offset = pattern.block_row_offsets[rng[k]]
         base = S_colptr[boffsets_r[brow]] + row_offset
         stride = pattern.col_heights[brow]

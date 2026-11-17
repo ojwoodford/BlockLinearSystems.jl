@@ -484,7 +484,7 @@ end
     p = coupled_groups_problem()
     H = sparse_schur_hessian(p)
     plain = build_schur_pattern(H.structure)
-    @test_throws AssertionError build_r_to_s_map(H.R, plain, H.structure.boffsets_r)
+    @test_throws ArgumentError build_r_to_s_map(H.R, plain, H.structure.boffsets_r)
 end
 
 @testset "retained-retained couplings without a shared eliminated variable (B4)" begin
@@ -503,7 +503,7 @@ end
     # The sparse system fails to build a slot for R's coupling without the extra pairs ...
     H = sparse_schur_hessian(p)
     @test Set(retained_block_pairs(H.R)) ⊇ Set([(3, 1), (4, 2)])
-    @test_throws AssertionError build_r_to_s_map(H.R, plain.S_sparse, structure.boffsets_r)
+    @test_throws ArgumentError build_r_to_s_map(H.R, plain.S_sparse, structure.boffsets_r)
     # ... and builds one with them
     pattern = build_schur_pattern(structure; extra_blocks=retained_block_pairs(H.R))
     r_to_s = build_r_to_s_map(H.R, pattern.S_sparse, structure.boffsets_r)
@@ -566,4 +566,43 @@ allocs_zero!(H) = @allocated zero!(H)
         zero!(H)
         @test all(iszero, H.E_data) && all(iszero, H.C_data)
     end
+end
+
+@testset "Input validation throws ArgumentError or DimensionMismatch, not AssertionError (AB12)" begin
+    # expand_block_perm and sort_schur_blocks: lengths
+    @test_throws DimensionMismatch BlockLinearSystems.expand_block_perm([1, 2], [2, 3, 4])
+    @test_throws DimensionMismatch sort_schur_blocks([true, false], [2, 3, 4], [[2], Int[]])
+    @test_throws DimensionMismatch sort_schur_blocks([true, false], [2, 3], [[2]])
+    @test sort_schur_blocks([true, false], [2, 3], [[2], Int[]]) isa Vector{Int}
+
+    # build_r_to_s_map, all three methods: an entry of R missing from S
+    st = SchurStructure([2, 2], [1, 1], [[1], [2]])                  # S block diagonal: blocks (1, 1) and (2, 2)
+    pattern = build_schur_pattern(st)
+    R_sys = SparseBlockLinearSystem{Float64}([(1, 1), (2, 1), (2, 2)], [2, 2])   # R couples retained blocks 1 and 2
+    @test_throws ArgumentError build_r_to_s_map(R_sys, pattern, st.boffsets_r)
+    @test_throws ArgumentError build_r_to_s_map(R_sys, pattern.S_sparse, st.boffsets_r)           # off-diagonal entry
+    S_nodiag = sparse([2, 3, 4], [2, 3, 4], 1.0, 4, 4)                                           # no (1, 1)
+    @test_throws ArgumentError build_r_to_s_map(SparseBlockLinearSystem{Float64}([(1, 1), (2, 2)], [2, 2]), S_nodiag, st.boffsets_r)
+    @test_throws ArgumentError build_r_to_s_map(sparse([1, 2], [1, 2], 1.0, 4, 4), S_nodiag)
+
+    # reduce_schur_sparse!: a pattern that lacks a block the reduction needs
+    st2 = SchurStructure([2, 2], [1], [[1, 2]])                       # couples retained blocks 1 and 2
+    p2 = build_schur_pattern(st2)
+    H2 = SchurBlockHessian(st2, R_sys, ones(1), ones(4))
+    ws2 = SchurReductionWorkspace{Float64}(st2, 1)
+    S = copy(pattern.S_sparse)                                        # block diagonal: (1, 2) missing
+    @test_throws ArgumentError reduce_schur_sparse!(S, zeros(4), zeros(4), zeros(1), ones(1), 0.0, st2, H2.E_data, H2.C_data,
+        pattern.block_colptr, pattern.block_rowval, pattern.block_row_offsets, pattern.col_heights, ws2)
+    S2 = copy(p2.S_sparse)
+    @test reduce_schur_sparse!(S2, zeros(4), zeros(4), zeros(1), ones(1), 0.0, st2, H2.E_data, H2.C_data,
+        p2.block_colptr, p2.block_rowval, p2.block_row_offsets, p2.col_heights, ws2)
+
+    # reduced_normal_sparse!: the same, on the QR path
+    jst = SchurJacobianStructure(st2, [3])
+    J = SchurBlockJacobian{Float64, Matrix{Float64}}(jst)
+    J.data .= 1:length(J.data)
+    ws = QRReductionWorkspace(J)
+    @test reduce_qr!(ws, J, ones(1), 1.0)
+    @test_throws ArgumentError reduced_normal_sparse!(copy(pattern.S_sparse), zeros(4), ws, pattern)
+    @test reduced_normal_sparse!(copy(p2.S_sparse), zeros(4), ws, p2)
 end
