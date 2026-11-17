@@ -1,6 +1,7 @@
 module BlockLinearSystems
 
 using Static, StaticArrays, HybridArrays, SparseArrays, LinearAlgebra
+using SIRBSDispatch: sirbsdispatch
 
 # Public API: exported, documented and listed in docs/src/api.md (test/exports.jl enforces this list).
 # Everything else is internal: not exported, not in the API reference.

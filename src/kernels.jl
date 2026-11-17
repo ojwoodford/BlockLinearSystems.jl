@@ -99,15 +99,7 @@ const D_STATIC = 8
     return acc
 end
 
-# Call `f(s_de)` with the block dimension `de` as a StaticInt when `de <= D_STATIC`, else as an Int
-@inline function dispatch_dim(f::F, de::Int) where F
-    de == 1 && return f(static(1))
-    de == 2 && return f(static(2))
-    de == 3 && return f(static(3))
-    de == 4 && return f(static(4))
-    de == 5 && return f(static(5))
-    de == 6 && return f(static(6))
-    de == 7 && return f(static(7))
-    de == 8 && return f(static(8))
-    return f(de)
-end
+# Call `f(s_de)` with the block dimension `de` as a StaticInt when `1 <= de <= D_STATIC`, else as an Int.
+# sirbsdispatch clamps a value outside its range to the nearest bound, so the range is tested here.
+@inline dispatch_dim(f::F, de::Int) where F =
+    1 <= de <= D_STATIC ? sirbsdispatch(static(1), static(D_STATIC), de, f) : f(de)
