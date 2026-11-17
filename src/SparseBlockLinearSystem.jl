@@ -311,7 +311,10 @@ function symmetrifyfull!(mat::AbstractMatrix{T}, bsm::SparseBlockLinearSystem{T}
         end
         all(b -> 1 <= b <= length(bsm.rowblocksizes), block_indices) || throw(BoundsError(bsm.rowblocksizes, block_indices))
         lengths = zeros(Int, length(bsm.rowblocksizes))
-        lengths[block_indices] .= bsm.rowblocksizes[block_indices]
+        for b in block_indices
+            lengths[b] == 0 || throw(ArgumentError("Block $b is listed more than once"))
+            lengths[b] = bsm.rowblocksizes[b]
+        end
         starts = zeros(Int, length(bsm.rowblocksizes))
         starts[block_indices] .= cumsum(vcat(1, bsm.rowblocksizes[block_indices[1:end-1]]))
     end

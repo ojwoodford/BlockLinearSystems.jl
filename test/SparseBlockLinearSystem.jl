@@ -188,6 +188,16 @@ end
     @test isempty(empty_mat)
     @test_throws DimensionMismatch symmetrifyfull!(zeros(Int64, 3, 3), bs, [2, 3])
     @test_throws BoundsError symmetrifyfull!(zeros(Int64, 2, 2), bs, [10])
+    # A repeated block is an error that names it; a list in any order gives the permuted principal submatrix (AB9)
+    @test_throws ArgumentError("Block 2 is listed more than once") symmetrifyfull!(zeros(Int64, 7, 7), bs, [2, 3, 2])
+    @test_throws ArgumentError("Block 1 is listed more than once") symmetrifyfull!(zeros(Int64, 4, 4), bs, [1, 1])
+    scalar = (1:2, 3:5, 6:6)   # the scalar indices of blocks 1, 2 and 3
+    for order in ([3, 1], [2, 1], [3, 2, 1], [2, 3, 1], [1, 3])
+        idx = reduce(vcat, collect.(scalar[order]))
+        sub = zeros(Int64, length(idx), length(idx))
+        symmetrifyfull!(sub, bs, order)
+        @test sub == outsym[idx, idx]
+    end
 
     # Val static sizing
     @test block(bs, 2, 2, Val(3), Val(3)) isa SizedMatrix{3, 3}

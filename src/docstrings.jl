@@ -192,7 +192,7 @@ symmetrifyfull
 
 Symmetrifies a lower-triangular block matrix in-place:
 - For [`DenseBlockLinearSystem`](@ref): mirrors the lower triangle to the upper triangle of `bdm.data` in-place and returns `bdm.data`.
-- For [`SparseBlockLinearSystem`](@ref): populates preallocated dense matrix `mat` in-place. If `blocks` is a vector of block indices, extracts and symmetrifies only the principal submatrix corresponding to `blocks`.
+- For [`SparseBlockLinearSystem`](@ref): populates preallocated dense matrix `mat` in-place. If `blocks` is a vector of block indices, extracts and symmetrifies only the principal submatrix corresponding to `blocks`, with the blocks in the order listed (a block listed twice is an `ArgumentError`).
 
 # Example
 ```jldoctest
