@@ -47,10 +47,7 @@ function partition_columns(retained_ptr::Vector{Int}, K::Int)
     return ranges
 end
 
-function SchurReductionWorkspace{T}(
-    structure::SchurStructure, nchunks::Int;
-    is_dense::Bool=true, nnz_S::Int=0   # accepted for compatibility: no per-chunk copies of S are needed any more
-) where T
+function SchurReductionWorkspace{T}(structure::SchurStructure, nchunks::Int) where T
     max_De = max_run_blocksize(structure.e_dims; init=3)
 
     # One scratch matrix per phase-1 chunk, only used for blocks above D_STATIC

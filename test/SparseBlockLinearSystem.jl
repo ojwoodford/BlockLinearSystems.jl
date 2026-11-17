@@ -251,11 +251,6 @@ end
     sbls_vec_rect = SparseBlockLinearSystem{Float64}(5, sp_mat, [2, 2], [3, 1])
     @test sbls_vec_rect.rowblocksizes !== sbls_vec_rect.columnblocksizes
 
-    sbls_sub1 = SparseBlockLinearSystem{Float64}(bs_diag, 2)
-    @test sbls_sub1.m == 2 && sbls_sub1.n == 2
-    sbls_sub2 = SparseBlockLinearSystem{Float64}(bs_diag, 2, 4)
-    @test sbls_sub2.m == 2 && sbls_sub2.n == 4
-
     rbs_sq = [2, 2]
     sbls_raw_sq = SparseBlockLinearSystem{Float64}(bs_diag.data, bs_diag.indices, bs_diag.indicestransposed, rbs_sq, rbs_sq, 4, 4)
     @test sbls_raw_sq.rowblocksizes === sbls_raw_sq.columnblocksizes

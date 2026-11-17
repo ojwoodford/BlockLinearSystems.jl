@@ -201,7 +201,7 @@ using BlockLinearSystems: expand_block_perm   # internal names
     # --------------------------------------------------------------------------
     # 4. Dense Schur Reduction & Equivalence Test (K = 1)
     # --------------------------------------------------------------------------
-    ws_K1 = BlockLinearSystems.SchurReductionWorkspace{Float64}(structure_K1, 1; is_dense=true)
+    ws_K1 = BlockLinearSystems.SchurReductionWorkspace{Float64}(structure_K1, 1)
     S_dense = zeros(nr, nr)
     g_S_dense = zeros(nr)
 
@@ -237,7 +237,7 @@ using BlockLinearSystems: expand_block_perm   # internal names
     # --------------------------------------------------------------------------
     # 5. Multi-Chunk Parallel Reduction & Thread-Invariance Test (K = 4)
     # --------------------------------------------------------------------------
-    ws_K4 = BlockLinearSystems.SchurReductionWorkspace{Float64}(structure_K4, 4; is_dense=true)
+    ws_K4 = BlockLinearSystems.SchurReductionWorkspace{Float64}(structure_K4, 4)
     S_dense_K4 = zeros(nr, nr)
     g_S_dense_K4 = zeros(nr)
 
@@ -345,7 +345,7 @@ using BlockLinearSystems: expand_block_perm   # internal names
 
     # Sparse workspace (K = 1)
     ws_sparse_K1 = BlockLinearSystems.SchurReductionWorkspace{Float64}(
-        structure_K1, 1; is_dense=false, nnz_S=nnz_S
+        structure_K1, 1
     )
 
     BlockLinearSystems.reset_schur_sparse!(
@@ -378,7 +378,7 @@ using BlockLinearSystems: expand_block_perm   # internal names
 
     # Sparse reduction with K = 4 chunks
     ws_sparse_K4 = BlockLinearSystems.SchurReductionWorkspace{Float64}(
-        structure_K4, 4; is_dense=false, nnz_S=nnz_S
+        structure_K4, 4
     )
     S_sparse_K4 = copy(S_sparse)
     BlockLinearSystems.reset_schur_sparse!(
@@ -409,7 +409,7 @@ using BlockLinearSystems: expand_block_perm   # internal names
         E_data_degen[eo1 + (j-1)*3 + i - 1] = E_rank1[i, j]
     end
 
-    ws_degen = BlockLinearSystems.SchurReductionWorkspace{Float64}(structure_K1, 1; is_dense=true)
+    ws_degen = BlockLinearSystems.SchurReductionWorkspace{Float64}(structure_K1, 1)
     S_degen = zeros(nr, nr)
     g_S_degen = zeros(nr)
     BlockLinearSystems.reset_schur_dense!(S_degen, R, scaling_r, 0.0, ws_degen)
@@ -507,4 +507,14 @@ using BlockLinearSystems: expand_block_perm   # internal names
     quad_exact = dot(dx_test, H_full_undamped * dx_test)
     quad_fast = dot(dx_test, H_dense_block, dx_test)
     @test isapprox(quad_fast, quad_exact; atol=1e-10)
+end
+
+@testset "Dead compatibility forms are gone (AB11)" begin
+    st = SchurStructure([2, 2], [3], [[1, 2]])
+    @test SchurReductionWorkspace{Float64}(st, 1) isa SchurReductionWorkspace{Float64}
+    @test_throws MethodError SchurReductionWorkspace{Float64}(st, 1; is_dense=true)
+    @test_throws MethodError SchurReductionWorkspace{Float64}(st, 1; is_dense=false, nnz_S=10)
+    bsm = SparseBlockLinearSystem{Float64}([(1, 1), (2, 1), (2, 2)], [2, 3])
+    @test_throws MethodError SparseBlockLinearSystem{Float64}(bsm, 5)
+    @test_throws MethodError SparseBlockLinearSystem{Float64}(bsm, 5, 7)
 end

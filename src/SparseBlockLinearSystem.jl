@@ -74,10 +74,6 @@ function SparseBlockLinearSystem{T}(blockcoords::AbstractVector{<:Tuple{Integer,
     return SparseBlockLinearSystem{T}(sparsity, rbs, cbs; transposed=false)
 end
 
-function SparseBlockLinearSystem{T}(bsm::SparseBlockLinearSystem{T}, m::Int, n::Int=m) where T
-    return SparseBlockLinearSystem{T}(bsm.data, bsm.indices, bsm.indicestransposed, bsm.rowblocksizes, bsm.columnblocksizes, m, n)
-end
-
 function SparseBlockLinearSystem{T}(data::Vector{T}, indices, indicestransposed, rowblocksizes, colblocksizes, m, n) where T
     rbs = as_block_rle(rowblocksizes)
     cbs = rowblocksizes === colblocksizes ? rbs : as_block_rle(colblocksizes)
