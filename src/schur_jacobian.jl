@@ -183,6 +183,15 @@ zero!(J::SchurBlockJacobian) = (fill!(J.data, zero(eltype(J.data))); J)
 copy_structure(J::SchurBlockJacobian{T, RType}) where {T, RType} =
     SchurBlockJacobian{T, RType}(zeros(T, length(J.data)), J.structure)
 
+# A copy with its own tables (the same values) and the same structure, and a copy of the values into a
+# `SchurBlockJacobian` of the same structure (as a cache of systems needs for a prototype)
+Base.copy(J::SchurBlockJacobian{T, RType}) where {T, RType} = SchurBlockJacobian{T, RType}(copy(J.data), J.structure)
+function Base.copyto!(dest::SchurBlockJacobian, src::SchurBlockJacobian)
+    dest.structure === src.structure || throw(ArgumentError("copyto!: the two SchurBlockJacobians have different structures"))
+    copyto!(dest.data, src.data)
+    return dest
+end
+
 # ------------------------------------------------------------------------------------------------------------------
 # Assembly views
 # ------------------------------------------------------------------------------------------------------------------

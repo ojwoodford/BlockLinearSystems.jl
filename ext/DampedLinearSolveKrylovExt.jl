@@ -1,10 +1,9 @@
-module BlockLinearSystemsKrylovExt
+module DampedLinearSolveKrylovExt
 
-# LSMR on the reduced Jacobian J̃ of QR elimination (TP3): loaded when both BlockLinearSystems and Krylov are.
-# It adds a reduced solver to BlockLinearSystemsExt's QR-elimination system through the core's `make_reduced`
-# and `solve_reduced!`, without naming that extension's types.
+# LSMR on the reduced Jacobian J̃ of QR elimination: loaded when both DampedLinearSolve and Krylov are. It adds a
+# reduced solver to DampedLinearSolveExt's QR-elimination system through `make_reduced` and `solve_reduced!`,
+# without naming that extension's types.
 
-using SecondOrderOptimization
 using DampedLinearSolve
 using BlockLinearSystems
 using Krylov
@@ -70,4 +69,4 @@ function solve_reduced!(ls, red::LsmrReduced, ::StaticSymbol{:lsmr}, lambda, s_r
     return Success
 end
 
-end # module BlockLinearSystemsKrylovExt
+end # module DampedLinearSolveKrylovExt

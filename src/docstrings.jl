@@ -578,6 +578,8 @@ tables never write the same memory and need no per-thread copies. The damping ro
 through the views and stay zero. [`reduce_qr!`](@ref) reads these tables and never modifies them, so a
 change of the damping re-factors from them.
 
+`copy(J)` returns a `SchurBlockJacobian` with its own copy of the tables and the same structure, and
+`copyto!(dest, src)` copies the tables of one into another of the same structure.
 [`zero!`](@ref) zeroes every table; [`copy_structure`](@ref) returns a new, zeroed `SchurBlockJacobian`
 of the same type, sharing only the (immutable) structure. [`schur_jacobian_bytes`](@ref) gives the
 memory needed before anything is allocated.

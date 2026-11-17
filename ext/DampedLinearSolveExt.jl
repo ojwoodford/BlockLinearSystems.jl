@@ -1,9 +1,9 @@
-module BlockLinearSystemsExt
+module DampedLinearSolveExt
 
-# Schur-complement linear systems for bipartite problems, built on the
-# block data structures and reduction kernels of BlockLinearSystems.jl. Loaded when both packages are.
+# The linear-system contract of DampedLinearSolve.jl, for the Schur-complement systems of a SchurBlockHessian and
+# the QR-eliminated systems of a SchurBlockJacobian, built on this package's block storage and reduction kernels.
+# Loaded when DampedLinearSolve is.
 
-using SecondOrderOptimization
 using DampedLinearSolve
 import DampedLinearSolve: AbstractLinearSystem, solve!, dampen!, sharex, getA, getb, getx, SolveStatus, Success, NotPositiveDefinite, Indefinite, makelinearsystem, max_diag, is_indefinite
 import DampedLinearSolve: AbstractTallLinearSystem, DenseLDLWorkspace, is_indefinite_packed, solvermismatch, make_reduced, solve_reduced!, SPQRWorkspace, spqr_solve!
@@ -22,4 +22,4 @@ include("DampedLinearSolveExt/qrelimination.jl")
 # The conformance hooks of both
 include("DampedLinearSolveExt/conformance.jl")
 
-end # module BlockLinearSystemsExt
+end # module DampedLinearSolveExt

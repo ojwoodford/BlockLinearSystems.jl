@@ -163,12 +163,8 @@ end
 DampedLinearSolve.isfinitesystem(ls::QRSchurLinearSystem) = all(isfinite, ls.A.J.data)   # the tables hold J and r
 
 DampedLinearSolve.maketallsystem(J::SchurBlockJacobian{Float64}, n, linsolver) = QRSchurLinearSystem(J, linsolver)
-# A workspace's own copy of the prototype
-SecondOrderOptimization.workspace_prototype(J::SchurBlockJacobian{Float64, RType}) where RType = SchurBlockJacobian{Float64, RType}(copy(J.data), J.structure)
 
 DampedLinearSolve.zero!(ls::QRSchurLinearSystem) = (fill!(ls.b, 0.0); DampedLinearSolve.markstale!(ls.A); ls)
-# A reused workspace's tables have the prototype's structure, so only the values are set
-SecondOrderOptimization.copyprototype!(J::SchurBlockJacobian, P::SchurBlockJacobian) = copyto!(J.data, P.data)
 
 # The trial system: its own tables (with the same entries), factored tables and gradient; the reduced solver's
 # storage and the scratch are shared, since only one of the two is solved at a time
