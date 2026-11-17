@@ -83,12 +83,15 @@ function find_diag_inds(A::SparseMatrixCSC{T, Ti}) where {T, Ti}
     n = A.n
     diag_inds = Vector{Ti}(undef, n)
     @inbounds for col in 1:n
+        found = false
         for idx in nzrange(A, col)
             if A.rowval[idx] == col
                 diag_inds[col] = idx
+                found = true
                 break
             end
         end
+        found || throw(ArgumentError("column $col has no stored diagonal entry"))
     end
     return diag_inds
 end

@@ -245,16 +245,7 @@ function build_schur_pattern(structure::SchurStructure, ::Type{T}=Float64; extra
     S_sparse = sparse(I_list, J_list, zeros(T, length(I_list)), nr, nr)
 
     # 4. Compute diagonal indices in S_sparse.nzval
-    diag_inds = zeros(Int, nr)
-    for j in 1:nr
-        for idx in S_sparse.colptr[j]:(S_sparse.colptr[j + 1] - 1)
-            if S_sparse.rowval[idx] == j
-                diag_inds[j] = idx
-                break
-            end
-        end
-        @assert diag_inds[j] != 0 "Missing diagonal entry for retained scalar $j"
-    end
+    diag_inds = find_diag_inds(S_sparse)
 
     return (
         block_pattern = block_pattern,

@@ -14,8 +14,10 @@ using BlockLinearSystems: validblock   # internal names
     S = sparse([1, 2, 2, 3, 3], [1, 1, 2, 2, 3], [10.0, 1.0, 20.0, 2.0, 30.0], 3, 3)
     dinds = find_diag_inds(S)
     @test S.nzval[dinds] == [10.0, 20.0, 30.0]
+    # A column without a stored diagonal entry is an error that names the column (AB2)
     S_nodiag = sparse([2, 1], [1, 2], [1.0, 2.0], 2, 2)
-    @test length(find_diag_inds(S_nodiag)) == 2
+    @test_throws ArgumentError("column 1 has no stored diagonal entry") find_diag_inds(S_nodiag)
+    @test_throws ArgumentError("column 2 has no stored diagonal entry") find_diag_inds(sparse([1, 1], [1, 2], [1.0, 2.0], 2, 2))
 
     # inplacecumsum! (unexported helper, accessible via module)
     x = [1, 2, 3, 4]

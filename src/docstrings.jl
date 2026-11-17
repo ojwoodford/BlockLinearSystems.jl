@@ -289,6 +289,7 @@ computestartindices
     find_diag_inds(A::SparseMatrixCSC) -> Vector{Int}
 
 Finds the index `k` in `A.nzval` corresponding to the diagonal entry `A[col, col]` for each column `col in 1:size(A, 2)`.
+Throws `ArgumentError`, naming the column, if a column has no stored diagonal entry.
 
 # Example
 ```julia
