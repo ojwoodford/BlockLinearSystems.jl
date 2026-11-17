@@ -16,7 +16,7 @@ for one) runs on them unchanged.
 | [`SchurBlockJacobian`](@ref)`{Float64, Matrix{Float64}}` | QR elimination, dense reduced system | `:auto`, `:qr` (QR of the reduced Jacobian); `:cholesky`, `:ldl` (its normal equations); `:lsmr` (with Krylov.jl) |
 | [`SchurBlockJacobian`](@ref)`{Float64, SparseMatrixCSC{Float64, Int}}` | QR elimination, sparse reduced system | `:auto`, `:qr` (SPQR of the reduced Jacobian); `:cholesky`, `:ldl` (its normal equations); `:lsmr` (with Krylov.jl) |
 
-`makelinearsystem(H, linsolver)` builds the Schur systems and `maketallsystem(J, n, linsolver)` the
+`makehessiansystem(H, linsolver)` builds the Schur systems and `makejacobiansystem(J, n, linsolver)` the
 QR-eliminated ones; `checkhessian`, `checkjacobian` and `check_jacobian_linsolver` validate a
 prototype first, and `structurekey` identifies its structure for a cache.
 
@@ -46,7 +46,7 @@ full symmetric matrix.
 using BlockLinearSystems, DampedLinearSolve
 
 H = SchurBlockHessian(structure, zeros(nr, nr), zeros(sum(abs2, e_dims)), zeros(clen))   # dense R
-ls = makelinearsystem(H, :auto)
+ls = makehessiansystem(H, :auto)
 # fill getA(ls) (the SchurBlockHessian: R, E and C blocks) and getb(ls), then
 dampen!(ls, 1e-3)
 solve!(ls, :auto)        # Success; getx(ls) holds [x_r; x_e]

@@ -641,7 +641,7 @@ end
     pre = build_schur_pattern(H0.structure; extra_blocks=retained_block_pairs(H0.R))
     Hp = SchurBlockHessian(H0.structure, H0.R, H0.E_data, H0.C_data; pattern=pre)
     x_ref = reference_solve(p, 0.3, ones(n))
-    mk(H) = DampedLinearSolve.makelinearsystem(H, :auto)
+    mk(H) = DampedLinearSolve.makehessiansystem(H, :auto)
 
     # With and without a pattern on H: the same solution
     for H in (H0, Hp)
@@ -685,7 +685,7 @@ end
     # The dense system ignores a pattern
     Hd = dense_schur_matrix(p)
     Hdp = SchurBlockHessian(Hd.structure, Hd.R, Hd.E_data, Hd.C_data; pattern=build_schur_pattern(Hd.structure))
-    @test DampedLinearSolve.makelinearsystem(Hdp, :auto) isa SOOExt.DenseSchurLinearSystem
+    @test DampedLinearSolve.makehessiansystem(Hdp, :auto) isa SOOExt.DenseSchurLinearSystem
 end
 
 # Add d to the diagonal of the full matrix a SchurBlockHessian represents
@@ -714,10 +714,10 @@ end
                       ("mixed eliminated sizes", mixed_dims_problem()))
         n = length(p.b)
         @testset "$name, dense R" begin
-            @test check_linear_system(s -> DampedLinearSolve.makelinearsystem(dense_schur_matrix(p), s); n, linsolvers=(:auto, :cholesky, :ldl)) === nothing
+            @test check_linear_system(s -> DampedLinearSolve.makehessiansystem(dense_schur_matrix(p), s); n, linsolvers=(:auto, :cholesky, :ldl)) === nothing
         end
         @testset "$name, sparse R" begin
-            @test check_linear_system(s -> DampedLinearSolve.makelinearsystem(sparse_schur_matrix(p), s); n, linsolvers=(:auto, :cholesky, :ldl)) === nothing
+            @test check_linear_system(s -> DampedLinearSolve.makehessiansystem(sparse_schur_matrix(p), s); n, linsolvers=(:auto, :cholesky, :ldl)) === nothing
         end
     end
     # The helpers read back exactly the full matrix the problem was built from

@@ -49,7 +49,7 @@ function DenseSchurLinearSystem(
     scaling_e = view(scaling, nr+1:tot_dim)
 
     # Built for :ldl, so that it holds the Bunch-Kaufman workspace; :cholesky needs none
-    red = makelinearsystem(nr, static(:ldl))
+    red = makehessiansystem(nr, static(:ldl))
 
     K = nchunks > 0 ? nchunks : (isempty(H.structure.chunks) ? 1 : length(H.structure.chunks[1]))
     ws = SchurReductionWorkspace{T}(H.structure, K)
@@ -430,7 +430,7 @@ function DampedLinearSolve.sharex(ls::SparseSchurLinearSystem{T, Ti, TL, TF, TC}
     )
 end
 
-function DampedLinearSolve.makelinearsystem(H::SchurBlockHessian{T}, linsolver) where T
+function DampedLinearSolve.makehessiansystem(H::SchurBlockHessian{T}, linsolver) where T
     nr = H.structure.nr
     ne = sum(Int, H.structure.e_dims; init=0)
     tot = nr + ne

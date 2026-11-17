@@ -103,18 +103,18 @@ reduced_system(J::SchurBlockJacobian, ws, linsolver) = reduced_system(J, ws, sta
 function reduced_system(J::SchurBlockJacobian{Float64, Matrix{Float64}}, ws, ::Union{StaticSymbol{:auto}, StaticSymbol{:qr}})
     jst = J.structure
     nr, mt = jst.schur.nr, reduced_nrows(jst)
-    sys = DampedLinearSolve.maketallsystem(mt + nr, nr, static(:qr))
+    sys = DampedLinearSolve.makejacobiansystem(mt + nr, nr, static(:qr))
     dampen!(sys, 0.0)
     return DenseQRReduced(sys)
 end
 function reduced_system(J::SchurBlockJacobian{Float64, Matrix{Float64}}, ws, ::Union{StaticSymbol{:cholesky}, StaticSymbol{:ldl}})
-    sys = makelinearsystem(J.structure.schur.nr, static(:ldl))   # holds the Bunch-Kaufman workspace
+    sys = makehessiansystem(J.structure.schur.nr, static(:ldl))   # holds the Bunch-Kaufman workspace
     return DenseNormalReduced(sys)
 end
 # QR whatever the storage: `:auto` is QR of J̃ for a sparse RType too (decided 2026-11-15, TP6)
 function reduced_system(J::SchurBlockJacobian{Float64, SparseMatrixCSC{Float64, Int}}, ws, ::Union{StaticSymbol{:auto}, StaticSymbol{:qr}})
     Jt = build_reduced_jacobian_pattern(J.structure, Float64)
-    sys = DampedLinearSolve.maketallsystem(Jt, J.structure.schur.nr, static(:qr))
+    sys = DampedLinearSolve.makejacobiansystem(Jt, J.structure.schur.nr, static(:qr))
     return SparseQRReduced(sys, getJ(getA(sys)), getr(getA(sys)))
 end
 function reduced_system(J::SchurBlockJacobian{Float64, SparseMatrixCSC{Float64, Int}}, ws, ::Union{StaticSymbol{:cholesky}, StaticSymbol{:ldl}})
@@ -128,8 +128,8 @@ function reduced_system(J::SchurBlockJacobian{Float64, SparseMatrixCSC{Float64, 
 end
 # LSMR on J̃, matrix-free: DampedLinearSolveKrylovExt adds the system, for the reduction workspace it reads J̃ from
 function reduced_system(J::SchurBlockJacobian, ws, s::StaticSymbol{:lsmr})
-    hasmethod(DampedLinearSolve.maketallsystem, Tuple{typeof(ws), Int, typeof(s)}) || throw(ArgumentError(linsolver_message(J, :lsmr)))
-    return DampedLinearSolve.maketallsystem(ws, J.structure.schur.nr, s)
+    hasmethod(DampedLinearSolve.makejacobiansystem, Tuple{typeof(ws), Int, typeof(s)}) || throw(ArgumentError(linsolver_message(J, :lsmr)))
+    return DampedLinearSolve.makejacobiansystem(ws, J.structure.schur.nr, s)
 end
 reduced_system(J::SchurBlockJacobian, ws, ::StaticSymbol{S}) where S = throw(ArgumentError(linsolver_message(J, S)))
 
@@ -175,7 +175,7 @@ function QRSchurLinearSystem(J::SchurBlockJacobian{Float64}, linsolver)
 end
 DampedLinearSolve.isfinitesystem(ls::QRSchurLinearSystem) = all(isfinite, ls.A.J.data)   # the tables hold J and r
 
-DampedLinearSolve.maketallsystem(J::SchurBlockJacobian{Float64}, n, linsolver) = QRSchurLinearSystem(J, linsolver)
+DampedLinearSolve.makejacobiansystem(J::SchurBlockJacobian{Float64}, n, linsolver) = QRSchurLinearSystem(J, linsolver)
 
 DampedLinearSolve.zero!(ls::QRSchurLinearSystem) = (fill!(ls.b, 0.0); DampedLinearSolve.markstale!(ls.A); ls)
 

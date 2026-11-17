@@ -2,7 +2,7 @@ module DampedLinearSolveKrylovExt
 
 # LSMR on the reduced Jacobian J̃ of QR elimination: loaded when both DampedLinearSolve and Krylov are. It adds the
 # reduced system DampedLinearSolveExt's QR-elimination system builds for linsolver = :lsmr, as a method of
-# DampedLinearSolve's `maketallsystem` for the QRReductionWorkspace that holds J̃, so neither extension names the
+# DampedLinearSolve's `makejacobiansystem` for the QRReductionWorkspace that holds J̃, so neither extension names the
 # other's types. It stays matrix-free: J̃ is applied through the factored tables, never formed, and block-Jacobi
 # preconditioned (LP1).
 
@@ -47,7 +47,7 @@ mutable struct LsmrReducedSystem{W} <: AbstractLinearSystem
 end
 DampedLinearSolve.dampen!(red::LsmrReducedSystem, lambda::Real) = (red.lambda = Float64(lambda); red.scaling = nothing; red)
 DampedLinearSolve.dampen!(red::LsmrReducedSystem, lambda::Real, scaling) = (red.lambda = Float64(lambda); red.scaling = scaling; red)
-function DampedLinearSolve.maketallsystem(ws::QRReductionWorkspace{Float64}, nr::Integer, ::StaticSymbol{:lsmr})
+function DampedLinearSolve.makejacobiansystem(ws::QRReductionWorkspace{Float64}, nr::Integer, ::StaticSymbol{:lsmr})
     jst = ws.structure
     mt, n = reduced_nrows(jst), Int(nr)
     return LsmrReducedSystem(ws, Krylov.LsmrWorkspace(mt + n, n, Vector{Float64}), zeros(mt + n), zeros(n),

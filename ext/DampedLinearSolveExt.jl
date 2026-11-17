@@ -5,7 +5,7 @@ module DampedLinearSolveExt
 # Loaded when DampedLinearSolve is (LDLFactorizations, a dependency of DampedLinearSolve, is then loaded too).
 
 using DampedLinearSolve
-import DampedLinearSolve: AbstractLinearSystem, solve!, dampen!, sharex, getA, getb, getx, getJ, getr, markstale!, SolveStatus, Success, NotPositiveDefinite, Indefinite, makelinearsystem, max_diag
+import DampedLinearSolve: AbstractLinearSystem, solve!, dampen!, sharex, getA, getb, getx, getJ, getr, markstale!, SolveStatus, Success, NotPositiveDefinite, Indefinite, makehessiansystem, max_diag
 import LDLFactorizations
 import LDLFactorizations: ldl_analyze, ldl_factorize!, factorized
 import BlockLinearSystems

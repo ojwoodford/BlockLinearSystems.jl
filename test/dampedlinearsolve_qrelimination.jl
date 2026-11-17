@@ -131,7 +131,7 @@ function tp3_schur(p, x)
     clen = st.coffsets[end] + Int(st.r_dims[st.entry_retained[end]]) * Int(st.e_dims[end]) - 1
     H = SchurBlockHessian(st, zeros(st.nr, st.nr), zeros(sum(abs2, st.e_dims)), zeros(clen))
     SOO.conformance_fill!(H, Jd' * Jd)
-    ls = SOO.makelinearsystem(H, static(:cholesky))
+    ls = SOO.makehessiansystem(H, static(:cholesky))
     getb(ls) .= Jd' * rd
     return ls, Jd, rd
 end
