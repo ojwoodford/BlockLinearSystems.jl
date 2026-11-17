@@ -268,6 +268,12 @@ end
             @test_throws DimensionMismatch reduced_mul!(zeros(T, m + 1), ws, v)
             @test_throws DimensionMismatch reduced_tmul!(zeros(T, nr), ws, zeros(T, m - 1))
             @test_throws DimensionMismatch reduced_jacobian!(zeros(T, m, nr + 1), rt, ws)
+            # A wrong-length rt throws before Jt is written (AB10)
+            for len in (m - 1, m + 1)
+                Jt7 = fill(T(7), m, nr)
+                @test_throws DimensionMismatch reduced_jacobian!(Jt7, zeros(T, len), ws)
+                @test all(==(T(7)), Jt7)
+            end
         end
     end
 end

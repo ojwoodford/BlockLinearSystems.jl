@@ -237,6 +237,7 @@ function reduced_jacobian!(Jt::AbstractMatrix, rt::AbstractVector, ws::QRReducti
     st = jst.schur
     F = ws.factored
     size(Jt) == (reduced_nrows(jst), st.nr) || throw(DimensionMismatch("Jt has size $(size(Jt)), expected $((reduced_nrows(jst), st.nr))"))
+    length(rt) == reduced_nrows(jst) || throw(DimensionMismatch("rt has length $(length(rt)), expected $(reduced_nrows(jst))"))
     fill!(Jt, zero(eltype(Jt)))
     reduced_residual!(rt, ws)
     foreach_table(jst) do t
