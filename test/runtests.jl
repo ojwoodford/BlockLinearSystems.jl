@@ -26,4 +26,7 @@ threaded_allocs_ok(bytes, threaded=Threads.nthreads() > 1) =
     include("zero.jl")
     include("threading.jl")
     include("readme.jl")
+    # The DampedLinearSolve extension: the Schur and QR-eliminated systems through the linear-system contract
+    include("dampedlinearsolve_schurhessian.jl")
+    include("dampedlinearsolve_qrelimination.jl")
 end
