@@ -463,8 +463,9 @@ end
         end
     end
 
-    # Each size alone, including the largest allowed (255) and sizes at the tier boundaries
-    for de in (1, 3, 4, 5, 7, 8, 9, 10, 20)
+    # One size alone: the extension has no size-dependent code, and mixed_dims_problem has just been through the same
+    # wiring; 7 is a static size it does not contain (decided 2026-11-17)
+    for de in (7,)
         rng = Random.Xoshiro(de)
         q = SchurTestProblem(rng, [6, 6], [de, de], [[1, 2], [1]])
         for kind in (:dense, :sparse)
