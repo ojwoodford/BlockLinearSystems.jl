@@ -22,6 +22,7 @@ threaded_allocs_ok(bytes, threaded=Threads.nthreads() > 1) =
     include("schur_jacobian.jl")
     include("qr_reduction.jl")
     include("schur_qr.jl")
+    include("diagonal_blocks.jl")
     include("schur_assembly.jl")
     include("zero.jl")
     include("threading.jl")

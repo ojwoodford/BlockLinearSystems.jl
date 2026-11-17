@@ -16,7 +16,7 @@ export SchurJacobianStructure, SchurBlockJacobian, schur_jacobian_bytes, residua
 export QRReductionWorkspace, reduce_qr!
 export reduced_nrows, free_block_pairs, reduced_mul!, reduced_tmul!, reduced_residual!, reduced_jacobian!,
     build_reduced_jacobian_pattern
-export reduced_normal_dense!, reduced_normal_sparse!, reduced_diagonal_blocks!, jtr!, jtj_diag!, jtj_quadform
+export reduced_normal_dense!, reduced_normal_sparse!, reduced_diagonal_blocks!, factor_diagonal_blocks!, solve_diagonal_blocks!, jtr!, jtj_diag!, jtj_quadform
 export threadargs, fromthreadargs
 
 include("utils.jl")
@@ -32,6 +32,7 @@ include("linalg.jl")
 include("schur_jacobian.jl")
 include("qr_reduction.jl")
 include("qr_reduced.jl")
+include("diagonal_blocks.jl")
 include("schur_assembly.jl")
 include("docstrings.jl")
 

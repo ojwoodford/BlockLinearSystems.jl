@@ -112,6 +112,8 @@ build_reduced_jacobian_pattern
 reduced_normal_dense!
 reduced_normal_sparse!
 reduced_diagonal_blocks!
+factor_diagonal_blocks!
+solve_diagonal_blocks!
 jtr!
 jtj_diag!
 jtj_quadform

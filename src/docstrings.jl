@@ -838,6 +838,26 @@ preconditioning of an iterative solve on `J̃`.
 reduced_diagonal_blocks!
 
 """
+    factor_diagonal_blocks!(D::AbstractVector, dims) -> Bool
+
+Factor in place each square block of the flat array `D` by Cholesky, `B = L Lᵀ`, writing `L` into the block's
+lower triangle (its strict upper triangle is not read or written). Block `b`, of dimension `dims[b]`, is stored
+column-major after the blocks before it, as [`reduced_diagonal_blocks!`](@ref) lays them out. Returns `true` if
+every block is positive definite and finite; otherwise `false`, with `D` partly factored. Plain loops, for small
+blocks: no BLAS, no allocation.
+"""
+factor_diagonal_blocks!
+
+"""
+    solve_diagonal_blocks!(y, D::AbstractVector, dims, x) -> y
+
+`y = B⁻¹ x` for the block-diagonal matrix whose blocks [`factor_diagonal_blocks!`](@ref) has factored in `D`:
+block `b` of `x` and `y` holds entries after those of the blocks before it. `y` may be `x`. Plain loops, no
+allocation.
+"""
+solve_diagonal_blocks!
+
+"""
     jtr!(g, src::Union{SchurBlockJacobian, QRReductionWorkspace}) -> g
 
 The gradient `g = Jᵀr` of the full problem, `[g_r; g_e]` (length `nr + sum(e_dims)`), from the raw tables

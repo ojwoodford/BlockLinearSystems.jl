@@ -8,10 +8,10 @@ const PUBLIC_API = sort([
     :SparseBlockLinearSystem, :TransposedPattern,
     :backsubstitute!, :block, :block_sparse_nnz, :blockrange, :blocksizes, :build_r_to_s_map,
     :build_reduced_jacobian_pattern, :build_schur_pattern, :copy_structure, :coupling_block, :coupling_entry, :computestartindices, :eliminated_block, :find_diag_inds,
-    :free_block_pairs, :jtj_diag!, :jtj_quadform, :jtr!, :nblocks, :reduce_qr!, :reduce_schur_dense!,
+    :factor_diagonal_blocks!, :free_block_pairs, :jtj_diag!, :jtj_quadform, :jtr!, :nblocks, :reduce_qr!, :reduce_schur_dense!,
     :reduce_schur_sparse!, :reduced_diagonal_blocks!, :reduced_jacobian!, :reduced_mul!,
     :reduced_normal_dense!, :reduced_normal_sparse!, :reduced_nrows, :reduced_residual!, :reduced_tmul!,
-    :reset_schur_dense!, :reset_schur_sparse!, :residual_block, :retained_block, :retained_block_pairs,
+    :reset_schur_dense!, :reset_schur_sparse!, :residual_block, :solve_diagonal_blocks!, :retained_block, :retained_block_pairs,
     :schur_jacobian_bytes, :sort_schur_blocks, :sparse_with_map, :symmetrifyfull, :symmetrifyfull!,
     :fromthreadargs, :threadargs, :trial_workspace, :uniformscaling!, :zero!,
 ])
