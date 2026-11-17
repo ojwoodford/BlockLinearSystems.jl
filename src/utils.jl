@@ -95,3 +95,15 @@ function find_diag_inds(A::SparseMatrixCSC{T, Ti}) where {T, Ti}
     end
     return diag_inds
 end
+
+# λ and a damping scaling are caller inputs: both must be finite and non-negative. Checked before any work.
+function check_damping(lambda::Real, scaling::AbstractVector, name::Symbol)
+    (isfinite(lambda) && lambda >= 0) || throw_bad_lambda(lambda)
+    @inbounds for i in eachindex(scaling)
+        x = scaling[i]
+        (isfinite(x) && x >= 0) || throw_bad_scaling(name, i, x)
+    end
+    return nothing
+end
+@noinline throw_bad_lambda(lambda) = throw(ArgumentError("lambda must be finite and non-negative, got $lambda"))
+@noinline throw_bad_scaling(name, i, x) = throw(ArgumentError("$name must be finite and non-negative, but entry $i is $x"))

@@ -148,6 +148,7 @@ function reduce_qr!(ws::QRReductionWorkspace{T}, J::SchurBlockJacobian{T}, scali
     J.structure === jst || throw(ArgumentError("The Jacobian and the workspace were built for different structures"))
     st = jst.schur
     length(scaling_e) == sum(Int, st.e_dims; init=0) || throw(DimensionMismatch("scaling_e has length $(length(scaling_e)), expected $(sum(Int, st.e_dims; init=0))"))
+    check_damping(lambda_in, scaling_e, :scaling_e)
     ws.failed_block[] = 0
     F, Rw = ws.factored, J.data
     for g_idx in 1:nruns(st.e_dims)

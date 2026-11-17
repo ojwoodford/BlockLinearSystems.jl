@@ -606,7 +606,8 @@ Eliminate every eliminated block of `J` by QR, into `ws`. For each eliminated bl
 This solves the eliminated part of `(JᵀJ + λ·Diagonal(s)) x = Jᵀr`; `scaling_e` (length
 `sum(e_dims)`) is the eliminated part of `s`, in the units of `diag(JᵀJ)` (for Marquardt scaling,
 [`jtj_diag!`](@ref)). The retained part of the damping is the caller's business: append rows to `J̃`, or
-add `λ·s_r` to the diagonal of `J̃ᵀJ̃`. `lambda = 0` is undamped.
+add `λ·s_r` to the diagonal of `J̃ᵀJ̃`. `lambda = 0` is undamped. `lambda` and `scaling_e` must be finite and
+non-negative: anything else throws `ArgumentError` before any table is written.
 
 Returns `false` if an eliminated block is numerically singular — `|U_kk| ≤ M·eps(T)·‖column k‖`, with
 `M` the table's row count (the rounding left on an exactly dependent column grows with the number of

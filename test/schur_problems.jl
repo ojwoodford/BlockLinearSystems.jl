@@ -326,6 +326,45 @@ end
     end
 end
 
+@testset "λ and the scalings must be finite and non-negative, checked before any work (AB5)" begin
+    p = standard_problem()
+    n = length(p.b)
+    bad = (-0.1, NaN, Inf)
+    for make in (dense_schur_hessian, sparse_schur_hessian)
+        H = make(p)
+        st = H.structure
+        nr = st.nr
+        b_r, b_e = p.b[1:nr], p.b[nr+1:n]
+        ws = SchurReductionWorkspace{Float64}(st, 1)
+        ok_r, ok_e = ones(nr), ones(n - nr)
+        if H.R isa Matrix
+            S = zeros(nr, nr)
+            reset! = (sc_r, lambda) -> reset_schur_dense!(S, H.R, sc_r, lambda, ws)
+            reduce! = (sc_e, lambda) -> reduce_schur_dense!(S, zeros(nr), b_r, b_e, sc_e, lambda, st, H.E_data, H.C_data, ws)
+            Sdata = S
+        else
+            pattern = build_schur_pattern(st, Float64; extra_blocks=retained_block_pairs(H.R))
+            S = pattern.S_sparse
+            r_to_s = build_r_to_s_map(H.R, pattern, st.boffsets_r)
+            reset! = (sc_r, lambda) -> reset_schur_sparse!(S.nzval, H.R.data, r_to_s, pattern.diag_inds, sc_r, lambda, ws)
+            reduce! = (sc_e, lambda) -> reduce_schur_sparse!(S, zeros(nr), b_r, b_e, sc_e, lambda, st, H.E_data, H.C_data,
+                pattern.block_colptr, pattern.block_rowval, pattern.block_row_offsets, pattern.col_heights, ws)
+            Sdata = S.nzval
+        end
+        badvecs(m) = ([fill(1.0, m - 1); -1.0], [NaN; ones(m - 1)], [ones(m - 1); Inf])
+        cases = [[(reset!, ok_r, l) for l in bad]; [(reset!, v, 0.1) for v in badvecs(nr)];
+                 [(reduce!, ok_e, l) for l in bad]; [(reduce!, v, 0.1) for v in badvecs(n - nr)]]
+        for (f, sc, lambda) in cases
+            fill!(Sdata, 7.0); fill!(ws.E_inv_data, 7.0)
+            @test_throws ArgumentError f(sc, lambda)
+            @test all(==(7.0), Sdata)
+            @test all(==(7.0), ws.E_inv_data)
+        end
+        reset!(zeros(nr), 0.0)                              # zero is allowed
+        @test reduce!(zeros(n - nr), 0.0)
+    end
+end
+
 @testset "Column chunks tile the retained blocks without overlap (M3)" begin
     p = standard_problem()
     st = schur_structure(p)

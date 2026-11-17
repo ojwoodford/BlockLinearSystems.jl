@@ -356,12 +356,14 @@ end
 """
     reset_schur_dense!(S, R, scaling_r, lambda, ws)
 
-Reset dense reduced system S = R + lambda * diag(scaling_r) and the failure flag.
+Reset dense reduced system S = R + lambda * diag(scaling_r) and the failure flag. `lambda` and `scaling_r` must be
+finite and non-negative (`ArgumentError` otherwise, before `S` is written).
 """
 function reset_schur_dense!(
     S::Matrix{T}, R::Matrix{T}, scaling_r::AbstractVector{T},
     lambda::T, ws::SchurReductionWorkspace{T}
 ) where T
+    check_damping(lambda, scaling_r, :scaling_r)
     copyto!(S, R)
     @inbounds for (i, sc) in enumerate(scaling_r)
         S[i, i] += lambda * sc
@@ -373,13 +375,15 @@ end
 """
     reset_schur_sparse!(nzval, R_nzval, r_to_s_map, diag_inds, scaling_r, lambda, ws)
 
-Reset sparse reduced system S = R + lambda * diag(scaling_r) and the failure flag.
+Reset sparse reduced system S = R + lambda * diag(scaling_r) and the failure flag. `lambda` and `scaling_r` must be
+finite and non-negative (`ArgumentError` otherwise, before `nzval` is written).
 """
 function reset_schur_sparse!(
     nzval::Vector{T}, R_nzval::Vector{T}, r_to_s_map::Vector{Int},
     diag_inds::Vector{Int}, scaling_r::AbstractVector{T},
     lambda::T, ws::SchurReductionWorkspace{T}
 ) where T
+    check_damping(lambda, scaling_r, :scaling_r)
     fill!(nzval, zero(T))
     @inbounds for i in eachindex(r_to_s_map)
         idx = r_to_s_map[i]
@@ -417,12 +421,14 @@ end
     reduce_schur_dense!(S, g_S, b_r, b_e, scaling_e, lambda, structure, E_data, C_data, ws)
 
 Two-phase Schur reduction into the dense upper triangle of `S` (already holding `R` plus damping) and `g_S`.
+`lambda` and `scaling_e` must be finite and non-negative (`ArgumentError` otherwise, before any work).
 """
 function reduce_schur_dense!(
     S::Matrix{T}, g_S::Vector{T}, b_r::AbstractVector{T}, b_e::AbstractVector{T},
     scaling_e::AbstractVector{T}, lambda::T, structure::SchurStructure,
     E_data::Vector{T}, C_data::Vector{T}, ws::SchurReductionWorkspace{T}
 ) where T
+    check_damping(lambda, scaling_e, :scaling_e)
     factor_all_eliminated!(structure, E_data, C_data, b_e, scaling_e, lambda, ws) || return false
     copyto!(g_S, b_r)
     nk = length(ws.col_chunks)
@@ -437,6 +443,7 @@ end
                          block_colptr, block_rowval, block_row_offsets, col_heights, ws)
 
 Two-phase Schur reduction into `S.nzval` (already holding `R` plus damping) and `g_S`.
+`lambda` and `scaling_e` must be finite and non-negative (`ArgumentError` otherwise, before any work).
 """
 function reduce_schur_sparse!(
     S::SparseMatrixCSC{T, Ti}, g_S::Vector{T}, b_r::AbstractVector{T}, b_e::AbstractVector{T},
@@ -446,6 +453,7 @@ function reduce_schur_sparse!(
     block_row_offsets::Vector{Int}, col_heights::Vector{Int},
     ws::SchurReductionWorkspace{T}
 ) where {T, Ti}
+    check_damping(lambda, scaling_e, :scaling_e)
     factor_all_eliminated!(structure, E_data, C_data, b_e, scaling_e, lambda, ws) || return false
     copyto!(g_S, b_r)
     nk = length(ws.col_chunks)
