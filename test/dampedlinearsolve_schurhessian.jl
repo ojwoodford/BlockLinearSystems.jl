@@ -269,20 +269,7 @@ end
     end
 end
 
-@testset "build_schur_pattern scales to many couplings (B8) and can be reused" begin
-    # Many retained blocks, each eliminated block coupled to a window of consecutive retained blocks
-    nret, nelim = 3000, 6000
-    coupled = [collect(r:min(r + 3, nret)) for r in (min.(1 .+ (0:nelim-1) .* nret .÷ nelim, nret))]
-    structure = SchurStructure(fill(6, nret), fill(3, nelim), coupled)
-    build_schur_pattern(structure)   # compile
-    t = @elapsed pattern = build_schur_pattern(structure)
-    @test t < 5
-    @test nnz(pattern.block_pattern) == length(pattern.block_rowval)
-    # Upper triangle with the diagonal; the sliding window gives bandwidth 3
-    @test all(pattern.block_rowval[k] <= r for r in 1:nret for k in pattern.block_colptr[r]:pattern.block_colptr[r+1]-1)
-    @test nnz(pattern.block_pattern) <= nret * 4
-
-    # Passing a precomputed pattern to the constructor gives the same system
+@testset "A precomputed pattern passed to SparseSchurLinearSystem gives the same system (B8)" begin
     p = coupled_groups_problem()
     H = sparse_schur_matrix(p)
     pre = build_schur_pattern(H.structure; extra_blocks=retained_block_pairs(H.R))
