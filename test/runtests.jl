@@ -29,7 +29,7 @@ end
 const TEST_GROUPS = (
     serial = ["aqua.jl", "exports.jl", "SparseBlockLinearSystem.jl", "DenseBlockLinearSystem.jl", "BlockRLE.jl",
               "typestability.jl", "helpers.jl", "kernels.jl", "schur.jl", "schur_problems.jl", "linalg.jl",
-              "schur_jacobian.jl", "schur_description.jl", "diagonal_blocks.jl", "schur_assembly.jl", "zero.jl", "readme.jl",
+              "schur_jacobian.jl", "schur_description.jl", "schur_hessian.jl", "diagonal_blocks.jl", "schur_assembly.jl", "zero.jl", "readme.jl",
               # the DampedLinearSolve extension: the QR-eliminated systems through the linear-system contract
               "dampedlinearsolve_qrelimination.jl"],
     threaded = ["schur_problems_threaded.jl", "schur_jacobian_threaded.jl", "qr_reduction.jl", "schur_qr.jl",
