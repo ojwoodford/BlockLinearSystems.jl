@@ -54,15 +54,6 @@ end
 DenseBlockLinearSystem{T, M}(data::M, bo::BlockOffsets, co::BlockOffsets=bo) where {T, M<:AbstractMatrix{T}} =
     DenseBlockLinearSystem{T, M}(data, blocksizes_from_offsets(bo, co)...)
 
-# The offsets are redundant given the sizes: they are checked against them, and not kept
-function DenseBlockLinearSystem{T, M}(data::M, rowblockoffsets::AbstractVector{<:Integer}, columnblockoffsets::AbstractVector{<:Integer}, rbs::AbstractVector{<:Integer}, cbs::AbstractVector{<:Integer}) where {T, M<:AbstractMatrix{T}}
-    r_bs = as_block_rle(rbs)
-    c_bs = rbs === cbs ? r_bs : as_block_rle(cbs)
-    rowblockoffsets == blockoffsets(r_bs) || throw(DimensionMismatch("Row block offsets $rowblockoffsets do not match the row block sizes"))
-    columnblockoffsets == blockoffsets(c_bs) || throw(DimensionMismatch("Column block offsets $columnblockoffsets do not match the column block sizes"))
-    return DenseBlockLinearSystem{T, M}(data, r_bs, c_bs)
-end
-
 function DenseBlockLinearSystem{T}(rowblocksizes::AbstractVector{<:Integer}, colblocksizes::AbstractVector{<:Integer}=rowblocksizes) where T
     rbs = as_block_rle(rowblocksizes)
     cbs = rowblocksizes === colblocksizes ? rbs : as_block_rle(colblocksizes)
@@ -87,9 +78,6 @@ DenseBlockLinearSystem{T}(data::M, bo::BlockOffsets, co::BlockOffsets=bo) where 
 
 DenseBlockLinearSystem(data::AbstractMatrix{T}, bo::BlockOffsets, co::BlockOffsets=bo) where T =
     DenseBlockLinearSystem{T}(data, bo, co)
-
-DenseBlockLinearSystem{T}(data::M, rowblockoffsets::AbstractVector{<:Integer}, columnblockoffsets::AbstractVector{<:Integer}, rbs::AbstractVector{<:Integer}, cbs::AbstractVector{<:Integer}) where {T, M<:AbstractMatrix{T}} =
-    DenseBlockLinearSystem{T, M}(data, rowblockoffsets, columnblockoffsets, rbs, cbs)
 
 DenseBlockLinearSystem{T}(; offsets::Vector{Int}, coloffsets::Vector{Int}=offsets) where T =
     DenseBlockLinearSystem{T}(BlockOffsets(offsets), BlockOffsets(coloffsets))

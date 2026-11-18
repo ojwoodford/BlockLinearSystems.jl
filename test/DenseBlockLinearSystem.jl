@@ -122,15 +122,6 @@ using BlockLinearSystems: BlockOffsets, blockdata, eachstoredblock, validblock  
     @test DenseBlockLinearSystem{Float64}(data53, bo, co) isa DenseBlockLinearSystem
     @test DenseBlockLinearSystem(data53, bo, co) isa DenseBlockLinearSystem
 
-    # Raw vector offset constructors
-    rbs_vec = [2, 3]
-    cbs_vec = [3]
-    bdm_raw_sq = DenseBlockLinearSystem{Float64, Matrix{Float64}}(data55, [1, 3, 6], [1, 3, 6], rbs_vec, rbs_vec)
-    @test size(bdm_raw_sq) == (5, 5)
-    bdm_raw_rect = DenseBlockLinearSystem{Float64, Matrix{Float64}}(data53, [1, 3, 6], [1, 4], rbs_vec, cbs_vec)
-    @test size(bdm_raw_rect) == (5, 3)
-    @test DenseBlockLinearSystem{Float64}(data55, [1, 3, 6], [1, 3, 6], rbs_vec, rbs_vec) isa DenseBlockLinearSystem
-
     # Keyword argument constructors
     @test size(DenseBlockLinearSystem{Float64}(; offsets=[1, 3, 6])) == (5, 5)
     @test size(DenseBlockLinearSystem{Float64}(; offsets=[1, 3, 6], coloffsets=[1, 4])) == (5, 3)
@@ -172,22 +163,7 @@ end
     @test occursin("strictly increasing", sprint(showerror, err))
 end
 
-@testset "Offsets are checked against the block sizes and never shared with the caller (AB8)" begin
-    rbs, cbs = BlockRLE([2, 3]), BlockRLE([3])
-    data = zeros(5, 3)
-    # The 5-argument constructors check the offsets against the sizes, with BlockRLE or vector sizes
-    for (ro, co) in (([1, 3, 7], [1, 4]), ([1, 4, 6], [1, 4]), ([1, 3], [1, 4]), ([1, 3, 6], [1, 3]), ([1, 3, 6], [1, 4, 5]))
-        @test_throws DimensionMismatch DenseBlockLinearSystem{Float64, Matrix{Float64}}(data, ro, co, rbs, cbs)
-        @test_throws DimensionMismatch DenseBlockLinearSystem{Float64, Matrix{Float64}}(data, ro, co, [2, 3], [3])
-        @test_throws DimensionMismatch DenseBlockLinearSystem{Float64}(data, ro, co, [2, 3], [3])
-    end
-    @test_throws DimensionMismatch DenseBlockLinearSystem{Float64, Matrix{Float64}}(zeros(5, 4), [1, 3, 6], [1, 4], rbs, cbs)
-    ro, co = [1, 3, 6], [1, 4]
-    d = DenseBlockLinearSystem{Float64, Matrix{Float64}}(data, ro, co, rbs, cbs)
-    ro[2] = 100; co[2] = 100   # mutating the caller's vectors does not change the system
-    @test d.rowblockoffsets == [1, 3, 6] && d.columnblockoffsets == [1, 4]
-    @test size(block(d, 2, 1)) == (3, 3)
-
+@testset "Offsets are never shared with the caller (AB8)" begin
     # The BlockOffsets and offsets-keyword constructors do not keep the caller's vector
     for make in ((r, c) -> DenseBlockLinearSystem{Float64}(BlockOffsets(r), BlockOffsets(c)),
                  (r, c) -> DenseBlockLinearSystem{Float64}(zeros(5, 3), BlockOffsets(r), BlockOffsets(c)),
@@ -205,6 +181,10 @@ end
     d = DenseBlockLinearSystem{Float64}(BlockOffsets(ro))
     ro[3] = 100
     @test d.rowblockoffsets == [1, 3, 6] && d.columnblockoffsets == [1, 3, 6]
+    # The 5-argument forms, which took the offsets beside the sizes, are gone (DL2)
+    for T in (DenseBlockLinearSystem{Float64, Matrix{Float64}}, DenseBlockLinearSystem{Float64})
+        @test_throws MethodError T(zeros(5, 3), [1, 3, 6], [1, 4], [2, 3], [3])
+    end
 end
 
 # Measured in a function, so that @allocated sees concrete types: build a system on `data` with `like`'s layout and
