@@ -175,10 +175,10 @@ reports it from the structure alone, before anything is allocated. See the
 
 ### Use with DampedLinearSolve.jl and SecondOrderOptimization.jl
 
-Loading `BlockLinearSystems` together with [DampedLinearSolve.jl](https://github.com/ojwoodford/DampedLinearSolve.jl)
-(which [SecondOrderOptimization.jl](https://github.com/ojwoodford/SecondOrderOptimization.jl) loads) activates this
-package's extension `DampedLinearSolveExt`, with `DenseSchurLinearSystem`, `SparseSchurLinearSystem` and the
-QR-eliminated systems, which meet DampedLinearSolve's linear-system contract.
+This package implements the linear-system contract of [DampedLinearSolve.jl](https://github.com/ojwoodford/DampedLinearSolve.jl),
+a dependency, for its Schur-complement and QR-eliminated systems, so that
+[SecondOrderOptimization.jl](https://github.com/ojwoodford/SecondOrderOptimization.jl) and any other optimizer written
+against the contract run on them; nothing else has to be loaded.
 Passing a `SchurBlockHessian` as the Hessian prototype selects elimination; there is no option to set.
 Whether the reduced system is dense or sparse follows the storage of `R` (a `Matrix` or a `SparseBlockLinearSystem`),
 and `linsolver` names the solver applied to the reduced system (`:auto`, `:cholesky` or `:ldl`).

@@ -2,6 +2,12 @@ module BlockLinearSystems
 
 using Static, StaticArrays, HybridArrays, SparseArrays, LinearAlgebra
 using SIRBSDispatch: sirbsdispatch
+# The linear-system contract of DampedLinearSolve, implemented for the Schur-complement systems of a SchurBlockHessian
+# and the QR-eliminated systems of a SchurBlockJacobian. Its own zero! and copy_structure are used qualified.
+import DampedLinearSolve
+import DampedLinearSolve: AbstractLinearSystem, solve!, dampen!, sharex, getA, getb, getx, getJ, getr, markstale!, SolveStatus, Success, NotPositiveDefinite, Indefinite, makehessiansystem, max_diag
+import LDLFactorizations
+import LDLFactorizations: ldl_analyze, ldl_factorize!, factorized
 
 # Public API: exported, documented and listed in docs/src/api.md (test/exports.jl enforces this list).
 # Everything else is internal: not exported, not in the API reference.
@@ -35,6 +41,10 @@ include("qr_reduction.jl")
 include("qr_reduced.jl")
 include("diagonal_blocks.jl")
 include("schur_assembly.jl")
+include("linear_systems.jl")
+include("schur_linear_systems.jl")
+include("qr_linear_systems.jl")
+include("linear_system_conformance.jl")
 include("docstrings.jl")
 
 end # module BlockLinearSystems

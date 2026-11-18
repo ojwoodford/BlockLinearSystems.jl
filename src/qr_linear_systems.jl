@@ -75,7 +75,7 @@ DampedLinearSolve.gradient!(g::AbstractVector, A::SchurJacobianHessian) = BlockL
 #   DenseNormalReduced: S = J̃ᵀJ̃ + λ diag(s_r) (upper triangle) as an undamped dense system;
 #   SparseQRReduced: J̃ (fixed pattern) and r̃ as a sparse tall system damped by λ s_r (SPQR, analysed once);
 #   SparseNormalReduced: S (upper triangle) solved here, as the sparse Schur system is (see `sparse_reduced_solve!`);
-#   :lsmr: the system DampedLinearSolveKrylovExt builds for a QRReductionWorkspace (matrix-free LSMR on J̃).
+#   :lsmr: the system the Krylov extension (KrylovExt) builds for a QRReductionWorkspace (matrix-free LSMR on J̃).
 struct DenseQRReduced{S}
     sys::S
 end
@@ -126,7 +126,7 @@ function reduced_system(J::SchurBlockJacobian{Float64, SparseMatrixCSC{Float64, 
     S_factor_ldl = ldl_analyze(Symmetric(S, :U))
     return SparseNormalReduced(S, zeros(jst.schur.nr), pattern, collect(Int, pattern.diag_inds), S_chol, S_factor, S_factor_ldl)
 end
-# LSMR on J̃, matrix-free: DampedLinearSolveKrylovExt adds the system, for the reduction workspace it reads J̃ from
+# LSMR on J̃, matrix-free: the Krylov extension (KrylovExt) adds the system, for the reduction workspace it reads J̃ from
 function reduced_system(J::SchurBlockJacobian, ws, s::StaticSymbol{:lsmr})
     hasmethod(DampedLinearSolve.makejacobiansystem, Tuple{typeof(ws), Int, typeof(s)}) || throw(ArgumentError(linsolver_message(J, :lsmr)))
     return DampedLinearSolve.makejacobiansystem(ws, J.structure.schur.nr, s)

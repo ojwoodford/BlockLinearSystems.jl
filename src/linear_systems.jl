@@ -1,4 +1,4 @@
-# Helpers shared by the linear systems of a SchurBlockHessian and a SchurBlockJacobian
+# Helpers shared by the linear systems of a SchurBlockHessian and a SchurBlockJacobian (DampedLinearSolve's contract)
 
 # A solver is named by a Symbol or a StaticSymbol
 linsolver_symbol(s::Symbol) = s

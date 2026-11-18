@@ -1,6 +1,6 @@
 module DampedLinearSolveQREliminationTests
 
-# The QR-eliminated systems of a SchurBlockJacobian (ext/DampedLinearSolveExt/qrelimination.jl) through
+# The QR-eliminated systems of a SchurBlockJacobian (src/qr_linear_systems.jl) through
 # DampedLinearSolve's contract. Moved from SecondOrderOptimization's test/qrelimination.jl; the tests that run
 # its iterators stay there.
 
@@ -9,7 +9,7 @@ using Polyester   # BlockLinearSystems' kernels thread only with Polyester loade
 using DampedLinearSolve: dampen!, zero!, Success, NotPositiveDefinite, check_linear_system
 using DampedLinearSolve: getA, getb, getx, solve!
 const SOO = DampedLinearSolve   # the contract the systems implement
-const QREXT = Base.get_extension(BlockLinearSystems, :DampedLinearSolveExt)
+const QREXT = BlockLinearSystems   # the linear systems are the package's own (EL5)
 
 # TP3: QR elimination on the Jacobian path (a SchurBlockJacobian prototype), against the normal path's Schur
 # system and a dense least-squares solve of the same problem

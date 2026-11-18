@@ -36,7 +36,7 @@ const TEST_GROUPS = (
                 "threading.jl",
                 # the DampedLinearSolve extension: the Schur systems through the linear-system contract
                 "dampedlinearsolve_schurhessian.jl"],
-    process = ["threading_process.jl"],
+    process = ["threading_process.jl", "loading_process.jl"],
 )
 const RUN_GROUPS = isempty(ARGS) ? collect(keys(TEST_GROUPS)) : Symbol.(ARGS)
 for g in RUN_GROUPS

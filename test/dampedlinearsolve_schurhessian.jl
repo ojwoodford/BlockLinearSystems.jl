@@ -6,12 +6,12 @@ using DampedLinearSolve: check_linear_system
 include("fixtures/load.jl")
 using Main.SchurFixtures, Main.AllocFixtures
 
-# Tests for DampedLinearSolveExt (ext/DampedLinearSolveExt/schurhessian.jl, conformance.jl): the Schur-complement
+# Tests of src/schur_linear_systems.jl and src/linear_system_conformance.jl: the Schur-complement
 # linear systems of a SchurBlockHessian, through DampedLinearSolve's contract. Moved from SecondOrderOptimization's
 # test/blocklinearsystems_ext.jl; the tests that run its iterators stay there.
 # Every Schur solve is compared against a dense Cholesky solve of the full damped system.
 
-const SOOExt = Base.get_extension(BlockLinearSystems, :DampedLinearSolveExt)
+const SOOExt = BlockLinearSystems   # the linear systems are the package's own (EL5)
 
 function make_schur_ls(kind::Symbol, p::SchurTestProblem, scaling=ones(length(p.b)); nchunks=1)
     n = length(p.b)
@@ -317,7 +317,7 @@ end
         end
     end
 
-    # One size alone: the extension has no size-dependent code, and mixed_dims_problem has just been through the same
+    # One size alone: the Schur systems have no size-dependent code, and mixed_dims_problem has just been through the same
     # wiring; 7 is a static size it does not contain (decided 2026-11-17)
     for de in (7,)
         rng = Random.Xoshiro(de)
