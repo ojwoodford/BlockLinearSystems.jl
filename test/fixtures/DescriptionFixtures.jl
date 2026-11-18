@@ -69,7 +69,7 @@ function description(p::QRTestProblem, rng; empty::Bool=false)
     return Description(bs, el, rbs[perm], rows[perm])
 end
 
-# Today's route, as NLLSModel does it (src/problem.jl partition_schur_problem, src/tall_system.jl tall_schur_map): coupling
+# Today's route, as NLLSModel does it (src/problem.jl partition_schur_problem, src/jacobian_system.jl jacobian_schur_map): coupling
 # lists in the retained blocks' own numbering, sort_schur_blocks, the remapping, the positional constructors
 function old_partition(d::Description)
     n = length(d.blocksizes)

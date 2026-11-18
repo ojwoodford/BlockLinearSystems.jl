@@ -529,7 +529,7 @@ blockrange
     SchurBlockJacobian{T, RType}(structure::SchurJacobianStructure)
     SchurBlockJacobian{T, RType}(data::Vector{T}, structure::SchurJacobianStructure)
 
-Raw storage of a tall least-squares problem laid out by `structure` (see [`SchurJacobianStructure`](@ref)):
+Raw storage of a least-squares problem laid out by `structure` (see [`SchurJacobianStructure`](@ref)):
 one dense table per eliminated block and per free group, in one flat vector `data`. It is the Jacobian prototype a caller fills, the analogue of
 [`SchurBlockHessian`](@ref) on the Hessian path. `T` may be any floating-point type; `Float64` and
 `Float32` are tested.

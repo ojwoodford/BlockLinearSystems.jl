@@ -12,7 +12,7 @@ using DampedLinearSolve: getA, getb, getx, solve!
 const SOO = DampedLinearSolve   # the contract the systems implement
 const QREXT = BlockLinearSystems   # the linear systems are the package's own (EL5)
 
-# TP3: QR elimination on the Jacobian path (a SchurBlockJacobian prototype), against the normal path's Schur
+# TP3: QR elimination on the Jacobian path (a SchurBlockJacobian prototype), against the Hessian path's Schur
 # system and a dense least-squares solve of the same problem
 
 const TP3_SOLVERS = Dict(Matrix{Float64} => (:auto, :qr, :cholesky, :ldl, :lsmr),
@@ -120,11 +120,11 @@ end
 function tp3_system(p, ::Type{RT}, s, x) where RT
     ls = QREXT.QRSchurLinearSystem(SchurBlockJacobian{Float64, RT}(p.jst), s)
     zero!(ls)
-    TallFill((r, J, x) -> tp3_tables!(p, J, x))(getb(ls), getA(ls), x)
+    JacobianFill((r, J, x) -> tp3_tables!(p, J, x))(getb(ls), getA(ls), x)
     return ls
 end
 
-# The normal path's dense Schur system for the same JᵀJ and Jᵀr
+# The Hessian path's dense Schur system for the same JᵀJ and Jᵀr
 function tp3_schur(p, x)
     st = p.jst.schur
     Jd = zeros(p.lay.m, p.lay.n); rd = zeros(p.lay.m)
@@ -152,11 +152,11 @@ tp6_solve!(ls, lambda, scaling) = (dampen!(ls, lambda, scaling); solve!(ls, stat
 tp6_allocations(ls, lambda, scaling) = (tp6_solve!(ls, lambda, scaling); Base.@allocations tp6_solve!(ls, lambda, scaling))
 tp6_fill_bytes(red, ws) = (reduced_jacobian!(red.Jt, red.rt, ws); @allocated reduced_jacobian!(red.Jt, red.rt, ws))
 
-# Fills a tall system as an optimizer's linearization does (test only)
-struct TallFill{F}
+# Fills a Jacobian system as an optimizer's linearization does (test only)
+struct JacobianFill{F}
     f::F
 end
-function (t::TallFill)(b::AbstractVector, A, x)
+function (t::JacobianFill)(b::AbstractVector, A, x)
     cost = t.f(DampedLinearSolve.getr(A), DampedLinearSolve.getJ(A), x)
     DampedLinearSolve.gradient!(b, A)
     DampedLinearSolve.markstale!(A)

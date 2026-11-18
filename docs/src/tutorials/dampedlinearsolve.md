@@ -27,9 +27,9 @@ variables, solves the reduced system, and back-substitutes for the eliminated on
 system is itself a DampedLinearSolve system wherever a standard one holds it exactly:
 
 - a dense reduced matrix `S`, or dense reduced normal equations, is an undamped dense system;
-- the dense reduced least-squares problem `[J̃; √(λ s_r)] x_r ≈ [r̃; 0]` is an undamped dense tall
+- the dense reduced least-squares problem `[J̃; √(λ s_r)] x_r ≈ [r̃; 0]` is an undamped dense Jacobian
   system, so its single Householder QR is of the whole augmented matrix;
-- the sparse reduced Jacobian is a sparse tall system, damped by `λ s_r`, solved by SPQR with its
+- the sparse reduced Jacobian is a sparse Jacobian system, damped by `λ s_r`, solved by SPQR with its
   symbolic analysis done once;
 - LSMR on the reduced Jacobian (with Krylov.jl loaded) is a matrix-free reduced system of this
   package's Krylov extension, `KrylovExt`: `J̃` is applied through the factored tables and never formed.

@@ -93,7 +93,7 @@ function conformance_gram(J::AbstractMatrix)
     return M
 end
 # A dense m × n factor J with JᵀJ = M (its largest min(m, n) eigenpairs, through a fixed orthonormal basis; a
-# non-finite diagonal entry of M is written into the first row of J), as DampedLinearSolve's tall storage is filled
+# non-finite diagonal entry of M is written into the first row of J), as DampedLinearSolve's Jacobian storage is filled
 function conformance_factor(M::AbstractMatrix, m::Integer, n::Integer)
     k = min(m, n)
     Mf = [isfinite(M[i, j]) ? Float64(M[i, j]) : 0.0 for i in 1:n, j in 1:n]

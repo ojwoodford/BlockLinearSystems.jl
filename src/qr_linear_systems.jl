@@ -10,7 +10,7 @@
 #   SparseMatrixCSC     SPQR of J̃        SPQR of J̃        S = J̃ᵀJ̃, sparse factor     LSMR on J̃
 #
 # The sparse J̃ has a fixed pattern (BlockLinearSystems' `build_reduced_jacobian_pattern`), built once and filled
-# per damping value by `reduced_jacobian!`; its damped least-squares problem goes through the sparse tall
+# per damping value by `reduced_jacobian!`; its damped least-squares problem goes through the sparse Jacobian
 # system's SPQR route (`spqr_solve!`: symbolic analysis once, numeric factorization per solve). The gradient, the
 # column norms and ‖J v‖² come from the raw tables (`jtr!`, `jtj_diag!`, `jtj_quadform`): Q is orthogonal, so
 # nothing else is needed.
@@ -70,10 +70,10 @@ DampedLinearSolve.gradient!(g::AbstractVector, A::SchurJacobianHessian) = BlockL
 
 # The reduced systems, built once with the system. Each but the sparse normal equations is a DampedLinearSolve system,
 # filled per solve from the QR-reduction workspace and solved through the contract:
-#   DenseQRReduced: min ‖[J̃; √(λ s_r)] x_r − [r̃; 0]‖ as an undamped dense tall system of m̃ + n_r rows, so that its one
+#   DenseQRReduced: min ‖[J̃; √(λ s_r)] x_r − [r̃; 0]‖ as an undamped dense Jacobian system of m̃ + n_r rows, so that its one
 #     Householder QR is of the whole augmented matrix (the damping changes J̃, so nothing is kept between solves);
 #   DenseNormalReduced: S = J̃ᵀJ̃ + λ diag(s_r) (upper triangle) as an undamped dense system;
-#   SparseQRReduced: J̃ (fixed pattern) and r̃ as a sparse tall system damped by λ s_r (SPQR, analysed once);
+#   SparseQRReduced: J̃ (fixed pattern) and r̃ as a sparse Jacobian system damped by λ s_r (SPQR, analysed once);
 #   SparseNormalReduced: S (upper triangle) solved here, as the sparse Schur system is (see `sparse_reduced_solve!`);
 #   :lsmr: the system the Krylov extension (KrylovExt) builds for a QRReductionWorkspace (matrix-free LSMR on J̃).
 struct DenseQRReduced{S}
@@ -192,7 +192,7 @@ end
 DampedLinearSolve.sharex(ls::QRSchurLinearSystem, from) = ls.x === from.x ? ls :
     QRSchurLinearSystem(ls.A, ls.b, from.x, ls.ws, ls.reduced, ls.linsolver, ls.unit, ls.xr, ls.xe, ls.sr, ls.lambda, ls.scaling)
 
-# The QR routes resolve a damping down to about eps² of the diagonal (as the tall systems do); those that form
+# The QR routes resolve a damping down to about eps² of the diagonal (as the Jacobian systems do); those that form
 # S = J̃ᵀJ̃ only to about eps (as Cholesky of the normal equations)
 DampedLinearSolve.dampingfloor(ls::QRSchurLinearSystem) = eps(Float64)^2
 DampedLinearSolve.dampingfloor(ls::QRSchurLinearSystem{<:Any, <:Union{DenseNormalReduced, SparseNormalReduced}}) = eps(Float64)
@@ -229,7 +229,7 @@ DampedLinearSolve.solve!(ls::QRSchurLinearSystem, ::StaticSymbol{S}) where S = r
 @noinline reducedmismatch(ls, asked) = throw(ArgumentError("solve! was asked for linsolver = :$asked, but this QRSchurLinearSystem was built for linsolver = :$(ls.linsolver). A linear system must be solved with the linsolver it was built with."))
 reduced_solve!(ls, red, s::StaticSymbol{S}, lambda, s_r) where S = reducedmismatch(ls, S)
 
-# Dense: [J̃ r̃; √(λ s_r) 0] written into the undamped tall system, whose QR of the whole matrix then gives R x_r = q
+# Dense: [J̃ r̃; √(λ s_r) 0] written into the undamped Jacobian system, whose QR of the whole matrix then gives R x_r = q
 function reduced_solve!(ls::QRSchurLinearSystem, red::DenseQRReduced, ::Union{StaticSymbol{:auto}, StaticSymbol{:qr}}, lambda, s_r)
     nr = length(ls.xr)
     sys = red.sys

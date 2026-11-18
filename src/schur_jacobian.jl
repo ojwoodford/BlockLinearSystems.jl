@@ -16,7 +16,7 @@
 
 # SchurJacobianStructure(structure::SchurStructure, e_rows; free_rows=Int[], free_retained=Vector{Int}[], nchunks, rowblocks)
 # SchurJacobianStructure(r_dims, e_dims, couplings, e_rows; free_rows, free_retained, nchunks=1)
-# Internal: the layout of a tall least-squares problem already partitioned like `structure` (same blocks, couplings and
+# Internal: the layout of a least-squares problem already partitioned like `structure` (same blocks, couplings and
 # order). Table e (e <= neblocks) holds the e_rows[e] rows that involve eliminated block e, then d_e damping rows; table
 # neblocks + g holds free group g (free_rows[g] rows, the retained blocks free_retained[g]). A table's retained blocks
 # are its entries, numbered globally: the coupling entries of `structure` (same index and order), then the free groups'
@@ -174,7 +174,7 @@ function coupling_entry(jst::SchurJacobianStructure, t::Integer, r::Integer)
 end
 
 # SchurBlockJacobian{T, RType}(structure::SchurJacobianStructure)
-# Raw table storage of a tall least-squares problem. `RType` is the storage of the reduced system the caller will
+# Raw table storage of a least-squares problem. `RType` is the storage of the reduced system the caller will
 # build from it: `Matrix{T}` (dense, `reduced_normal_dense!`) or `SparseMatrixCSC{T, Int}` (sparse,
 # `reduced_normal_sparse!`). It is a type parameter, not a field, so that code receiving only the Jacobian can
 # dispatch on it; no method of this package reads it.

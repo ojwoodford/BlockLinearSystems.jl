@@ -18,7 +18,7 @@ In nonlinear least squares (NLS), bundle adjustment (BA), and SLAM, optimization
 - **Zero-Allocation Views**: Accessing blocks with static dimensions (`static(N)` or `Val(N)`) returns stack-allocated `SizedMatrix` or `HybridArray` views, enabling unrolled SIMD addition with StaticArrays (`.+=`).
 - **Zero-Allocation Solver Scatter**: In iterative solvers, `sparse_with_map` precomputes the CSC pattern and an integer scatter map once during setup. In each iteration, `copyto!(csc_mat, bsm, scatter_map)` updates the sparse solver matrix with **zero allocations**.
 - **Schur Complement Reduction**: `SchurStructure`, `SchurBlockHessian` and the parallel `reduce_schur_dense!` / `reduce_schur_sparse!` kernels eliminate blocks (any dimension, 1–65535) from bipartite systems, with dense or sparse reduced systems. `symmetrifyfull!(dest, bsm, blocks)` extracts principal block submatrices in-place.
-- **QR Elimination (Jacobian path)**: `SchurJacobianStructure`, `SchurBlockJacobian` and `reduce_qr!` eliminate the same blocks from a tall least-squares problem `min ‖J x − r‖²` by QR, without forming `JᵀJ`, so the elimination works at the condition number of `J` rather than its square.
+- **QR Elimination (Jacobian path)**: `SchurJacobianStructure`, `SchurBlockJacobian` and `reduce_qr!` eliminate the same blocks from a least-squares problem `min ‖J x − r‖²` by QR, without forming `JᵀJ`, so the elimination works at the condition number of `J` rather than its square.
 - **Thread-Local Clones**: `copy_structure(sys)` creates a lightweight thread-local accumulator sharing index structures, reduced after assembly via a fast BLAS vector addition (`sys.data .+= thread_sys.data`).
 
 ### Design Scope: Accumulators, Not General Matrices

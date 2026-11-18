@@ -12,7 +12,7 @@ export QRTestProblem, qr_problems, qr_scaling, qr_dense, qr_dense_r, relerr, sch
 """
     QRTestProblem
 
-Random tables for a tall problem `min ‖J x - r‖²`, filled through the assembly API, together with the same `J`
+Random tables for a least-squares problem `min ‖J x - r‖²`, filled through the assembly API, together with the same `J`
 and `r` assembled densely (rows in table order: eliminated tables, then free groups; columns `[x_r; x_e]`).
 """
 struct QRTestProblem{T}

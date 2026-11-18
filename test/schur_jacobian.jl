@@ -5,7 +5,7 @@ using BlockLinearSystems: table_residual_block   # internal: the table-indexed r
 include("fixtures/load.jl")
 using Main.QRFixtures, Main.DescriptionFixtures
 
-# Storage and assembly API of the tall (Jacobian) form. Its test problems are in fixtures/QRFixtures.jl.
+# Storage and assembly API of the Jacobian form. Its test problems are in fixtures/QRFixtures.jl.
 
 
 @testset "SchurJacobianStructure: layout and validation (E1)" begin
