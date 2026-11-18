@@ -55,8 +55,8 @@ end
 
 nr(p::SchurTestProblem) = sum(p.r_dims)
 
-function schur_structure(p::SchurTestProblem; nchunks=1)
-    return SchurStructure(p.r_dims, p.e_dims, p.couplings; nchunks)
+function schur_structure(p::SchurTestProblem; nchunks=1, min_work=BlockLinearSystems.DEFAULT_MIN_WORK)
+    return SchurStructure(p.r_dims, p.e_dims, p.couplings; nchunks, min_work)
 end
 
 function fill_ce!(p::SchurTestProblem, structure::SchurStructure, E_data, C_data)
@@ -78,8 +78,8 @@ function fill_ce!(p::SchurTestProblem, structure::SchurStructure, E_data, C_data
     return nothing
 end
 
-function dense_schur_hessian(p::SchurTestProblem; nchunks=1)
-    structure = schur_structure(p; nchunks)
+function dense_schur_hessian(p::SchurTestProblem; nchunks=1, min_work=BlockLinearSystems.DEFAULT_MIN_WORK)
+    structure = schur_structure(p; nchunks, min_work)
     n_r = nr(p)
     R = p.H[1:n_r, 1:n_r]
     E_data = zeros(sum(abs2, p.e_dims))
@@ -88,8 +88,8 @@ function dense_schur_hessian(p::SchurTestProblem; nchunks=1)
     return SchurBlockHessian(structure, R, E_data, C_data)
 end
 
-function sparse_schur_hessian(p::SchurTestProblem; nchunks=1)
-    structure = schur_structure(p; nchunks)
+function sparse_schur_hessian(p::SchurTestProblem; nchunks=1, min_work=BlockLinearSystems.DEFAULT_MIN_WORK)
+    structure = schur_structure(p; nchunks, min_work)
     pattern = build_schur_pattern(structure)
     coords = Tuple{Int, Int}[]
     cb = pattern.block_colptr

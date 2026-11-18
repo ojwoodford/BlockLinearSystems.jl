@@ -6,13 +6,13 @@ using Main.SchurFixtures, Main.QRFixtures, Main.AllocFixtures
 
 # Every kernel that threads allocates nothing on a warm call, threaded or serial (R2, R3), apart from the bounded
 # allocation of a threaded call on Julia 1.10 (`threaded_allocs_ok`, fixtures/AllocFixtures.jl). Run on 1 and on 4 threads:
-# the threshold is forced to 0 and the structures have one chunk per thread, so on 4 threads every kernel threads.
+# the structures have one chunk per thread and `min_work = 0`, so on 4 threads every kernel threads.
 # The problems have eliminated blocks of 9 and 12, above D_STATIC, as well as static ones.
 
 @testset "Threaded QR-elimination kernels allocate nothing (R2)" begin
     nt = Threads.nthreads()
-    with_min_work(0) do
-        for T in (Float64, Float32), p in qr_problems(T; nchunks=nt)[1:3]
+    begin
+        for T in (Float64, Float32), p in qr_problems(T; nchunks=nt, min_work=0)[1:3]
             rng = Random.Xoshiro(21)
             J = p.J
             jst = J.structure
@@ -48,17 +48,17 @@ end
 
 @testset "Threaded Schur kernels allocate nothing, blocks above D_STATIC included (R2, R3)" begin
     nt = Threads.nthreads()
-    with_min_work(0) do
+    begin
         T = Float64
         for p in (mixed_dims_problem(), standard_problem())
             n = length(p.b)
             b, sc = p.b, abs.(diag(p.H))
             lambda = 0.3
             for make in (dense_schur_hessian, sparse_schur_hessian)
-                H = make(p; nchunks=nt)
+                H = make(p; nchunks=nt, min_work=0)
                 st = H.structure
                 nr = st.nr
-                @test nt == 1 || BlockLinearSystems.use_threads(nt, length(st.entry_retained))
+                @test nt == 1 || BlockLinearSystems.use_threads(nt, length(st.entry_retained), st.min_work)
                 b_r, b_e = b[1:nr], b[nr+1:n]
                 sc_r, sc_e = sc[1:nr], sc[nr+1:n]
                 ws = SchurReductionWorkspace{T}(st, nt)

@@ -125,37 +125,26 @@ reduce_allocs(ws, J, sc, lambda) = @allocated reduce_qr!(ws, J, sc, lambda)
         end
         @test J.data == raw                                   # the raw tables are kept
         # No allocation, serial or threaded (R2; bounded when threaded on Julia 1.10)
-        old = BlockLinearSystems.SCHUR_THREAD_MIN_WORK[]
-        try
-            for minwork in (typemax(Int), 0)
-                BlockLinearSystems.SCHUR_THREAD_MIN_WORK[] = minwork
-                reduce_allocs(ws, J, sc_e, T(0.3))
-                @test threaded_allocs_ok(reduce_allocs(ws, J, sc_e, T(0.3)), minwork == 0 && Threads.nthreads() > 1)
-            end
-        finally
-            BlockLinearSystems.SCHUR_THREAD_MIN_WORK[] = old
+        for minwork in (typemax(Int), 0)
+            Jm = with_min_work(J, minwork)
+            wsm = QRReductionWorkspace(Jm)
+            reduce_allocs(wsm, Jm, sc_e, T(0.3))
+            @test threaded_allocs_ok(reduce_allocs(wsm, Jm, sc_e, T(0.3)), minwork == 0 && Threads.nthreads() > 1)
         end
         @test @inferred(reduce_qr!(ws, J, sc_e, T(0.1))) isa Bool
     end
 end
 
 @testset "Threaded reduction equals serial; trial workspaces share only scratch (E2)" begin
-    old = BlockLinearSystems.SCHUR_THREAD_MIN_WORK[]
-    try
-        for T in (Float64, Float32), k in 1:5
-            p1, p4 = qr_problems(T; nchunks=1)[k], qr_problems(T; nchunks=4)[k]
-            nr, n = p1.J.structure.schur.nr, size(p1.Jf, 2)
-            sc_e = qr_scaling(p1, Random.Xoshiro(3))[nr+1:n]
-            BlockLinearSystems.SCHUR_THREAD_MIN_WORK[] = typemax(Int)
-            ws1 = QRReductionWorkspace(p1.J)
-            @test reduce_qr!(ws1, p1.J, sc_e, 0.2)
-            BlockLinearSystems.SCHUR_THREAD_MIN_WORK[] = 0
-            ws4 = QRReductionWorkspace(p4.J)
-            @test reduce_qr!(ws4, p4.J, sc_e, 0.2)
-            @test ws4.factored == ws1.factored
-        end
-    finally
-        BlockLinearSystems.SCHUR_THREAD_MIN_WORK[] = old
+    for T in (Float64, Float32), k in 1:5
+        p1, p4 = qr_problems(T; nchunks=1, min_work=typemax(Int))[k], qr_problems(T; nchunks=4, min_work=0)[k]
+        nr, n = p1.J.structure.schur.nr, size(p1.Jf, 2)
+        sc_e = qr_scaling(p1, Random.Xoshiro(3))[nr+1:n]
+        ws1 = QRReductionWorkspace(p1.J)
+        @test reduce_qr!(ws1, p1.J, sc_e, 0.2)
+        ws4 = QRReductionWorkspace(p4.J)
+        @test reduce_qr!(ws4, p4.J, sc_e, 0.2)
+        @test ws4.factored == ws1.factored
     end
     p = qr_problems(Float64)[2]
     ws = QRReductionWorkspace(p.J)

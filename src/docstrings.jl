@@ -723,8 +723,8 @@ for the Schur reduction. Free tables are copied, not checked.
 
 Statically sized in the eliminated dimension (unrolled over the columns) up to
 `BlockLinearSystems.D_STATIC`, dynamic above, over the runs of the structure's `e_dims` and their `chunks`.
-Threaded over the chunks of eliminated blocks when Polyester is loaded and there is enough work
-(`BlockLinearSystems.SCHUR_THREAD_MIN_WORK`), serial otherwise; tables are independent, so there is no
+Threaded over the chunks of eliminated blocks when Polyester is loaded and the structure's work is at least its
+`min_work`, serial otherwise; tables are independent, so there is no
 merge step. The raw tables are untouched, so calling it again with another `lambda` re-factors from them.
 It allocates nothing, serial or threaded (on Julia 1.10, a threaded call allocates a few hundred
 bytes per chunk; see [Threading](@ref)).

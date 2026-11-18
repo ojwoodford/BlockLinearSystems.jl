@@ -152,14 +152,16 @@ end
 function SchurJacobianStructure(
     r_dims::AbstractVector{<:Integer}, e_dims::AbstractVector{<:Integer},
     couplings::AbstractVector{<:AbstractVector{<:Integer}}, e_rows::AbstractVector{<:Integer};
-    nchunks::Int=1, kwargs...
+    nchunks::Int=1, min_work::Integer=DEFAULT_MIN_WORK, kwargs...
 )
-    return SchurJacobianStructure(SchurStructure(r_dims, e_dims, couplings; nchunks), e_rows; nchunks, kwargs...)
+    return SchurJacobianStructure(SchurStructure(r_dims, e_dims, couplings; nchunks, min_work), e_rows; nchunks, kwargs...)
 end
 
 # Total number of stored table entries, the work measure for the threading decision
 @inline table_length(jst::SchurJacobianStructure) = jst.table_offsets[end] - 1
-@inline qr_threaded(jst::SchurJacobianStructure, nitems::Integer) = use_threads(nitems, table_length(jst))
+@inline qr_threaded(jst::SchurJacobianStructure, nitems::Integer) = use_threads(nitems, table_length(jst), jst.schur.min_work)
+# The number of ranges the QR kernels that loop over tables or eliminated blocks split into: the structure's chunks
+@inline qr_nchunks(jst::SchurJacobianStructure) = max(jst.schur.nchunks, length(jst.col_chunks))
 
 # coupling_entry(structure::SchurJacobianStructure, t, r) -> Int
 # The entry of retained block `r` in table `t`.

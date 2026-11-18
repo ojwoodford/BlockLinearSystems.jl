@@ -90,6 +90,22 @@ qr_fixture_problems() = filter(p -> !isempty(p.e_dims), sparse_reduced_problems(
     end
 end
 
+@testset "The structure carries the kernels' threading: nchunks and min_work" begin
+    bs, el, rbs = [6, 3, 3], [false, true, true], [[1, 2], [1, 3]]
+    st = SchurStructure(bs, rbs; eliminated=el, nchunks=3, min_work=0)
+    @test st.nchunks == 3 && st.min_work == 0
+    @test SchurStructure(bs, rbs; eliminated=el).min_work == BlockLinearSystems.DEFAULT_MIN_WORK == 4096
+    @test SchurJacobianStructure(bs, rbs, [2, 2]; eliminated=el, nchunks=2, min_work=7).schur.min_work == 7
+    @test_throws ArgumentError("min_work must be non-negative, got -1") SchurStructure(bs, rbs; eliminated=el, min_work=-1)
+    @test_throws ArgumentError("min_work must be non-negative, got -1") SchurJacobianStructure(bs, rbs, [2, 2]; eliminated=el, min_work=-1)
+    # One chunk is serial whatever the floor; more chunks thread once the work reaches it (and there are threads)
+    qr_threads(j) = BlockLinearSystems.qr_threaded(j, min(j.ntables, BlockLinearSystems.qr_nchunks(j)))
+    @test !qr_threads(SchurJacobianStructure(bs, rbs, [2, 2]; eliminated=el, nchunks=1, min_work=0))
+    @test qr_threads(SchurJacobianStructure(bs, rbs, [2, 2]; eliminated=el, nchunks=2, min_work=0)) == (Threads.nthreads() > 1)
+    @test !qr_threads(SchurJacobianStructure(bs, rbs, [2, 2]; eliminated=el, nchunks=2, min_work=10^9))
+    @test !BlockLinearSystems.use_threads(1, 10^9, 0)
+end
+
 # A system laid out, allocated and filled through the front door (EL1-EL3), reduced and solved through DampedLinearSolve,
 # against today's route: the positional structure, storage built by hand, filled through the views by offset
 module FrontDoorSolveTests

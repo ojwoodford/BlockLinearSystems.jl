@@ -88,20 +88,20 @@ function describe_elimination(blocksizes::AbstractVector{<:Integer}, rowblocks::
     return EliminationDescription(nret, order, position, rowblock_eliminated, couplings, pairs)
 end
 
-function description_structure(d::EliminationDescription, blocksizes::AbstractVector{<:Integer}, nchunks::Int)
+function description_structure(d::EliminationDescription, blocksizes::AbstractVector{<:Integer}, nchunks::Int, min_work::Integer)
     r_dims = [Int(blocksizes[d.order[p]]) for p in 1:d.nretained]
     e_dims = [Int(blocksizes[d.order[p]]) for p in d.nretained+1:length(d.order)]
-    return SchurStructure(r_dims, e_dims, d.couplings; nchunks, order=d.order, retained_pairs=d.retained_pairs)
+    return SchurStructure(r_dims, e_dims, d.couplings; nchunks, min_work, order=d.order, retained_pairs=d.retained_pairs)
 end
 
 function SchurStructure(blocksizes::AbstractVector{<:Integer}, rowblocks::AbstractVector{<:AbstractVector{<:Integer}};
-                        eliminated::AbstractVector{Bool}, nchunks::Int=1)
+                        eliminated::AbstractVector{Bool}, nchunks::Int=1, min_work::Integer=DEFAULT_MIN_WORK)
     d = describe_elimination(blocksizes, rowblocks, eliminated, nothing)
-    return description_structure(d, blocksizes, nchunks)
+    return description_structure(d, blocksizes, nchunks, min_work)
 end
 
 """
-    SchurJacobianStructure(blocksizes, rowblocks, rowblocksizes; eliminated, nchunks=1)
+    SchurJacobianStructure(blocksizes, rowblocks, rowblocksizes; eliminated, nchunks=1, min_work=4096)
 
 The layout of an elimination on the Jacobian path, described as for [`SchurStructure`](@ref)`(blocksizes, rowblocks;
 eliminated)`, with `rowblocksizes::AbstractVector{<:Integer}`, the number of rows of each row block (at least 1).
@@ -114,6 +114,8 @@ them in the table of its *free group*, the row blocks that touch the same set of
 touches no column block is allowed: its rows hold only the residual. Address a row block's part of a
 [`SchurBlockJacobian`](@ref) by its number in `rowblocks`, through [`blockentry`](@ref), [`block`](@ref) and
 [`residual_block`](@ref).
+
+`nchunks` and `min_work` set the kernels' threading as on the Hessian path, `min_work` in table entries.
 
 Rejected as on the Hessian path, and also a `rowblocksizes` of the wrong length (`DimensionMismatch`), a row block
 with fewer than 1 row, and an eliminated block in no row block (`ArgumentError`).
@@ -133,9 +135,10 @@ julia> blockorder(jst), nretained(jst), nblocks(jst)
 ```
 """
 function SchurJacobianStructure(blocksizes::AbstractVector{<:Integer}, rowblocks::AbstractVector{<:AbstractVector{<:Integer}},
-                                rowblocksizes::AbstractVector{<:Integer}; eliminated::AbstractVector{Bool}, nchunks::Int=1)
+                                rowblocksizes::AbstractVector{<:Integer}; eliminated::AbstractVector{Bool}, nchunks::Int=1,
+                                min_work::Integer=DEFAULT_MIN_WORK)
     d = describe_elimination(blocksizes, rowblocks, eliminated, rowblocksizes)
-    st = description_structure(d, blocksizes, nchunks)
+    st = description_structure(d, blocksizes, nchunks, min_work)
     nret = d.nretained
     ne = length(d.order) - nret
     K = length(rowblocks)

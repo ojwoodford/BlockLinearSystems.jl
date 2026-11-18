@@ -244,19 +244,14 @@ qr_sparse_jacobian_allocs(Jt, rt, ws) = @allocated reduced_jacobian!(Jt, rt, ws)
                                   (jst.table_nrows[jst.entry_table[u]] - jst.table_top[jst.entry_table[u]])
                                   for u in eachindex(jst.entry_retained); init=0)
             # The same matrix whether the fill is serial or threaded
-            old = BlockLinearSystems.SCHUR_THREAD_MIN_WORK[]
-            try
-                for minwork in (typemax(Int), 0)
-                    BlockLinearSystems.SCHUR_THREAD_MIN_WORK[] = minwork
-                    threaded = minwork == 0 && nt > 1 && length(jst.col_chunks) > 1
-                    fill!(nonzeros(Jsp), T(NaN))
-                    reduced_jacobian!(Jsp, rts, ws)
-                    @test Matrix(Jsp) == Jt
-                    @test threaded_allocs_ok(qr_sparse_jacobian_allocs(Jsp, rts, ws), threaded)
-                    @test threaded_allocs_ok(qr_sparse_jacobian_allocs(Jsp, rts, ws), threaded)
-                end
-            finally
-                BlockLinearSystems.SCHUR_THREAD_MIN_WORK[] = old
+            for minwork in (typemax(Int), 0)
+                wsm = with_min_work(ws, minwork)
+                threaded = minwork == 0 && nt > 1 && length(jst.col_chunks) > 1
+                fill!(nonzeros(Jsp), T(NaN))
+                reduced_jacobian!(Jsp, rts, wsm)
+                @test Matrix(Jsp) == Jt
+                @test threaded_allocs_ok(qr_sparse_jacobian_allocs(Jsp, rts, wsm), threaded)
+                @test threaded_allocs_ok(qr_sparse_jacobian_allocs(Jsp, rts, wsm), threaded)
             end
             @inferred reduced_jacobian!(Jsp, rts, ws)
             # A matrix without the pattern is rejected before anything is written
@@ -305,10 +300,10 @@ end
         rt, D, d, gg = zeros(T, m), zeros(T, jst.doffsets[end] - 1), zeros(T, n), zeros(T, n)
         vf = randn(rng, T, n)
         # No allocation, serial or threaded (R2; bounded when threaded on Julia 1.10)
-        old_minwork = BlockLinearSystems.SCHUR_THREAD_MIN_WORK[]
-        try
+        ws0 = ws
+        begin
             for minwork in (typemax(Int), 0)
-                BlockLinearSystems.SCHUR_THREAD_MIN_WORK[] = minwork
+                ws = with_min_work(ws0, minwork)
                 threaded = minwork == 0 && Threads.nthreads() > 1
                 # warm calls: the first call of the threaded path compiles it
                 qr_mul_allocs(y, ws, v); qr_tmul_allocs(g, ws, w); qr_backsub_allocs(x_e, v, ws)
@@ -322,9 +317,8 @@ end
                     @test qr_misc_allocs(rt, D, d, gg, ws, J, vf) <= (threaded && VERSION < v"1.11" ? 5 * 3072 * Threads.nthreads() : 0)
                 end
             end
-        finally
-            BlockLinearSystems.SCHUR_THREAD_MIN_WORK[] = old_minwork
         end
+        ws = ws0
         # Type stability
         @inferred reduced_mul!(y, ws, v)
         @inferred reduced_tmul!(g, ws, w)
@@ -339,12 +333,11 @@ end
 end
 
 @testset "Threading: identical results for any chunking, serial below the work threshold (E4)" begin
-    old = BlockLinearSystems.SCHUR_THREAD_MIN_WORK[]
-    try
+    begin
         for T in (Float64, Float32)
-            serial = qr_problems(T; nchunks=1)
+            serial = qr_problems(T; nchunks=1, min_work=1 << 40)
             for (k, p1) in enumerate(serial)
-                p4 = qr_problems(T; nchunks=4)[k]
+                p4 = qr_problems(T; nchunks=4, min_work=0)[k]
                 @test p4.J.data == p1.J.data
                 jst1, jst4 = p1.J.structure, p4.J.structure
                 @test length(jst4.col_chunks) == 4
@@ -355,7 +348,6 @@ end
                 sc_e = qr_scaling(p1, rng)[nr+1:n]
                 v, w = randn(rng, T, nr), randn(rng, T, m)
                 results = map(((p1, 1 << 40), (p4, 0))) do (p, minwork)
-                    BlockLinearSystems.SCHUR_THREAD_MIN_WORK[] = minwork
                     jst = p.J.structure
                     @test BlockLinearSystems.qr_threaded(jst, 4) == (minwork == 0 && Threads.nthreads() > 1)
                     ws = QRReductionWorkspace(p.J)
@@ -371,13 +363,11 @@ end
                 @test all(results[1][i] == results[2][i] for i in 2:length(results[1]))
             end
         end
-        # Below the threshold the serial path is taken
-        BlockLinearSystems.SCHUR_THREAD_MIN_WORK[] = old
+        # Below the default threshold the serial path is taken, and with one chunk always
         p = qr_problems(Float64; nchunks=4)[end]
-        @test BlockLinearSystems.table_length(p.J.structure) < old
+        @test BlockLinearSystems.table_length(p.J.structure) < BlockLinearSystems.DEFAULT_MIN_WORK
         @test !BlockLinearSystems.qr_threaded(p.J.structure, 4)
-    finally
-        BlockLinearSystems.SCHUR_THREAD_MIN_WORK[] = old
+        @test !BlockLinearSystems.qr_threaded(qr_problems(Float64; nchunks=1, min_work=0)[1].J.structure, 1)
     end
 end
 
@@ -407,7 +397,7 @@ end
     # by another chunk while it still has lower blocks to check. Repeated, since the interleaving varies; on one
     # thread there is no interleaving, so once.
     ne = 400
-    jst = SchurJacobianStructure(fill(6, 4), fill(3, ne), [[mod1(e, 4)] for e in 1:ne], fill(5, ne); nchunks=8)
+    jst = SchurJacobianStructure(fill(6, 4), fill(3, ne), [[mod1(e, 4)] for e in 1:ne], fill(5, ne); nchunks=8, min_work=0)
     st = jst.schur
     J = SchurBlockJacobian{Float64, Matrix{Float64}}(jst)
     E_data, C_data = zeros(9ne), zeros(18 * length(st.entry_retained))
@@ -415,9 +405,7 @@ end
     qws, sws = QRReductionWorkspace(J), SchurReductionWorkspace{Float64}(st, 8)
     S, g = zeros(24, 24), zeros(24)
     rng = Random.Xoshiro(5)
-    old = BlockLinearSystems.SCHUR_THREAD_MIN_WORK[]
-    try
-        BlockLinearSystems.SCHUR_THREAD_MIN_WORK[] = 0
+    begin
         # Every block fails (all zero, undamped), then only blocks 57, 150, 230 and 390 do
         for failing in (1:ne, [57, 150, 230, 390])
             for e in 1:ne
@@ -436,7 +424,5 @@ end
             @test qr_found == Set(first(failing))
             @test schur_found == Set(first(failing))
         end
-    finally
-        BlockLinearSystems.SCHUR_THREAD_MIN_WORK[] = old
     end
 end

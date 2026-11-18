@@ -14,12 +14,12 @@ using Main.SchurFixtures, Main.AllocFixtures
 
 const SOOExt = BlockLinearSystems   # the linear systems are the package's own (EL5)
 
-function make_schur_ls(kind::Symbol, p::SchurTestProblem, scaling=ones(length(p.b)); nchunks=1)
+function make_schur_ls(kind::Symbol, p::SchurTestProblem, scaling=ones(length(p.b)); nchunks=1, min_work=BlockLinearSystems.DEFAULT_MIN_WORK)
     n = length(p.b)
     if kind === :dense
-        return SOOExt.DenseSchurLinearSystem(dense_schur_hessian(p; nchunks), copy(p.b), zeros(n), copy(scaling))
+        return SOOExt.DenseSchurLinearSystem(dense_schur_hessian(p; nchunks, min_work), copy(p.b), zeros(n), copy(scaling))
     else
-        return SOOExt.SparseSchurLinearSystem(sparse_schur_hessian(p; nchunks), copy(p.b), zeros(n), copy(scaling))
+        return SOOExt.SparseSchurLinearSystem(sparse_schur_hessian(p; nchunks, min_work), copy(p.b), zeros(n), copy(scaling))
     end
 end
 
@@ -215,12 +215,10 @@ end
     # The reduction and back-substitution kernels allocate nothing (TP3b): with one chunk per thread and the
     # threading threshold at zero, so that on more than one thread the threaded paths run (rules.md 30), and on
     # a problem with eliminated blocks above D_STATIC (9 and 12) as well as the standard one
-    old = BlockLinearSystems.SCHUR_THREAD_MIN_WORK[]
-    try
-        BlockLinearSystems.SCHUR_THREAD_MIN_WORK[] = 0
+    begin
         @test maximum(mixed_dims_problem().e_dims) > BlockLinearSystems.D_STATIC
         for q in (standard_problem(), mixed_dims_problem()), kind in (:dense, :sparse)
-            ls = make_schur_ls(kind, q; nchunks=Threads.nthreads())
+            ls = make_schur_ls(kind, q; nchunks=Threads.nthreads(), min_work=0)
             DampedLinearSolve.dampen!(ls, 0.4)
             @test DampedLinearSolve.solve!(ls) == DampedLinearSolve.Success
             xq = reference_solve(q, 0.4, ones(length(q.b)))
@@ -244,22 +242,16 @@ end
             GC.gc()
             @test threaded_allocs_ok(@allocated run_back())
         end
-    finally
-        BlockLinearSystems.SCHUR_THREAD_MIN_WORK[] = old
     end
 
     # Force the threaded code paths (they only engage with more than one thread) and compare
-    old = BlockLinearSystems.SCHUR_THREAD_MIN_WORK[]
-    try
-        BlockLinearSystems.SCHUR_THREAD_MIN_WORK[] = 0
+    begin
         for kind in (:dense, :sparse), nchunks in (1, 3)
-            ls = make_schur_ls(kind, p; nchunks)
+            ls = make_schur_ls(kind, p; nchunks, min_work=0)
             DampedLinearSolve.dampen!(ls, 0.4)
             @test DampedLinearSolve.solve!(ls) == DampedLinearSolve.Success
             @test norm(ls.x - x_ref) <= 1e-10 * norm(x_ref)
         end
-    finally
-        BlockLinearSystems.SCHUR_THREAD_MIN_WORK[] = old
     end
 end
 
@@ -282,17 +274,13 @@ end
         @test norm(ls.x - x_ref) <= 1e-10 * norm(x_ref)
     end
     # Forced-threaded run with many chunks gives the same answer
-    old = BlockLinearSystems.SCHUR_THREAD_MIN_WORK[]
-    try
-        BlockLinearSystems.SCHUR_THREAD_MIN_WORK[] = 0
+    begin
         for kind in (:dense, :sparse)
-            ls = make_schur_ls(kind, p; nchunks=3)
+            ls = make_schur_ls(kind, p; nchunks=3, min_work=0)
             DampedLinearSolve.dampen!(ls, 0.4)
             @test DampedLinearSolve.solve!(ls) == DampedLinearSolve.Success
             @test norm(ls.x - x_ref) <= 1e-10 * norm(x_ref)
         end
-    finally
-        BlockLinearSystems.SCHUR_THREAD_MIN_WORK[] = old
     end
 end
 

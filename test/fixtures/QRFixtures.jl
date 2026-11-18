@@ -26,8 +26,8 @@ struct QRTestProblem{T}
 end
 
 function QRTestProblem(name, rng, ::Type{T}, r_dims, e_dims, couplings, e_rows;
-                       free_rows=Int[], free_retained=Vector{Int}[], nchunks=1) where T
-    jst = SchurJacobianStructure(r_dims, e_dims, couplings, e_rows; free_rows, free_retained, nchunks)
+                       free_rows=Int[], free_retained=Vector{Int}[], nchunks=1, min_work=BlockLinearSystems.DEFAULT_MIN_WORK) where T
+    jst = SchurJacobianStructure(r_dims, e_dims, couplings, e_rows; free_rows, free_retained, nchunks, min_work)
     J = SchurBlockJacobian{T, Matrix{T}}(jst)
     st = jst.schur
     nr, ne = sum(r_dims), sum(e_dims)
@@ -57,24 +57,24 @@ function QRTestProblem(name, rng, ::Type{T}, r_dims, e_dims, couplings, e_rows;
     return QRTestProblem{T}(name, collect(r_dims), collect(e_dims), [collect(c) for c in couplings], J, Jf, rf)
 end
 
-function qr_problems(::Type{T}; nchunks=1, seed=1) where T
+function qr_problems(::Type{T}; nchunks=1, seed=1, min_work=BlockLinearSystems.DEFAULT_MIN_WORK) where T
     rng = Random.Xoshiro(seed)
     probs = QRTestProblem{T}[]
     # Bundle-adjustment-like: many small eliminated blocks, each coupled to a few retained blocks, 2 rows per coupling
     ba_c = [sort(randperm(rng, 8)[1:rand(rng, 2:4)]) for _ in 1:60]
-    push!(probs, QRTestProblem("bundle adjustment", rng, T, fill(6, 8), fill(3, 60), ba_c, 2 .* length.(ba_c); nchunks))
+    push!(probs, QRTestProblem("bundle adjustment", rng, T, fill(6, 8), fill(3, 60), ba_c, 2 .* length.(ba_c); nchunks, min_work))
     # Mixed eliminated dimensions, one above D_STATIC and two of dimension 1
     mixed_e = [12, 9, 8, 5, 3, 2, 1, 1]
     mixed_c = [[1, 3], [2, 4], [1, 2, 4], [3], [1, 4], [2, 3], [1], [4]]
-    push!(probs, QRTestProblem("mixed dimensions", rng, T, [6, 3, 9, 6], mixed_e, mixed_c, mixed_e .+ 4 .+ rand(rng, 0:6, 8); nchunks))
+    push!(probs, QRTestProblem("mixed dimensions", rng, T, [6, 3, 9, 6], mixed_e, mixed_c, mixed_e .+ 4 .+ rand(rng, 0:6, 8); nchunks, min_work))
     # Free groups: rows that involve no eliminated block, one of them the only rows of retained block 5
     push!(probs, QRTestProblem("free groups", rng, T, [6, 6, 6, 6, 3], [3, 3, 3, 2, 2, 1], [[1, 2], [2, 3], [3, 4], [1, 4], [2], [1, 3]],
-                               [8, 8, 7, 6, 5, 4]; free_rows=[7, 3, 6], free_retained=[[2, 1], [3], [5, 4, 2]], nchunks))
+                               [8, 8, 7, 6, 5, 4]; free_rows=[7, 3, 6], free_retained=[[2, 1], [3], [5, 4, 2]], nchunks, min_work))
     # An eliminated block coupled to every retained block
     push!(probs, QRTestProblem("coupled to all", rng, T, [6, 6, 3, 6], [3, 3, 3, 3], [[1, 2, 3, 4], [1, 2], [3, 4], [2, 4]],
-                               [24, 8, 8, 8]; nchunks))
+                               [24, 8, 8, 8]; nchunks, min_work))
     # A single eliminated block
-    push!(probs, QRTestProblem("single eliminated block", rng, T, [6, 3], [4], [[1, 2]], [20]; nchunks))
+    push!(probs, QRTestProblem("single eliminated block", rng, T, [6, 3], [4], [[1, 2]], [20]; nchunks, min_work))
     return probs
 end
 
@@ -174,16 +174,16 @@ qr_rtol(::Type{Float32}) = 2e-3
 # The problems of R4: those of qr_problems (no free group, blocks above D_STATIC, free groups), the tutorial's
 # structure, an under-determined eliminated block with a free group, and no eliminated block at all (with a retained
 # block that no row touches, so a column of J̃ stores nothing)
-function sparse_reduced_problems(::Type{T}; nchunks=1) where T
+function sparse_reduced_problems(::Type{T}; nchunks=1, min_work=BlockLinearSystems.DEFAULT_MIN_WORK) where T
     rng = Random.Xoshiro(40)
-    probs = qr_problems(T; nchunks)
+    probs = qr_problems(T; nchunks, min_work)
     push!(probs, QRTestProblem("tutorial", rng, T, [6, 6, 6], [3, 3, 3, 3, 2, 1],
                                [[1, 2], [1, 2, 3], [2, 3], [1, 3], [1, 2], [3]], [8, 10, 6, 6, 4, 3];
-                               free_rows=[12], free_retained=[[1, 3]], nchunks))
+                               free_rows=[12], free_retained=[[1, 3]], nchunks, min_work))
     push!(probs, QRTestProblem("under-determined", rng, T, [6, 6], [12, 12, 12], [[1, 2], [1], [2]], [28, 15, 10];
-                               free_rows=[8], free_retained=[[1, 2]], nchunks))
+                               free_rows=[8], free_retained=[[1, 2]], nchunks, min_work))
     push!(probs, QRTestProblem("no eliminated block", rng, T, [3, 2, 4], Int[], Vector{Int}[], Int[];
-                               free_rows=[5, 4], free_retained=[[1, 2], [2]], nchunks))
+                               free_rows=[5, 4], free_retained=[[1, 2], [2]], nchunks, min_work))
     return probs
 end
 

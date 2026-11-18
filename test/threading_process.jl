@@ -9,12 +9,12 @@ using BlockLinearSystems, Random
 using BlockLinearSystems: QRReductionWorkspace, reduce_qr!   # internal: the QR kernels
 const BLS = BlockLinearSystems
 rng = Random.Xoshiro(3)
-jst = SchurJacobianStructure(fill(6, 8), [3, 3, 9, 12, 3, 3], [[1, 2], [2, 3], [4], [5, 6], [7], [8, 1]], fill(14, 6); nchunks=2)
-J = SchurBlockJacobian{Float64, Matrix{Float64}}(jst)
-J.data .= randn(rng, length(J.data))
-sc = ones(sum(Int, jst.schur.e_dims))
+layout(minwork) = SchurJacobianStructure(fill(6, 8), [3, 3, 9, 12, 3, 3], [[1, 2], [2, 3], [4], [5, 6], [7], [8, 1]], fill(14, 6);
+                                         nchunks=2, min_work=minwork)
+data = randn(rng, length(SchurBlockJacobian{Float64, Matrix{Float64}}(layout(0)).data))
+sc = ones(sum(Int, layout(0).schur.e_dims))
 function factored(minwork)
-    BLS.SCHUR_THREAD_MIN_WORK[] = minwork
+    J = SchurBlockJacobian{Float64, Matrix{Float64}}(copy(data), layout(minwork))
     ws = QRReductionWorkspace(J)
     reduce_qr!(ws, J, sc, 0.1) || error("reduce_qr! failed")
     return copy(ws.factored)

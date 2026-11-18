@@ -129,8 +129,9 @@ Cholesky, falling back to Bunch–Kaufman; `:ldl`: Bunch–Kaufman, or LDLᵀ wh
 Phase 1 is parallel over chunks of eliminated blocks of one size (`nchunks` of the structure). Phase 2 splits the
 *retained* blocks into contiguous ranges; each chunk writes only its own columns of the single `S`, so there are
 no per-chunk copies of `S` and no merge pass. Threading uses Polyester, a weak dependency: the loops thread only
-when Polyester is loaded (`using Polyester`, or a package that loads it), more than one thread is available and
-there is enough work; otherwise they run serially. Either way nothing allocates, except a threaded call on Julia
+when Polyester is loaded (`using Polyester`, or a package that loads it), more than one thread is available, the
+structure has more than one chunk and its work is at least its `min_work` (both set when it is built); otherwise
+they run serially. Either way nothing allocates, except a threaded call on Julia
 1.10 (see [Threading](@ref)).
 
 ## Sparse reduced systems

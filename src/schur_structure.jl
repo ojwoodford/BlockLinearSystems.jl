@@ -1,5 +1,5 @@
 """
-    SchurStructure(blocksizes, rowblocks; eliminated, nchunks=1)
+    SchurStructure(blocksizes, rowblocks; eliminated, nchunks=1, min_work=4096)
 
 The layout of an elimination on the Hessian path: which column blocks are retained and which eliminated, their
 order, their couplings and the storage they need. The caller *describes* the problem in its own block numbering;
@@ -11,7 +11,11 @@ block. [`SchurJacobianStructure`](@ref) is the Jacobian-path counterpart, descri
   for example one cost of a least-squares problem), the column blocks it touches; it contributes to every pair of
   them. It is only iterated, never mutated or kept, so it may be a lazy vector (views into one flat vector, say).
 - `eliminated::AbstractVector{Bool}` (required): which column blocks to eliminate.
-- `nchunks`: how many chunks of eliminated blocks the threaded reduction divides each group into.
+- `nchunks`: how many chunks the elimination's kernels divide their work into (the eliminated blocks of each size,
+  or the retained blocks' columns). `nchunks = 1` runs every kernel serially.
+- `min_work`: the work below which the kernels run serially even with `nchunks > 1`, in the kernels' measure of
+  work (coupling blocks on this path, table entries on the Jacobian path). The default, 4096, is a starting value,
+  not measured. Threading also needs Polyester loaded and more than one thread (see [Threading](@ref)).
 
 `blocksizes`, `rowblocks` and `eliminated` are in the caller's numbering. Every other function takes and returns
 the *layout numbering*: retained blocks first, then eliminated ones. [`blockorder`](@ref)`(st)[p]` is the caller's
@@ -27,8 +31,8 @@ at `computestartindices(blocksizes(st))[p]`.
 
 Rejected before any work, naming blocks in the caller's numbering: lengths that disagree (`DimensionMismatch`); a
 block size outside 1 to 65535; a column block out of range, or listed twice in one row block; a row block that
-touches more than one eliminated block; no retained block, or no eliminated block (`ArgumentError`). An eliminated
-block in no row block is allowed on this path.
+touches more than one eliminated block; no retained block, or no eliminated block; `nchunks < 1`, `min_work < 0`
+(`ArgumentError`). An eliminated block in no row block is allowed on this path.
 
 The fields of a `SchurStructure` are internal.
 
@@ -59,6 +63,8 @@ struct SchurStructure
     chunks::Vector{Vector{UnitRange{Int}}} # chunks[run][chunk_id], for each run of e_dims
     order::Vector{Int}                     # Caller's number of each layout block (1:n when built positionally)
     retained_pairs::Vector{Tuple{Int, Int}} # Pairs (i < j) of retained blocks that share a row block, sorted
+    nchunks::Int                           # Chunks the kernels split their work into (1: serial)
+    min_work::Int                          # Work below which the kernels run serially
 end
 
 function SchurStructure(
@@ -66,6 +72,7 @@ function SchurStructure(
     e_dims::AbstractVector{<:Integer},
     couplings::AbstractVector{<:AbstractVector{<:Integer}};
     nchunks::Int=1,
+    min_work::Integer=DEFAULT_MIN_WORK,
     order::Union{Nothing, AbstractVector{<:Integer}}=nothing,
     retained_pairs=Tuple{Int, Int}[]
 )
@@ -73,6 +80,7 @@ function SchurStructure(
     neblocks = length(e_dims)
     length(couplings) == neblocks || throw(DimensionMismatch("Number of coupling lists ($(length(couplings))) must match the number of eliminated blocks ($neblocks)"))
     nchunks >= 1 || throw(ArgumentError("nchunks must be at least 1, got $nchunks"))
+    min_work >= 0 || throw(ArgumentError("min_work must be non-negative, got $min_work"))
 
     # Validate inputs here, rather than failing (or silently going wrong) deep inside the reduction. BlockRLE
     # checks the block dimensions.
@@ -153,7 +161,7 @@ function SchurStructure(
         nr, nrblocks, neblocks,
         r_rle, e_rle, boffsets_r, boffsets_e,
         eoffsets, eliminated_ptr, entry_retained, coffsets,
-        max_coupled_dim, chunks, order_, unique!(pairs)
+        max_coupled_dim, chunks, order_, unique!(pairs), nchunks, Int(min_work)
     )
 end
 

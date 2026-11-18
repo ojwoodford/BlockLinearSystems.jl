@@ -21,16 +21,10 @@ using Main.SchurFixtures
             @test all(st.entry_retained[es] .== r) && issorted(ws.entry_eliminated[es])
         end
     end
-    # Forcing the threaded paths gives the same result
-    old = BlockLinearSystems.SCHUR_THREAD_MIN_WORK[]
-    try
-        BlockLinearSystems.SCHUR_THREAD_MIN_WORK[] = 0
-        x_ref = reference_solve(p, 0.4, ones(length(p.b)))
-        for make in (dense_schur_hessian, sparse_schur_hessian)
-            x, ok = schur_solve(make(p; nchunks=3), p.b, ones(length(p.b)), 0.4; nchunks=3)
-            @test ok && norm(x - x_ref) <= 1e-10 * norm(x_ref)
-        end
-    finally
-        BlockLinearSystems.SCHUR_THREAD_MIN_WORK[] = old
+    # Forcing the threaded paths (no work floor) gives the same result
+    x_ref = reference_solve(p, 0.4, ones(length(p.b)))
+    for make in (dense_schur_hessian, sparse_schur_hessian)
+        x, ok = schur_solve(make(p; nchunks=3, min_work=0), p.b, ones(length(p.b)), 0.4; nchunks=3)
+        @test ok && norm(x - x_ref) <= 1e-10 * norm(x_ref)
     end
 end

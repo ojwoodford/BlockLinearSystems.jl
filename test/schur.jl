@@ -92,14 +92,14 @@ using BlockLinearSystems: expand_block_perm   # internal names
         nr, nrblocks, neblocks,
         BlockRLE(r_dims), e_rle, boffsets_r, boffsets_e,
         eoffsets, eliminated_ptr, entry_retained, coffsets,
-        max_coupled_dim, chunks_K1, collect(1:nrblocks + neblocks), Tuple{Int, Int}[]
+        max_coupled_dim, chunks_K1, collect(1:nrblocks + neblocks), Tuple{Int, Int}[], 1, 4096
     )
 
     structure_K4 = BlockLinearSystems.SchurStructure(
         nr, nrblocks, neblocks,
         BlockRLE(r_dims), e_rle, boffsets_r, boffsets_e,
         eoffsets, eliminated_ptr, entry_retained, coffsets,
-        max_coupled_dim, chunks_K4, collect(1:nrblocks + neblocks), Tuple{Int, Int}[]
+        max_coupled_dim, chunks_K4, collect(1:nrblocks + neblocks), Tuple{Int, Int}[], 4, 4096
     )
 
     # --------------------------------------------------------------------------

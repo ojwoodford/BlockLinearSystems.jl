@@ -39,15 +39,15 @@ alloc_backsubstitute_schur(x_e, x_r, st, H, ws) = @allocated backsubstitute!(x_e
 # Warm the call, then the least of three measurements
 warm_allocs(f, args...) = (f(args...); minimum(f(args...) for _ in 1:3))
 
-with_min_work(f, minwork) = begin
-    old = BlockLinearSystems.SCHUR_THREAD_MIN_WORK[]
-    try
-        BlockLinearSystems.SCHUR_THREAD_MIN_WORK[] = minwork
-        f()
-    finally
-        BlockLinearSystems.SCHUR_THREAD_MIN_WORK[] = old
-    end
-end
+# The same structure (or system, on copied data) with another threading floor `min_work`
+with_min_work(st::SchurStructure, m) =
+    SchurStructure((f === :min_work ? Int(m) : getfield(st, f) for f in fieldnames(SchurStructure))...)
+with_min_work(jst::SchurJacobianStructure, m) =
+    SchurJacobianStructure((f === :schur ? with_min_work(jst.schur, m) : getfield(jst, f) for f in fieldnames(SchurJacobianStructure))...)
+with_min_work(J::SchurBlockJacobian{T, RT}, m) where {T, RT} = SchurBlockJacobian{T, RT}(copy(J.data), with_min_work(J.structure, m))
+# ... and a QR workspace on the other structure, sharing the factored tables (so it need not be reduced again)
+with_min_work(ws::BlockLinearSystems.QRReductionWorkspace{T}, m) where T =
+    BlockLinearSystems.QRReductionWorkspace{T}(with_min_work(ws.structure, m), ws.factored, ws.scratch, ws.failed_block)
 
 # Measured inside a function: @allocated at a testset's top level counts spurious boxing on Julia 1.10
 allocs_dot(x, H, y) = @allocated dot(x, H, y)

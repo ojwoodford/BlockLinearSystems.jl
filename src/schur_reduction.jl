@@ -402,7 +402,7 @@ function factor_all_eliminated!(
 ) where T
     for g_idx in 1:nruns(structure.e_dims)
         chunks = structure.chunks[g_idx]
-        threaded = use_threads(length(chunks), length(structure.entry_retained))
+        threaded = use_threads(length(chunks), length(structure.entry_retained), structure.min_work)
         dispatch_dim(runblocksize(structure.e_dims, g_idx)) do s_de
             foreach_index(length(chunks), threaded) do k
                 factor_eliminated_group!(ws.E_inv_data, ws.z_data, ws.W_data, ws.W_scratch[k], ws.failed_block,
@@ -429,7 +429,7 @@ function reduce_schur_dense!(
     factor_all_eliminated!(structure, E_data, C_data, b_e, scaling_e, lambda, ws) || return false
     copyto!(g_S, b_r)
     nk = length(ws.col_chunks)
-    foreach_index(nk, use_threads(nk, length(structure.entry_retained))) do k
+    foreach_index(nk, use_threads(nk, length(structure.entry_retained), structure.min_work)) do k
         accumulate_dense_columns!(S, g_S, structure, C_data, ws.W_data, ws.z_data, ws.retained_ptr, ws.retained_entry, ws.entry_eliminated, ws.col_chunks[k])
     end
     return true
@@ -454,7 +454,7 @@ function reduce_schur_sparse!(
     factor_all_eliminated!(structure, E_data, C_data, b_e, scaling_e, lambda, ws) || return false
     copyto!(g_S, b_r)
     nk = length(ws.col_chunks)
-    foreach_index(nk, use_threads(nk, length(structure.entry_retained))) do k
+    foreach_index(nk, use_threads(nk, length(structure.entry_retained), structure.min_work)) do k
         accumulate_sparse_columns!(S.nzval, g_S, structure, C_data, ws.W_data, ws.z_data, ws.retained_ptr, ws.retained_entry, ws.entry_eliminated,
                                    S.colptr, block_colptr, block_rowval, block_row_offsets, col_heights, ws.col_chunks[k])
     end
@@ -476,10 +476,10 @@ function backsubstitute!(
     ws::SchurReductionWorkspace{T}
 ) where T
     E_inv_data, z_data, scratch = ws.E_inv_data, ws.z_data, ws.W_scratch
-    threaded = use_threads(structure.neblocks, length(structure.entry_retained))
     for g_idx in 1:nruns(structure.e_dims)
         de = runblocksize(structure.e_dims, g_idx)
         chunks = structure.chunks[g_idx]
+        threaded = use_threads(length(chunks), length(structure.entry_retained), structure.min_work)
         # Function barrier on the (static) block dimension
         dispatch_dim(de) do s_de
             foreach_index(length(chunks), threaded) do k
