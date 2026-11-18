@@ -13,29 +13,16 @@ import BlockLinearSystems: SchurBlockJacobian, QRReductionWorkspace, reduce_qr!,
 import BlockLinearSystems: SchurBlockHessian, SchurReductionWorkspace, SparseBlockLinearSystem, reset_schur_dense!, reset_schur_sparse!, reduce_schur_dense!, reduce_schur_sparse!, backsubstitute!, build_schur_pattern, build_r_to_s_map, retained_block_pairs, trial_workspace
 using LinearAlgebra, SparseArrays, Static
 
-# A solver is named by a Symbol or a StaticSymbol
-linsolver_symbol(s::Symbol) = s
-linsolver_symbol(s::StaticSymbol) = dynamic(s)
-
-# Indefiniteness of an LDLᵀ factorization from its pivots: a pivot below -rtol times the largest pivot magnitude
-# (the test DampedLinearSolve applies to its own LDLᵀ)
-function is_indefinite(F::LDLFactorizations.LDLFactorization, rtol::Float64=1e-6)
-    maxabs = 0.0
-    minpivot = Inf
-    @inbounds for d in F.d
-        maxabs = max(maxabs, abs(d))
-        minpivot = min(minpivot, d)
-    end
-    return minpivot < -rtol * maxabs
-end
+# Helpers of the linear systems
+include("../src/linear_systems.jl")
 
 # Schur-complement systems for a SchurBlockHessian
-include("DampedLinearSolveExt/schurhessian.jl")
+include("../src/schur_linear_systems.jl")
 
 # QR elimination on the Jacobian path
-include("DampedLinearSolveExt/qrelimination.jl")
+include("../src/qr_linear_systems.jl")
 
 # The conformance hooks of both
-include("DampedLinearSolveExt/conformance.jl")
+include("../src/linear_system_conformance.jl")
 
 end # module DampedLinearSolveExt
