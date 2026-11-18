@@ -212,7 +212,9 @@ function DampedLinearSolve.solve!(ls::QRSchurLinearSystem, s::ReducedSym)
     # as the Schur systems report a singular eliminated block
     reduce_qr!(ls.ws, J, view(sc, nr+1:length(sc)), lambda) || return NotPositiveDefinite
     status = reduced_solve!(ls, ls.reduced, s, lambda, view(sc, 1:nr))
-    status == Success || return status
+    status == NotPositiveDefinite && return status
+    # An Indefinite solve (the normal equations' LDLᵀ) has solved too: the whole of x, as DampedLinearSolve's
+    # contract requires
     backsubstitute!(ls.xe, ls.xr, ls.ws)
     @inbounds for i in 1:nr
         ls.x[i] = ls.xr[i]
@@ -221,7 +223,7 @@ function DampedLinearSolve.solve!(ls::QRSchurLinearSystem, s::ReducedSym)
         ls.x[nr + i] = ls.xe[i]
     end
     all(isfinite, ls.x) || return NotPositiveDefinite
-    return Success
+    return status
 end
 DampedLinearSolve.solve!(ls::QRSchurLinearSystem, ::StaticSymbol{S}) where S = reducedmismatch(ls, S)
 @noinline reducedmismatch(ls, asked) = throw(ArgumentError("solve! was asked for linsolver = :$asked, but this QRSchurLinearSystem was built for linsolver = :$(ls.linsolver). A linear system must be solved with the linsolver it was built with."))
@@ -246,7 +248,7 @@ function reduced_solve!(ls::QRSchurLinearSystem, red::DenseQRReduced, ::Union{St
     end
     markstale!(A)
     status = solve!(sys, static(:qr))
-    status == Success && copyto!(ls.xr, getx(sys))
+    status == NotPositiveDefinite || copyto!(ls.xr, getx(sys))
     return status
 end
 
@@ -257,7 +259,7 @@ function reduced_solve!(ls::QRSchurLinearSystem, red::SparseQRReduced, ::Union{S
     copyto!(ls.sr, s_r)
     dampen!(red.sys, lambda, ls.sr)
     status = solve!(red.sys, static(:qr))
-    status == Success && copyto!(ls.xr, getx(red.sys))
+    status == NotPositiveDefinite || copyto!(ls.xr, getx(red.sys))
     return status
 end
 
@@ -281,7 +283,7 @@ function reduced_solve!(ls::QRSchurLinearSystem, red::AbstractLinearSystem, s::S
     copyto!(ls.sr, s_r)
     dampen!(red, lambda, ls.sr)
     status = solve!(red, s)
-    status == Success && copyto!(ls.xr, getx(red))
+    status == NotPositiveDefinite || copyto!(ls.xr, getx(red))
     return status
 end
 

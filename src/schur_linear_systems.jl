@@ -275,12 +275,12 @@ DampedLinearSolve.solve!(ls::DenseSchurLinearSystem, s::StaticSymbol) = check_re
 function DampedLinearSolve.solve!(ls::DenseSchurLinearSystem, solver_opt::ReducedSolver)
     build_reduced!(ls) || return NotPositiveDefinite
     status = solve_reduced_dense!(ls.red, solver_opt)
-    status == NotPositiveDefinite || copyto!(ls.x_r, getx(ls.red))   # an Indefinite solve has solved, too
-    status == Success || return status
-
+    status == NotPositiveDefinite && return status
+    # An Indefinite solve has solved too: the whole of x, as DampedLinearSolve's contract requires
+    copyto!(ls.x_r, getx(ls.red))
     backsubstitute!(ls.x_e, ls.x_r, ls.H.structure, ls.H.C_data, ls.workspace)
     # A non-finite R or C can pass the factorization; a non-finite solution does not
-    return all(isfinite, ls.x) ? Success : NotPositiveDefinite
+    return all(isfinite, ls.x) ? status : NotPositiveDefinite
 end
 DampedLinearSolve.solve!(ls::DenseSchurLinearSystem, s::Symbol) = DampedLinearSolve.solve!(ls, static(s))
 
@@ -318,15 +318,14 @@ function DampedLinearSolve.solve!(ls::SparseSchurLinearSystem, solver_opt::Reduc
         return NotPositiveDefinite
     end
 
+    status = Success
     if solver_opt isa StaticSymbol{:ldl}
         F = ldl_factorize!(Symmetric(ls.S, :U), ls.S_factor_ldl)
         if !factorized(F)
             return NotPositiveDefinite
         end
         ldiv!(ls.x_r, F, ls.g_S)
-        if is_indefinite(F)
-            return Indefinite
-        end
+        is_indefinite(F) && (status = Indefinite)
     else
         refresh_cholmod!(ls.S_chol, ls.S)
         LinearAlgebra.cholesky!(ls.S_factor, ls.S_chol; check=false)
@@ -336,17 +335,16 @@ function DampedLinearSolve.solve!(ls::SparseSchurLinearSystem, solver_opt::Reduc
                 return NotPositiveDefinite
             end
             ldiv!(ls.x_r, F, ls.g_S)
-            if is_indefinite(F)
-                return Indefinite
-            end
+            is_indefinite(F) && (status = Indefinite)
         else
             cholmod_ldiv!(ls.x_r, ls.S_factor, ls.g_S)
         end
     end
 
+    # An Indefinite solve has solved too: the whole of x, as DampedLinearSolve's contract requires
     backsubstitute!(ls.x_e, ls.x_r, ls.H.structure, ls.H.C_data, ls.workspace)
     # A non-finite R or C can pass the factorization; a non-finite solution does not
-    return all(isfinite, ls.x) ? Success : NotPositiveDefinite
+    return all(isfinite, ls.x) ? status : NotPositiveDefinite
 end
 DampedLinearSolve.solve!(ls::SparseSchurLinearSystem, s::Symbol) = DampedLinearSolve.solve!(ls, static(s))
 

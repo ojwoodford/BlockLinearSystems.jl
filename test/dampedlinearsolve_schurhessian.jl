@@ -151,10 +151,15 @@ end
             # Make the retained diagonal very negative so that S is indefinite, and Cholesky must fail
             q = standard_problem()
             q.H[1, 1] = -50.0
+            # An Indefinite solve has solved the whole system, x_e included (DampedLinearSolve's contract): checked on
+            # a stale x, so that a skipped back-substitution shows
+            x_full = bunchkaufman(Symmetric(q.H)) \ q.b
             for solver in (:auto, :ldl)
                 ls = make_schur_ls(kind, q)
                 DampedLinearSolve.dampen!(ls, 0.0)
+                DampedLinearSolve.getx(ls) .= NaN
                 @test DampedLinearSolve.solve!(ls, solver) == DampedLinearSolve.Indefinite
+                @test norm(DampedLinearSolve.getx(ls) - x_full) <= 1e-10 * norm(x_full)
             end
             # With enough damping it is positive definite again, and the fallback is not needed
             ls = make_schur_ls(kind, q)
