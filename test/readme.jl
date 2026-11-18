@@ -10,7 +10,7 @@ using Test, BlockLinearSystems
     for (k, code) in enumerate(blocks)
         @test (include_string(mod, code, "README.md block $k"); true)
     end
-    # The two reduction examples solve their systems
-    @test mod.ws isa QRReductionWorkspace
+    # The two elimination examples solve their systems, through DampedLinearSolve's contract
+    @test all(isfinite, mod.x)
     @test all(isfinite, mod.x_r) && all(isfinite, mod.x_e)
 end

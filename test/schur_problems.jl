@@ -1,4 +1,5 @@
 using Random, LinearAlgebra, SparseArrays, StaticArrays, Static, Test, BlockLinearSystems
+using BlockLinearSystems: SchurReductionWorkspace, trial_workspace, build_r_to_s_map, retained_block_pairs, reset_schur_dense!, reset_schur_sparse!, reduce_schur_dense!, reduce_schur_sparse!, QRReductionWorkspace, reduce_qr!, reduced_normal_sparse!   # internal: the kernels, withdrawn from the exports by EL6
 using BlockLinearSystems: sort_schur_blocks   # internal: withdrawn from the exports by EL4
 using Polyester
 include("fixtures/load.jl")

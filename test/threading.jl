@@ -1,4 +1,5 @@
 using Random, LinearAlgebra, SparseArrays, Test, BlockLinearSystems
+using BlockLinearSystems: SchurReductionWorkspace, build_r_to_s_map, retained_block_pairs, QRReductionWorkspace, reduce_qr!, reduced_nrows, free_block_pairs, build_reduced_jacobian_pattern   # internal: the kernels, withdrawn from the exports by EL6
 using Polyester   # BlockLinearSystems' kernels thread only with Polyester loaded
 include("fixtures/load.jl")
 using Main.SchurFixtures, Main.QRFixtures, Main.AllocFixtures

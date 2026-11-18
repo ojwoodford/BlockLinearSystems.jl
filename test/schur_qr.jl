@@ -1,4 +1,5 @@
 using Random, LinearAlgebra, SparseArrays, StaticArrays, Static, Test, BlockLinearSystems
+using BlockLinearSystems: SchurReductionWorkspace, reset_schur_dense!, reduce_schur_dense!, backsubstitute!, QRReductionWorkspace, reduce_qr!, reduced_nrows, free_block_pairs, reduced_mul!, reduced_tmul!, reduced_residual!, reduced_jacobian!, build_reduced_jacobian_pattern, reduced_normal_dense!, reduced_normal_sparse!, reduced_diagonal_blocks!, jtr!, jtj_diag!, jtj_quadform   # internal: the kernels, withdrawn from the exports by EL6
 using BlockLinearSystems: coupling_entry, eliminated_block, coupling_block   # internal: withdrawn from the exports by EL4
 using BlockLinearSystems: table_residual_block   # internal: the table-indexed residual view
 using Polyester   # BlockLinearSystems' kernels thread only with Polyester loaded

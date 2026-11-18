@@ -2,6 +2,7 @@ module DampedLinearSolveSchurTests
 
 using Test, Random, LinearAlgebra, SparseArrays, StaticArrays, Static
 using DampedLinearSolve, BlockLinearSystems, Polyester   # Polyester: BlockLinearSystems' threaded kernels
+using BlockLinearSystems: build_r_to_s_map, retained_block_pairs, reduce_schur_dense!, reduce_schur_sparse!, backsubstitute!   # internal: the kernels, withdrawn from the exports by EL6
 using DampedLinearSolve: check_linear_system
 include("fixtures/load.jl")
 using Main.SchurFixtures, Main.AllocFixtures

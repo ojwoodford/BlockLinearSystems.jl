@@ -14,15 +14,9 @@ import LDLFactorizations: ldl_analyze, ldl_factorize!, factorized
 export SparseBlockLinearSystem, DenseBlockLinearSystem, TransposedPattern, BlockRLE
 export block, blocksizes, nblocks, blockrange, zero!, copy_structure, uniformscaling!
 export symmetrifyfull, symmetrifyfull!, sparse_with_map, block_sparse_nnz, computestartindices, find_diag_inds
-export SchurStructure, SchurBlockHessian, SchurReductionWorkspace, trial_workspace, blockorder, nretained
-export build_schur_pattern, build_r_to_s_map, retained_block_pairs
-export reset_schur_dense!, reset_schur_sparse!, reduce_schur_dense!, reduce_schur_sparse!, backsubstitute!
-export addblock!, blockentry
-export SchurJacobianStructure, SchurBlockJacobian, schur_jacobian_bytes, residual_block
-export QRReductionWorkspace, reduce_qr!
-export reduced_nrows, free_block_pairs, reduced_mul!, reduced_tmul!, reduced_residual!, reduced_jacobian!,
-    build_reduced_jacobian_pattern
-export reduced_normal_dense!, reduced_normal_sparse!, reduced_diagonal_blocks!, factor_diagonal_blocks!, solve_diagonal_blocks!, jtr!, jtj_diag!, jtj_quadform
+export SchurStructure, SchurJacobianStructure, blockorder, nretained
+export SchurBlockHessian, SchurBlockJacobian, build_schur_pattern
+export addblock!, blockentry, residual_block
 export threadargs, fromthreadargs
 
 include("utils.jl")

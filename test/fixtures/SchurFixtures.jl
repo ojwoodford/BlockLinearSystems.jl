@@ -3,6 +3,7 @@
 module SchurFixtures
 
 using Random, LinearAlgebra, SparseArrays, BlockLinearSystems
+using BlockLinearSystems: SchurReductionWorkspace, build_r_to_s_map, retained_block_pairs, reset_schur_dense!, reset_schur_sparse!, reduce_schur_dense!, reduce_schur_sparse!, backsubstitute!   # internal: the kernels, withdrawn from the exports by EL6
 
 export SchurTestProblem, nr, schur_structure, fill_ce!, dense_schur_hessian, sparse_schur_hessian, reference_solve, standard_problem, coupled_groups_problem, mixed_dims_problem, schur_solve, gauge_problem
 

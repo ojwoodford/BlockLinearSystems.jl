@@ -6,6 +6,7 @@ using Test
 # loaded, the very first threaded call of the session works and gives the same result.
 const FRESH_SESSION = raw"""
 using BlockLinearSystems, Random
+using BlockLinearSystems: QRReductionWorkspace, reduce_qr!   # internal: the QR kernels
 const BLS = BlockLinearSystems
 rng = Random.Xoshiro(3)
 jst = SchurJacobianStructure(fill(6, 8), [3, 3, 9, 12, 3, 3], [[1, 2], [2, 3], [4], [5, 6], [7], [8, 1]], fill(14, 6); nchunks=2)

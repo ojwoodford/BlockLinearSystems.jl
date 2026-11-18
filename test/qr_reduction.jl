@@ -1,4 +1,5 @@
 using Random, LinearAlgebra, SparseArrays, StaticArrays, Static, Test, BlockLinearSystems
+using BlockLinearSystems: trial_workspace, QRReductionWorkspace, reduce_qr!, schur_jacobian_bytes   # internal: the kernels, withdrawn from the exports by EL6
 using BlockLinearSystems: coupling_entry, eliminated_block, coupling_block   # internal: withdrawn from the exports by EL4
 using Polyester   # BlockLinearSystems' kernels thread only with Polyester loaded
 include("fixtures/load.jl")

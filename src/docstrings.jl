@@ -534,22 +534,20 @@ one dense table per eliminated block and per free group, in one flat vector `dat
 [`SchurBlockHessian`](@ref) on the Hessian path. `T` may be any floating-point type; `Float64` and
 `Float32` are tested.
 
-`RType` is the storage of the reduced system in the retained variables, `S = J̃ᵀJ̃` (and `J̃`), that a
-solver builds after [`reduce_qr!`](@ref): `Matrix{T}` (dense, filled by [`reduced_normal_dense!`](@ref))
-or `SparseMatrixCSC{T, Int}` (sparse, filled by [`reduced_normal_sparse!`](@ref)); anything else is an
-`ArgumentError`. It plays the part the type of `R` plays in `SchurBlockHessian{T, RType}`, and is chosen
-by whoever builds the prototype (a modelling package, from its own storage option), so that a solver
-receiving only `J` can dispatch on `J isa SchurBlockJacobian{T, Matrix{T}}`. There is no default. This
-package's kernels do not read it: the tables, [`QRReductionWorkspace`](@ref) and every kernel are the
-same for both.
+`RType` is the storage of the reduced system in the retained variables, `J̃` and `S = J̃ᵀJ̃`, that the linear
+system built from `J` (DampedLinearSolve's `makejacobiansystem`) solves after eliminating: `Matrix{T}` (dense) or
+`SparseMatrixCSC{T, Int}` (sparse); anything else is an `ArgumentError`. It plays the part the type of `R` plays in
+`SchurBlockHessian{T, RType}`, and is chosen by whoever builds the prototype (a modelling package, from its own
+storage option), so that code receiving only `J` can dispatch on `J isa SchurBlockJacobian{T, Matrix{T}}`. There
+is no default. The tables are the same for both.
 
 The data-taking form uses `data` as the storage (no copy); its length must be the structure's table
 length, else `DimensionMismatch`.
 
 Fill it by row block, through [`blockentry`](@ref), [`block`](@ref) and [`residual_block`](@ref). The rows of
 different row blocks are disjoint, so threads that fill different row blocks never write the same memory and need
-no per-thread copies. The damping rows are not reachable through the views and stay zero. [`reduce_qr!`](@ref) reads these tables and never modifies them, so a
-change of the damping re-factors from them.
+no per-thread copies. The damping rows are not reachable through the views and stay zero. The elimination reads
+these tables and never modifies them, so a change of the damping re-factors from them.
 
 **Fields.** `data` and `structure` may be read for operations on the whole system: zero it, copy it, compare
 structures by identity. Where a block lives inside `data` is not public: address it by row block with
@@ -558,8 +556,10 @@ structures by identity. Where a block lives inside `data` is not public: address
 `copy(J)` returns a `SchurBlockJacobian` with its own copy of the tables and the same structure, and
 `copyto!(dest, src)` copies the tables of one into another of the same structure.
 [`zero!`](@ref) zeroes every table; [`copy_structure`](@ref) returns a new, zeroed `SchurBlockJacobian`
-of the same type, sharing only the (immutable) structure. [`schur_jacobian_bytes`](@ref) gives the
-memory needed before anything is allocated.
+of the same type, sharing only the (immutable) structure. Each table is dense in every retained block coupled to its
+eliminated block, `(m_e + d_e) × (c_e + d_e + 1)` for `m_e` rows, `d_e` eliminated and `c_e` coupled retained
+columns, and the elimination keeps a factored copy: far more than the Hessian path's `d_e² + d_e c_e` for an
+eliminated block seen by many rows.
 """
 SchurBlockJacobian
 

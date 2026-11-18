@@ -1,4 +1,5 @@
 using Random, LinearAlgebra, SparseArrays, StaticArrays, Static, HybridArrays, Test, BlockLinearSystems
+using BlockLinearSystems: QRReductionWorkspace, reduce_qr!, free_block_pairs, reduced_normal_dense!, reduced_normal_sparse!, schur_jacobian_bytes   # internal: the kernels, withdrawn from the exports by EL6
 using BlockLinearSystems: coupling_entry, eliminated_block, coupling_block   # internal: withdrawn from the exports by EL4
 using BlockLinearSystems: table_residual_block   # internal: the table-indexed residual view
 include("fixtures/load.jl")

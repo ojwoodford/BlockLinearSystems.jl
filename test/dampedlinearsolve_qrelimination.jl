@@ -5,6 +5,7 @@ module DampedLinearSolveQREliminationTests
 # its iterators stay there.
 
 using DampedLinearSolve, BlockLinearSystems, Krylov, SparseArrays, LinearAlgebra, Static, Random, Test
+using BlockLinearSystems: reduced_jacobian!   # internal: the kernels, withdrawn from the exports by EL6
 using Polyester   # BlockLinearSystems' kernels thread only with Polyester loaded
 using DampedLinearSolve: dampen!, zero!, Success, NotPositiveDefinite, check_linear_system
 using DampedLinearSolve: getA, getb, getx, solve!

@@ -13,19 +13,21 @@ Demmel, Sommer, Cremers and Usenko, "Square Root Bundle Adjustment for Large-Sca
 
 The same as for the Schur systems, so that the two routes give the same numbers:
 
-- The problem is `min ‖J x − r‖²` over `x = [x_r; x_e]`: **retained** variables first, then **eliminated**
-  ones, with the partition, block order and coupling lists of a [`SchurStructure`](@ref). Its normal
-  equations are `JᵀJ x = Jᵀr`, i.e. `[R Cᵀ; C E] x = b` with `H = JᵀJ` and `b = Jᵀr`. Callers that want a
-  descent step from `f(x0 + dx) ≈ f(x0) + J dx` store `r = f(x0)` and negate `x`, as with the Schur systems.
-- Each residual row involves at most one eliminated block (the Schur condition).
-- Levenberg–Marquardt damping solves `(JᵀJ + λ·Diagonal(s)) x = Jᵀr`, with `s` in the units of `diag(JᵀJ)`
-  (for Marquardt scaling, `s = diag(JᵀJ)`, which [`jtj_diag!`](@ref) computes), not squared.
+- The problem is `min ‖J x − r‖²`, described as on the Hessian path, with one more number per row block: its
+  number of rows. [`SchurJacobianStructure`](@ref)`(blocksizes, rowblocks, rowblocksizes; eliminated)` lays it
+  out in the same order as [`SchurStructure`](@ref) does, retained blocks first, so `x` is in that layout order.
+  Its normal equations are `JᵀJ x = Jᵀr`, i.e. `[R Cᵀ; C E] x = b` with `H = JᵀJ` and `b = Jᵀr`. Callers that
+  want a descent step from `f(x0 + dx) ≈ f(x0) + J dx` store `r = f(x0)` and negate `x`, as with the Schur
+  systems.
+- Each row block touches at most one eliminated block (the Schur condition).
+- Levenberg–Marquardt damping solves `(JᵀJ + λ·Diagonal(s)) x = Jᵀr`, with `s` in the units of `diag(JᵀJ)` (for
+  Marquardt scaling, `s = diag(JᵀJ)`), not squared.
 
 ## The table layout
 
-The rows that involve eliminated block `e` are stored as one dense, column-major table, with the columns
-of every retained block coupled to `e`, then `e`'s own columns, then the residual. `d_e` damping rows sit
-underneath, zero in the raw storage:
+The rows that involve eliminated block `e` (the row blocks that touch it) are stored as one dense, column-major
+table, with the columns of every retained block coupled to `e`, then `e`'s own columns, then the residual. `d_e`
+damping rows sit underneath, zero in the raw storage:
 
 ```
                  retained blocks coupled to e      e     r
@@ -33,175 +35,131 @@ underneath, zero in the raw storage:
   m_e data     │   J_r1    │   J_r2   …       │  J_e  │ r │
   rows         │           │                  │       │   │
                ├───────────┼──────────────────┼───────┼───┤
-  d_e damping  │     0     │        0         │ √λs_e │ 0 │   written by reduce_qr!
+  d_e damping  │     0     │        0         │ √λs_e │ 0 │   written by the elimination
                └───────────┴──────────────────┴───────┴───┘
 ```
 
-[`reduce_qr!`](@ref) copies each table, writes the damping rows and applies the Householder QR of its
-eliminated columns to the whole table:
+The elimination copies each table, writes the damping rows and applies the Householder QR of its eliminated
+columns to the whole table:
 
 ```
           Qᵀ ·  [ J_r | J_e | r ]   =   [ B   | U | q   ]    d_e rows:   U x_e + B x_r = q
                 [  0  | √λD |  0 ]       [ J̃_e | 0 | r̃_e ]    m_e rows:   J̃_e x_r = r̃_e
 ```
 
-The top rows give `x_e = U⁻¹ (q − B x_r)` once `x_r` is known ([`backsubstitute!`](@ref)). The bottom rows
-do not involve `x_e`. Together with the rows that involve no eliminated block ("free" rows, given as free
-groups), they form the reduced problem `min ‖J̃ x_r − r̃‖²`, whose normal equations are exactly the Schur
-complement: `J̃ᵀJ̃ = R − Cᵀ E⁻¹ C` and `J̃ᵀr̃ = b_r − Cᵀ E⁻¹ b_e`, with `E` including its damping.
-The retained part of the damping is left to the caller: rows `√(λ s_r)` appended to `J̃`, or `λ s_r` added
-to the diagonal of `J̃ᵀJ̃`.
-
-Each table contributes `m_e` rows to `J̃` whatever `λ` is ([`reduced_nrows`](@ref)): with `λ = 0` the
-damping rows stay zero and `d_e` of those rows are zero too.
+The top rows give `x_e = U⁻¹ (q − B x_r)` once `x_r` is known. The bottom rows do not involve `x_e`. Together
+with the rows that involve no eliminated block (*free* rows: the row blocks that touch only retained blocks, one
+table per set of retained blocks), they form the reduced problem `min ‖J̃ x_r − r̃‖²`, whose normal equations are
+exactly the Schur complement: `J̃ᵀJ̃ = R − Cᵀ E⁻¹ C` and `J̃ᵀr̃ = b_r − Cᵀ E⁻¹ b_e`, with `E` including its damping.
+The retained part of the damping is added by the reduced solve.
 
 ## A complete example
 
-The same kind of small problem as in the Schur tutorial, built as a Jacobian. Three retained blocks, six
-eliminated blocks, and one free group of rows that touches only retained blocks 1 and 3:
+The structure of the Schur tutorial, as a Jacobian: three retained blocks, six eliminated blocks, each row block
+a few rows that touch one eliminated block and the retained blocks it is coupled to, and one more row block of
+12 rows that touches only two retained blocks (a free group):
 
 ```@example qr
-using BlockLinearSystems, LinearAlgebra, SparseArrays, Random
+using BlockLinearSystems, DampedLinearSolve, LinearAlgebra, SparseArrays, Random
 
 rng = Random.Xoshiro(1)
-r_dims = [6, 6, 6]
-e_dims = [3, 3, 3, 3, 2, 1]
-couplings = [[1, 2], [1, 2, 3], [2, 3], [1, 3], [1, 2], [3]]
-e_rows = [8, 10, 6, 6, 4, 3]                 # residual rows that involve each eliminated block
-jst = SchurJacobianStructure(r_dims, e_dims, couplings, e_rows; free_rows=[12], free_retained=[[1, 3]])
-st = jst.schur                               # the SchurStructure it wraps
+sizes0 = [3, 6, 3, 6, 3, 6, 3, 2, 1]            # column blocks, in the caller's order
+elim = [true, false, true, false, true, false, true, true, true]
+rowblocks = [[1, 2, 4], [3, 2, 4, 6], [5, 4, 6], [7, 2, 6], [8, 2, 4], [9, 6], [2, 6]]
+rows = [8, 10, 6, 6, 4, 3, 12]
+jst = SchurJacobianStructure(sizes0, rowblocks, rows; eliminated = elim)
 J = SchurBlockJacobian{Float64, Matrix{Float64}}(jst)   # dense reduced system (see below)
+nothing # hide
+```
 
-# Fill every table with random values through the assembly views; keep a dense copy for checking
-nr, ne = st.nr, sum(e_dims)
-Jd, rd = zeros(0, nr + ne), zeros(0)
-for t in 1:jst.ntables
-    m = t <= st.neblocks ? e_rows[t] : jst.free_rows[t - st.neblocks]
-    rows = zeros(m, nr + ne)
-    for u in jst.table_ptr[t]:jst.table_ptr[t+1]-1          # the retained blocks of table t
-        r = jst.entry_retained[u]
-        B = randn(rng, m, r_dims[r])
-        BlockLinearSystems.coupling_block(J, u) .= B
-        rows[:, st.boffsets_r[r] .+ (0:r_dims[r]-1)] .= B
+Fill it by row block: [`blockentry`](@ref) gives, once, a handle for each (row block, column block) to be
+written; [`block`](@ref)`(J, k, entry, nrows, ncols)` is the view of row block `k`'s rows in that block's columns,
+and [`residual_block`](@ref)`(J, k)` its rows of the residual. A dense copy is kept for checking, its rows in
+row-block order:
+
+```@example qr
+sizes = blocksizes(jst)
+off = computestartindices(sizes); n = sum(sizes)
+lay = invperm(blockorder(jst))                  # the layout number of each of the caller's blocks
+Jd, rd = zeros(sum(rows), n), zeros(sum(rows))
+row0 = 0
+for (k, rb) in enumerate(rowblocks)
+    m = rows[k]
+    for c in rb
+        p = lay[c]
+        B = randn(rng, m, sizes[p])
+        block(J, k, blockentry(jst, k, p), m, sizes[p]) .= B
+        Jd[row0 .+ (1:m), off[p] .+ (0:sizes[p]-1)] .= B
     end
-    if t <= st.neblocks
-        E = randn(rng, m, e_dims[t])
-        BlockLinearSystems.eliminated_block(J, t) .= E
-        rows[:, nr .+ st.boffsets_e[t] .+ (0:e_dims[t]-1)] .= E
-    end
-    rv = randn(rng, m)
-    BlockLinearSystems.table_residual_block(J, t) .= rv
-    global Jd = [Jd; rows]
-    global rd = [rd; rv]
+    rk = randn(rng, m)
+    residual_block(J, k) .= rk
+    rd[row0 .+ (1:m)] .= rk
+    global row0 += m
 end
 size(Jd)
 ```
 
-Eliminate, solve the reduced problem by a dense QR, and back-substitute. With `λ = 0` this is plain least
-squares:
+Solve through DampedLinearSolve's contract: build the system from the prototype (it reads `J` in place), compute
+its gradient `Jᵀr` and mark the tables as new, damp and solve. With `λ = 0` this is plain least squares:
 
 ```@example qr
-ws = QRReductionWorkspace(J)
-reduce_qr!(ws, J, ones(ne), 0.0) || error("an eliminated block is rank deficient")
-
-Jt, rt = zeros(reduced_nrows(jst), nr), zeros(reduced_nrows(jst))
-reduced_jacobian!(Jt, rt, ws)                # J̃ and r̃
-x_r = qr(Jt) \ rt
-x_e = zeros(ne)
-backsubstitute!(x_e, x_r, ws)
-
-norm([x_r; x_e] - Jd \ rd) / norm(Jd \ rd)    # against a dense least-squares solve
+ls = makejacobiansystem(J, n, :qr)              # a dense QR of the reduced Jacobian
+DampedLinearSolve.gradient!(getb(ls), getA(ls))
+markstale!(getA(ls))
+dampen!(ls, 0.0, ones(n))
+solve!(ls, :qr)
+norm(getx(ls) - Jd \ rd) / norm(Jd \ rd)        # against a dense least-squares solve
 ```
 
 ## The same problem by the Schur complement
 
-Form `H = JᵀJ` and `b = Jᵀr`, fill a [`SchurBlockHessian`](@ref) as in the
-[Schur tutorial](schur_reduction.md), and compare the two reduced systems, damped this time:
+Form `H = JᵀJ` and `b = Jᵀr`, fill a [`SchurBlockHessian`](@ref) of the same layout (the Jacobian structure's
+own Hessian-path structure, `SchurStructure(jst)`), and compare the two solves, damped this time with Marquardt
+scaling:
 
 ```@example qr
 H, b = Jd' * Jd, Jd' * rd
-R = H[1:nr, 1:nr]
-E_data = zeros(sum(abs2, e_dims))
-C_data = zeros(sum(r_dims[st.entry_retained[c]] * e_dims[e] for e in 1:st.neblocks for c in st.eliminated_ptr[e]:st.eliminated_ptr[e+1]-1))
-for e in 1:st.neblocks
-    de, eo, e0 = e_dims[e], st.eoffsets[e], nr + st.boffsets_e[e]
-    E_data[eo:eo+de^2-1] .= vec(H[e0:e0+de-1, e0:e0+de-1])
-    for c in st.eliminated_ptr[e]:st.eliminated_ptr[e+1]-1
-        r = st.entry_retained[c]; dr = r_dims[r]; r0 = st.boffsets_r[r]
-        C_data[st.coffsets[c]:st.coffsets[c]+de*dr-1] .= vec(H[e0:e0+de-1, r0:r0+dr-1])
+st = SchurStructure(jst)
+Hs = SchurBlockHessian{Float64, Matrix{Float64}}(st)
+rg(p) = off[p]:off[p] + sizes[p] - 1
+for p in 1:nblocks(st), q in 1:p
+    if p != q
+        (p > nretained(st) && q > nretained(st)) && continue   # two eliminated blocks are never coupled
+        iszero(H[rg(p), rg(q)]) && continue                    # no row block touches both
     end
+    addblock!(Hs, p, q, H, rg(p), rg(q))
 end
 
-lambda = 0.1
-s = jtj_diag!(zeros(nr + ne), J)              # Marquardt scaling: diag(JᵀJ)
-s_r, s_e = s[1:nr], s[nr+1:end]
-
-# Schur: S = R + λ diag(s_r) − Cᵀ (E + λ diag(s_e))⁻¹ C
-sws = SchurReductionWorkspace{Float64}(st, 1)
-S_schur, g_schur = zeros(nr, nr), zeros(nr)
-reset_schur_dense!(S_schur, R, s_r, lambda, sws)
-reduce_schur_dense!(S_schur, g_schur, b[1:nr], b[nr+1:end], s_e, lambda, st, E_data, C_data, sws)
-
-# QR: J̃ᵀJ̃, plus the retained damping
-reduce_qr!(ws, J, s_e, lambda)
-S_qr, g_qr = zeros(nr, nr), zeros(nr)
-reduced_normal_dense!(S_qr, g_qr, ws)
-S_qr[diagind(S_qr)] .+= lambda .* s_r
-
-(norm(triu(S_qr) - triu(S_schur)) / norm(triu(S_schur)), norm(g_qr - g_schur) / norm(g_schur))
+lambda, s = 0.1, diag(H)
+lh = makehessiansystem(Hs, :cholesky)
+getb(lh) .= b
+dampen!(lh, lambda, s); solve!(lh, :cholesky)
+dampen!(ls, lambda, s); solve!(ls, :qr)
+norm(getx(ls) - getx(lh)) / norm(getx(lh))
 ```
-
-[`reduced_normal_sparse!`](@ref) does the same into the sparse storage of
-[`build_schur_pattern`](@ref); pass the free groups' pairs as extra blocks:
-`build_schur_pattern(st; extra_blocks=free_block_pairs(jst))`.
 
 ## Solving the reduced problem
 
-The second type parameter of [`SchurBlockJacobian`](@ref) names the storage of the reduced system:
-`Matrix{T}` for a dense `J̃` / `S = J̃ᵀJ̃`, or `SparseMatrixCSC{T, Int}` for the sparse `S` of
-[`reduced_normal_sparse!`](@ref). It is the counterpart of the type of `R` in a `SchurBlockHessian`, and is
-set by whoever builds the prototype (a modelling package, from its own dense-or-sparse option), so that a
-solver handed only `J` can dispatch on it. There is no default. The tables, the workspace and every kernel
-of this package are the same for both:
+The second type parameter of [`SchurBlockJacobian`](@ref) names the storage of the reduced system: `Matrix{T}`
+for a dense `J̃` / `S = J̃ᵀJ̃`, or `SparseMatrixCSC{T, Int}` for a sparse one. It is the counterpart of the type of
+`R` in a `SchurBlockHessian`, and is set by whoever builds the prototype (a modelling package, from its own
+dense-or-sparse option), so that a solver handed only `J` can dispatch on it. There is no default. The tables are
+the same for both. `linsolver` then chooses how the reduced problem is solved:
+
+- `:auto`, `:qr`: a QR of `J̃` with the retained damping appended as rows: dense, or SPQR for the sparse storage.
+  It keeps the conditioning of `J`.
+- `:cholesky`, `:ldl`: the normal equations `S = J̃ᵀJ̃`, the same system as the Schur route, which squares the
+  condition number again.
+- `:lsmr` (with Krylov.jl loaded, which loads the extension `KrylovExt`): matrix-free LSMR, `J̃` applied through the
+  factored tables and never formed, block-Jacobi preconditioned.
 
 ```@example qr
-Js = SchurBlockJacobian{Float64, SparseMatrixCSC{Float64, Int}}(copy(J.data), jst)   # same tables, sparse S
-wss = QRReductionWorkspace(Js)
-reduce_qr!(wss, Js, s_e, lambda)
-qpattern = build_schur_pattern(st; extra_blocks=free_block_pairs(jst))
-S_sp, g_sp = copy(qpattern.S_sparse), zeros(nr)
-reduced_normal_sparse!(S_sp, g_sp, wss, qpattern)
-S_sp[diagind(S_sp)] .+= lambda .* s_r
-norm(triu(Matrix(S_sp)) - triu(S_qr)) / norm(triu(S_qr))
+Js = SchurBlockJacobian{Float64, SparseMatrixCSC{Float64, Int}}(copy(J.data), jst)   # the same tables, sparse J̃
+lss = makejacobiansystem(Js, n, :qr)
+DampedLinearSolve.gradient!(getb(lss), getA(lss)); markstale!(getA(lss))
+dampen!(lss, lambda, s); solve!(lss, :qr)
+norm(getx(lss) - getx(ls)) / norm(getx(ls))
 ```
-
-A sparse `J̃` keeps the conditioning of `J` and the sparsity of the problem. Build its pattern once with
-[`build_reduced_jacobian_pattern`](@ref); then [`reduced_jacobian!`](@ref) fills its stored values in place, the
-same matrix as the dense form entry for entry. The retained damping is the caller's: append rows `√(λ s_r)`, as
-for a sparse `J`, and solve by a sparse QR:
-
-```@example qr
-Jt_sp = build_reduced_jacobian_pattern(jst)  # once per structure
-rt_sp = zeros(reduced_nrows(jst))
-reduced_jacobian!(Jt_sp, rt_sp, wss)         # each solve: writes nonzeros(Jt_sp) and rt_sp, allocates nothing
-x_sp = qr([Jt_sp; sparse(Diagonal(sqrt.(lambda .* s_r)))]) \ [rt_sp; zeros(nr)]
-S_qr_full = Symmetric(S_qr)                  # against the normal equations, damped, from the dense route
-(nnz(Jt_sp), length(Jt_sp), norm(x_sp - S_qr_full \ g_qr) / norm(S_qr_full \ g_qr))
-```
-
-- **Dense QR**: [`reduced_jacobian!`](@ref) writes `J̃` and `r̃` into a `Matrix` and `Vector`.
-- **Sparse QR**: [`reduced_jacobian!`](@ref) into the `SparseMatrixCSC` of [`build_reduced_jacobian_pattern`](@ref),
-  for SPQR, with the retained damping appended as rows.
-- **Iterative (LSMR, CG on the normal equations)**: [`reduced_mul!`](@ref) and [`reduced_tmul!`](@ref) give
-  `J̃ v` and `J̃ᵀ w` without forming anything, [`reduced_residual!`](@ref) gives `r̃`, and
-  [`reduced_diagonal_blocks!`](@ref) the diagonal blocks of `J̃ᵀJ̃` for a block-Jacobi preconditioner.
-- **Cholesky or LDLᵀ**: [`reduced_normal_dense!`](@ref) / [`reduced_normal_sparse!`](@ref) form
-  `S = J̃ᵀJ̃`. This gives the same system as the Schur route and squares the condition number again.
-
-The gradient `Jᵀr`, the column norms `diag(JᵀJ)` and the model term `‖J v‖²` of the full problem come from
-[`jtr!`](@ref), [`jtj_diag!`](@ref) and [`jtj_quadform`](@ref), on the raw tables or the factored ones (`Q` is
-orthogonal). The factored tables hold the damped Jacobian, so for `λ > 0` their eliminated column norms
-include `λ s_e` and `‖J v‖²` includes `λ Σ s_e v_e²`; the raw tables are always kept.
 
 ## Which to use
 
@@ -212,29 +170,22 @@ include `λ s_e` and `‖J v‖²` includes `λ Σ s_e v_e²`; the raw tables ar
 | Memory per eliminated block | `d_e² + d_e·c_e` | `(m_e + d_e)(c_e + d_e + 1)`, twice (raw and factored) |
 | A change of `λ` | re-factors from the stored blocks | re-factors from the raw tables |
 
-Choose QR elimination when conditioning matters: in single precision, or when `JᵀJ` is close to singular.
-On an ill-conditioned test problem with `cond(J)` about `8·10⁸`, the Schur route's `S` is no longer
-positive definite and its solution has a relative error of about `5·10⁻²`, while QR elimination followed by a
-dense QR of `J̃` gets about `10⁻⁸`. Choose Schur when memory matters: a table is dense in every retained
-block coupled to its eliminated block, so its size grows with the number of rows times the coupled
-dimension. [`schur_jacobian_bytes`](@ref) reports the memory from the structure alone, before anything is
-allocated:
-
-```@example qr
-schur_jacobian_bytes(jst)                     # raw tables + factored copy + scratch, in bytes
-```
+Choose QR elimination when conditioning matters: in single precision, or when `JᵀJ` is close to singular. On an
+ill-conditioned test problem with `cond(J)` about `8·10⁸`, the Schur route's `S` is no longer positive definite and
+its solution has a relative error of about `5·10⁻²`, while QR elimination followed by a dense QR of `J̃` gets about
+`10⁻⁸`. Choose Schur when memory matters: a table is dense in every retained block coupled to its eliminated block,
+so its size grows with the number of rows times the coupled dimension (`m_e` rows, `d_e` eliminated and `c_e`
+coupled retained columns, in the table above).
 
 ## Failure, threading, trial systems
 
-- [`reduce_qr!`](@ref) returns `false` if an eliminated block is under-determined (fewer rows than its
-  dimension), rank deficient or zero without damping, or its table holds a `NaN` or `Inf`;
-  `ws.failed_block[]` is the lowest failing block, as for the Schur reduction. Damping fixes the first
-  three.
-- Filling: the rows of a table belong to one eliminated block, so threads that fill different tables never
-  write the same memory. The reduction and back-substitution are threaded over chunks of eliminated
-  blocks, the products and accumulations over tables or by retained-column ownership, with the same
-  thresholds as the Schur kernels (`BlockLinearSystems.SCHUR_THREAD_MIN_WORK`). As there, threading needs
-  Polyester loaded (without it everything runs serially), and nothing allocates, serial or threaded,
-  except a threaded call on Julia 1.10 (see [Threading](@ref)).
-- [`copy_structure`](@ref) gives a zeroed copy of the tables, and [`trial_workspace`](@ref) a workspace
-  with its own factored tables, for a trial system.
+- `solve!` reports `NotPositiveDefinite` if an eliminated block is under-determined (fewer rows than its
+  dimension), rank deficient or zero without damping, or its table holds a `NaN` or `Inf`. Damping fixes the
+  first three.
+- Filling: the rows of different row blocks are disjoint, so threads that fill different row blocks never write
+  the same memory. The elimination and back-substitution are threaded over chunks of eliminated blocks, the
+  products and accumulations over tables or by retained-column ownership, as for the Schur kernels: threading
+  needs Polyester loaded (without it everything runs serially), and nothing allocates, serial or threaded, except
+  a threaded call on Julia 1.10 (see [Threading](@ref)).
+- [`copy_structure`](@ref) gives a zeroed copy of the tables; DampedLinearSolve's `copy_structure` of the linear
+  system gives a trial system with its own factored tables.

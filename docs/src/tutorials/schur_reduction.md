@@ -14,76 +14,83 @@ retained block `r`. The normal equations
 
 are solved cheaply by eliminating `E`, which is block diagonal, then solving the much smaller reduced
 system $S x_r = g$ with $S = R - C^\top E^{-1} C$ and $g = b_r - C^\top E^{-1} b_e$, then recovering
-$x_e = E^{-1}(b_e - C x_r)$. BlockLinearSystems provides the data structures and the parallel kernels
-for this, and the optimizer-facing linear systems built on them, which meet the contract of
-[DampedLinearSolve.jl](https://github.com/ojwoodford/DampedLinearSolve.jl) (see
-[Solving with DampedLinearSolve.jl](dampedlinearsolve.md)).
+$x_e = E^{-1}(b_e - C x_r)$. BlockLinearSystems lays the elimination out, stores the system, and solves it
+through the linear-system contract of [DampedLinearSolve.jl](https://github.com/ojwoodford/DampedLinearSolve.jl)
+(see [Solving with DampedLinearSolve.jl](dampedlinearsolve.md)). The caller does three things:
 
-## Describing the problem
+1. **Describe** the problem in its own numbering: the size of each block of unknowns (a *column block*), which
+   column blocks each group of terms couples (a *row block*: one cost of a least-squares problem, say), and
+   which column blocks to eliminate.
+2. **Lay it out and allocate it**: [`SchurStructure`](@ref) orders the blocks and derives the couplings;
+   [`SchurBlockHessian`](@ref) allocates the storage.
+3. **Fill it by block**, naming pairs of blocks with [`addblock!`](@ref), then build the linear system with
+   DampedLinearSolve's `makehessiansystem` and solve it.
 
-A [`SchurStructure`](@ref) records the block dimensions and which retained blocks are coupled to each eliminated
-block. Blocks may have any dimension from 1 to 65535. Eliminated blocks up to `BlockLinearSystems.D_STATIC` (8)
-use statically sized register arithmetic; larger ones use a LAPACK Cholesky on a scratch matrix. That scratch is
+## The layout
+
+The layout numbers the blocks retained first, then eliminated: [`blockorder`](@ref)`(st)[p]` is the caller's
+number of layout block `p`, and layout blocks `1:`[`nretained`](@ref)`(st)` are retained. Retained blocks are
+ordered by size, descending; eliminated blocks by size (so that blocks of one size are processed together, with
+that size known statically), then by the first retained block they couple to. Every vector of the system (the
+right-hand side, the gradient, the solution) is in layout order: block `p` starts at
+`computestartindices(blocksizes(st))[p]`.
+
+Blocks may have any dimension from 1 to 65535. Eliminated blocks up to `BlockLinearSystems.D_STATIC` (8) use
+statically sized register arithmetic; larger ones use a LAPACK Cholesky on a scratch matrix. That scratch is
 `d_max × d_max` per chunk (one per thread), `d_max` being the largest eliminated dimension, and each eliminated
 block's own factor takes `d_e²` values, so very large eliminated blocks are supported but cost memory accordingly.
-The
-numerical values live in a [`SchurBlockHessian`](@ref): `R` (a dense `Matrix` or a
-[`SparseBlockLinearSystem`](@ref)), `E_data` (the eliminated blocks `E_e`, each stored column-major) and
-`C_data` (the coupling blocks `C_er`, one `de × dr` block per coupling, each stored column-major).
 
 ## A complete example
 
+Three retained blocks of 6 and six eliminated blocks (3, 3, 3, 3, 2 and 1), in an order of the caller's own;
+each eliminated block forms one row block with the retained blocks it is coupled to:
+
 ```@example schur
-using BlockLinearSystems, LinearAlgebra, Random
+using BlockLinearSystems, DampedLinearSolve, LinearAlgebra, SparseArrays, Random
 
 rng = Random.Xoshiro(1)
-r_dims = [6, 6, 6]                 # three retained blocks
-e_dims = [3, 3, 3, 3, 2, 1]        # six eliminated blocks, of dimension 3, 3, 3, 3, 2 and 1
-couplings = [[1, 2], [1, 2, 3], [2, 3], [1, 3], [1, 2], [3]]
-st = SchurStructure(r_dims, e_dims, couplings)
+sizes0 = [3, 6, 3, 6, 3, 6, 3, 2, 1]            # column blocks, in the caller's order
+elim = [true, false, true, false, true, false, true, true, true]
+rowblocks = [[1, 2, 4], [3, 2, 4, 6], [5, 4, 6], [7, 2, 6], [8, 2, 4], [9, 6]]
+st = SchurStructure(sizes0, rowblocks; eliminated = elim)
+blockorder(st), nretained(st), blocksizes(st)
+```
 
-# A random diagonally dominant (so positive definite) Hessian with exactly the structure described above:
-# dense R, block-diagonal E, and a coupling block wherever a retained block is coupled to an eliminated one
-n = st.nr + sum(e_dims)
+Allocate the system and fill it by block. Here each row block is a small least-squares term with four residual
+rows `A`, contributing `AᵀA` over its blocks; every block also gets a unit prior. Each pair of blocks of a
+contribution is added once, in either order; `addblock!` puts it wherever, and in whichever orientation, the
+system stores it. A dense copy `H` is kept for checking:
+
+```@example schur
+sizes = blocksizes(st)
+off = computestartindices(sizes); n = sum(sizes)
+rg(p) = off[p]:off[p] + sizes[p] - 1           # the scalar range of layout block p
+lay = invperm(blockorder(st))                  # the layout number of each of the caller's blocks
+
+Hs = SchurBlockHessian{Float64, Matrix{Float64}}(st)   # dense retained part
 H = zeros(n, n)
-H[1:st.nr, 1:st.nr] .= rand(rng, st.nr, st.nr)
-for e in 1:st.neblocks
-    e0, de = st.nr + st.boffsets_e[e], e_dims[e]
-    H[e0:e0+de-1, e0:e0+de-1] .= rand(rng, de, de)
-    for c in st.eliminated_ptr[e]:st.eliminated_ptr[e+1]-1
-        r0, dr = st.boffsets_r[st.entry_retained[c]], r_dims[st.entry_retained[c]]
-        H[e0:e0+de-1, r0:r0+dr-1] .= rand(rng, de, dr)
-    end
+for p in 1:nblocks(st)
+    addblock!(Hs, p, p, Matrix(1.0I, sizes[p], sizes[p]), 1:sizes[p], 1:sizes[p])
+    H[rg(p), rg(p)] .+= I(sizes[p])
 end
-H = H + H'
-H[diagind(H)] .= sum(abs, H; dims=2)[:] .+ 1
+for rb in rowblocks
+    ps = lay[rb]                               # the row block's column blocks, in layout numbers
+    loc = computestartindices(sizes[ps])
+    lr(i) = loc[i]:loc[i] + sizes[ps[i]] - 1   # their ranges in the contribution
+    A = randn(rng, 4, sum(sizes[ps]))
+    B = A' * A
+    for i in eachindex(ps), j in 1:i
+        addblock!(Hs, ps[i], ps[j], B, lr(i), lr(j))
+    end
+    cols = reduce(vcat, rg.(ps))
+    H[cols, cols] .+= B
+end
 b = randn(rng, n)
-
-# Fill R, E and C (each block column-major; C_er is the block of H in eliminated rows, retained columns)
-R = H[1:st.nr, 1:st.nr]
-E_data = zeros(sum(abs2, e_dims))
-C_data = zeros(sum(r_dims[st.entry_retained[c]] * e_dims[e] for e in 1:st.neblocks for c in st.eliminated_ptr[e]:st.eliminated_ptr[e+1]-1))
-for e in 1:st.neblocks
-    de, eo, e0 = e_dims[e], st.eoffsets[e], st.nr + st.boffsets_e[e]
-    E_data[eo:eo+de^2-1] .= vec(H[e0:e0+de-1, e0:e0+de-1])
-    for c in st.eliminated_ptr[e]:st.eliminated_ptr[e+1]-1
-        r = st.entry_retained[c]; dr = r_dims[r]; r0 = st.boffsets_r[r]
-        C_data[st.coffsets[c]:st.coffsets[c]+de*dr-1] .= vec(H[e0:e0+de-1, r0:r0+dr-1])
-    end
-end
-Hs = SchurBlockHessian(st, R, E_data, C_data)
 nothing # hide
 ```
 
-The package's internal sized views address the same storage without offset arithmetic:
-
-```@example schur
-e, r = 2, 3
-BlockLinearSystems.coupling_block(Hs, BlockLinearSystems.coupling_entry(st, e, r)) == H[st.nr .+ st.boffsets_e[e] .+ (0:2), st.boffsets_r[r] .+ (0:5)]
-```
-
-`dot(x, Hs, y)` is the bilinear form `xᵀ H y`, without forming `H`; `dot(v, Hs, v)`, with the same vector
-passed twice, takes a faster path for the quadratic form `vᵀ H v` (the model term of a trust-region or
+`dot(x, Hs, y)` is the bilinear form `xᵀ H y`, without forming `H`; `dot(v, Hs, v)`, with the same vector passed
+twice, takes a faster path for the quadratic form `vᵀ H v` (the model term of a trust-region or
 Levenberg–Marquardt step):
 
 ```@example schur
@@ -91,73 +98,69 @@ v, w = randn(rng, n), randn(rng, n)
 dot(v, Hs, v) ≈ dot(v, H * v) && dot(v, Hs, w) ≈ dot(v, H * w)
 ```
 
-Reduce, solve the small system, and back-substitute. `lambda` and `scaling` add Levenberg–Marquardt damping
-`lambda * diag(scaling)` to the whole system (the scaling is the damping diagonal itself, e.g. `abs.(diag(H))`
-for Marquardt scaling):
+Solve `(H + λ diag(s)) x = b` through the contract: build the system from the prototype, set its right-hand side,
+damp it and solve. `scaling` is the damping diagonal itself (for Marquardt scaling, `abs.(diag(H))`):
 
 ```@example schur
-lambda, scaling = 0.1, ones(n)
-nr = st.nr
-ws = SchurReductionWorkspace{Float64}(st, 1)      # one chunk; use more for multithreading
-S = zeros(nr, nr); g = zeros(nr)
-reset_schur_dense!(S, Hs.R, view(scaling, 1:nr), lambda, ws)
-reduce_schur_dense!(S, g, view(b, 1:nr), view(b, nr+1:n), view(scaling, nr+1:n), lambda, st, E_data, C_data, ws) ||
-    error("an eliminated block is singular")
-x = zeros(n)
-x[1:nr] .= Symmetric(S, :U) \ g                   # only the upper triangle of S is filled
-backsubstitute!(view(x, nr+1:n), view(x, 1:nr), st, C_data, ws)
-
-x_full = (H + lambda * Diagonal(scaling)) \ b     # reference: solve the whole system
-norm(x - x_full) / norm(x_full)
+ls = makehessiansystem(Hs, :auto)
+getb(ls) .= b
+lambda = 0.1
+dampen!(ls, lambda, ones(n))
+solve!(ls, :auto)
 ```
 
-The reduction returns `false` if an eliminated block is numerically singular (or not positive definite), and
-`ws.failed_block[]` then holds the lowest failing block index.
+```@example schur
+x_full = (H + lambda * I) \ b                  # reference: solve the whole system
+norm(getx(ls) - x_full) / norm(x_full)
+```
+
+`getA(ls)` is the `SchurBlockHessian` the system reads: refill it (after `zero!`) and solve again for the next
+linearization. `solve!` reports `NotPositiveDefinite` if an eliminated block is numerically singular (or not
+positive definite) or the reduced system cannot be factored.
+
+## How the reduction works
+
+The solve reduces in two phases. Phase 1 factors every eliminated block, damped, and stores `E_e⁻¹`,
+`z_e = E_e⁻¹ b_e` and `W_er = E_e⁻¹ C_er`. Phase 2 accumulates `S = R - Σ_e C_eᵀ W_e` and `g` into the
+reduced system; the reduced system is solved by DampedLinearSolve (`linsolver = :auto` or `:cholesky`:
+Cholesky, falling back to Bunch–Kaufman; `:ldl`: Bunch–Kaufman, or LDLᵀ when sparse); then
+`x_e = E⁻¹(b_e - C x_r)` block by block.
+
+Phase 1 is parallel over chunks of eliminated blocks of one size (`nchunks` of the structure). Phase 2 splits the
+*retained* blocks into contiguous ranges; each chunk writes only its own columns of the single `S`, so there are
+no per-chunk copies of `S` and no merge pass. Threading uses Polyester, a weak dependency: the loops thread only
+when Polyester is loaded (`using Polyester`, or a package that loads it), more than one thread is available and
+there is enough work; otherwise they run serially. Either way nothing allocates, except a threaded call on Julia
+1.10 (see [Threading](@ref)).
 
 ## Sparse reduced systems
 
-When many pairs of retained blocks share no eliminated block, `S` is sparse. [`build_schur_pattern`](@ref) computes its
-pattern, and [`build_r_to_s_map`](@ref) maps the stored blocks of a [`SparseBlockLinearSystem`](@ref) `R` to
-it; [`reduce_schur_sparse!`](@ref) then fills `S.nzval` directly. Retained–retained couplings that go through
-no eliminated block (odometry or loop-closure factors) need slots too: pass them as `extra_blocks`, which
-[`retained_block_pairs`](@ref) extracts from `R`:
+When many pairs of retained blocks share no eliminated block, `S` is sparse. With a block-sparse retained part,
+`SchurBlockHessian{Float64, SparseBlockLinearSystem{Float64}}(st)`, the system's `S` is a `SparseMatrixCSC` on
+the pattern of [`build_schur_pattern`](@ref)`(st)`: the pairs of retained blocks that share an eliminated block
+or a row block of the description (a relative-pose term between two cameras, say), and the diagonal blocks.
+The pattern is built when the `SchurBlockHessian` is allocated and kept with it (`Hs.pattern`), so a system built
+from it later does not build it again; a pattern built earlier can be given (`pattern = ...`), with entries of the
+caller's own attached (`merge(pattern, (S_factor = f,))`). The pattern is shared by `copy_structure` copies:
+treat it as read-only.
 
-```julia
-pattern = build_schur_pattern(st; extra_blocks=retained_block_pairs(R))
-S = pattern.S_sparse
-r_to_s = build_r_to_s_map(R, pattern, st.boffsets_r)
-reset_schur_sparse!(S.nzval, R.data, r_to_s, pattern.diag_inds, scaling_r, lambda, ws)
-reduce_schur_sparse!(S, g, b_r, b_e, scaling_e, lambda, st, E_data, C_data,
-                     pattern.block_colptr, pattern.block_rowval, pattern.block_row_offsets, pattern.col_heights, ws)
+```@example schur
+Hsp = SchurBlockHessian{Float64, SparseBlockLinearSystem{Float64}}(st)
+pat = Hsp.pattern
+(size(pat.S_sparse), nnz(pat.S_sparse))
 ```
-
-If the pattern is already known when the [`SchurBlockHessian`](@ref) is built, attach it with
-`Hs = SchurBlockHessian(st, R, E_data, C_data; pattern=pattern)`. Code that receives only `Hs` can then
-read `Hs.pattern` instead of rebuilding it (`nothing` means "build it when needed"). The pattern is shared
-by `copy_structure` copies, so treat it as read-only: copy `pattern.S_sparse` before using it as storage.
-
-## How the reduction is parallelised
-
-The reduction runs in two phases. Phase 1 factors every eliminated block (in parallel over chunks of
-eliminated blocks) and stores `E_e⁻¹`, `z_e = E_e⁻¹ b_e` and `W_er = E_e⁻¹ C_er`. Phase 2 splits the *retained* blocks
-into contiguous ranges (`ws.col_chunks`); each chunk writes only its own columns of the single `S`, so there
-are no per-chunk copies of `S` and no merge pass. Threading uses Polyester, a weak dependency: the loops thread
-only when Polyester is loaded (`using Polyester`, or a package that loads it), more than one thread is available
-and there is enough work (`BlockLinearSystems.SCHUR_THREAD_MIN_WORK`); otherwise they run serially. Either way
-the kernels allocate nothing, except a threaded call on Julia 1.10 (see [Threading](@ref)).
 
 ## Trial systems
 
 Optimizers that linearize at a trial point keep the current system for retries.
-[`copy_structure`](@ref)`(::SchurBlockHessian)` allocates new zeroed `R`, `E_data` and `C_data` sharing only
-the immutable structure (and the read-only `pattern`, if any), and [`trial_workspace`](@ref) gives a workspace with its own caches.
+[`copy_structure`](@ref)`(::SchurBlockHessian)` allocates new zeroed `R`, `E_data` and `C_data` sharing only the
+immutable structure (and the read-only `pattern`, if any); DampedLinearSolve's `copy_structure` of the linear
+system gives a trial system with its own storage and caches.
 
 ## Using it with an optimizer
 
-This package wraps all of this in linear systems that meet the contract of
-[DampedLinearSolve.jl](https://github.com/ojwoodford/DampedLinearSolve.jl), a dependency, so that SecondOrderOptimization's
-Levenberg–Marquardt, dogleg and Newton iterators run on them (see [Solving with DampedLinearSolve.jl](dampedlinearsolve.md)). Passing a [`SchurBlockHessian`](@ref) as the Hessian prototype `H` (for example
-`HessianObjective(f, fdf!; H)`, then `optimize!(x0, obj, options)`) is what selects elimination; there is no option
-to set. Whether the reduced system is dense or sparse follows the storage of `R` (a `Matrix` or a
-[`SparseBlockLinearSystem`](@ref)), and `linsolver` names the solver applied to the reduced system: `:auto`,
-`:cholesky` or `:ldl`.
+Passing a [`SchurBlockHessian`](@ref) as the Hessian prototype `H` to an optimizer written against
+DampedLinearSolve's contract (for example SecondOrderOptimization's `HessianObjective(f, fdf!; H)`, then
+`optimize!(x0, obj, options)`) is what selects elimination; there is no option to set. Whether the reduced system
+is dense or sparse follows the storage of `R`, and `linsolver` names the solver applied to the reduced system:
+`:auto`, `:cholesky` or `:ldl`.

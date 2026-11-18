@@ -1,4 +1,5 @@
 using Test, LinearAlgebra, BlockLinearSystems
+using BlockLinearSystems: SchurReductionWorkspace   # internal: the kernels, withdrawn from the exports by EL6
 using Polyester   # BlockLinearSystems' kernels thread only with Polyester loaded
 include("fixtures/load.jl")
 using Main.SchurFixtures

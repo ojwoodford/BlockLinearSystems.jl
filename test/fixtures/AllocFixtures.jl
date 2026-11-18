@@ -3,6 +3,7 @@
 module AllocFixtures
 
 using BlockLinearSystems, LinearAlgebra
+using BlockLinearSystems: reset_schur_dense!, reset_schur_sparse!, reduce_schur_dense!, reduce_schur_sparse!, backsubstitute!, reduce_qr!, reduced_mul!, reduced_tmul!, reduced_residual!, reduced_jacobian!, reduced_normal_dense!, reduced_normal_sparse!, reduced_diagonal_blocks!, jtr!, jtj_diag!, jtj_quadform   # internal: the kernels, withdrawn from the exports by EL6
 
 export threaded_allocs_ok, allocs_dot, warm_allocs, with_min_work, alloc_backsubstitute_qr, alloc_backsubstitute_schur, alloc_jtj_diag, alloc_jtj_quadform, alloc_jtr, alloc_reduce_qr, alloc_reduce_schur_dense, alloc_reduce_schur_sparse, alloc_reduced_diagonal_blocks, alloc_reduced_jacobian, alloc_reduced_mul, alloc_reduced_normal_dense, alloc_reduced_normal_sparse, alloc_reduced_residual, alloc_reduced_tmul, alloc_reset_schur_dense, alloc_reset_schur_sparse
 

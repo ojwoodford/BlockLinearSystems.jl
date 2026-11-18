@@ -225,11 +225,9 @@ Compute block-level and scalar-level sparsity patterns of the reduced system S, 
 Returns `(block_pattern, block_colptr, block_rowval, block_row_offsets, col_heights, S_sparse, diag_inds)`;
 `S_sparse` is a zero-valued `SparseMatrixCSC{T}`.
 
-The pattern contains every pair of retained blocks that share an eliminated block, plus the diagonal.
-Retained-retained couplings that do not go through an eliminated block (direct couplings between
-retained blocks that share no eliminated block) have no such slot, so list them in `extra_blocks`, an
-iterable of `(i, j)` retained block index pairs (in either order; `i == j` is allowed and ignored).
-Use [`retained_block_pairs`](@ref) to obtain them from the block pattern of `R`.
+The pattern contains every pair of retained blocks that share an eliminated block or a row block of the structure's
+description, plus the diagonal. `extra_blocks`, an iterable of `(i, j)` pairs of retained blocks (layout numbers, in
+either order; `i == j` is allowed and ignored), adds pairs to those.
 """
 function build_schur_pattern(structure::SchurStructure, ::Type{T}=Float64; extra_blocks=()) where T
     nrblocks = structure.nrblocks

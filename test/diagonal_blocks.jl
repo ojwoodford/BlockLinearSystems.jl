@@ -1,4 +1,5 @@
 using Test, BlockLinearSystems, LinearAlgebra, Random
+using BlockLinearSystems: factor_diagonal_blocks!, solve_diagonal_blocks!   # internal: the kernels, withdrawn from the exports by EL6
 
 # A flat array of SPD blocks of the given dimensions, column-major, one after another
 function flat_spd_blocks(rng, dims)

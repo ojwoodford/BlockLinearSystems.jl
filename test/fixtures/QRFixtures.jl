@@ -3,6 +3,7 @@
 module QRFixtures
 
 using Random, LinearAlgebra, SparseArrays, BlockLinearSystems
+using BlockLinearSystems: SchurReductionWorkspace, build_r_to_s_map, retained_block_pairs, reset_schur_dense!, reset_schur_sparse!, reduce_schur_dense!, reduce_schur_sparse!, backsubstitute!, QRReductionWorkspace, reduce_qr!, reduced_nrows, free_block_pairs, reduced_jacobian!   # internal: the kernels, withdrawn from the exports by EL6
 using Main.SchurFixtures
 using BlockLinearSystems: eliminated_block, coupling_block   # internal: withdrawn from the exports by EL4
 
