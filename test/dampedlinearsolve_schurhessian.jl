@@ -567,4 +567,58 @@ end
     end
 end
 
+# From SecondOrderOptimization's tests (TF2): what only this package can see of its Schur systems
+
+@testset "The storage of R picks the dense or the sparse Schur system, whatever the reduced-system solver" begin
+    p = standard_problem()
+    Hd, Hs = dense_schur_hessian(p), sparse_schur_hessian(p)
+    for s in (:auto, :cholesky, :ldl, static(:auto), static(:cholesky), static(:ldl))
+        @test DampedLinearSolve.makehessiansystem(Hd, s) isa SOOExt.DenseSchurLinearSystem
+        @test DampedLinearSolve.makehessiansystem(Hs, s) isa SOOExt.SparseSchurLinearSystem
+    end
+    # The sparse system's factor type is concrete
+    ls = SOOExt.SparseSchurLinearSystem(sparse_schur_hessian(p), copy(p.b), zeros(length(p.b)))
+    @test isconcretetype(typeof(ls.S_factor))
+    @test isconcretetype(fieldtype(typeof(ls), :S_factor))
+end
+
+# AS3: the dense Schur system's Bunch-Kaufman solve, for :ldl and as :auto's fallback, against the solve of the reduced
+# system as it was written before: Cholesky (for :auto), then LinearAlgebra's bunchkaufman
+function as3_reference(ls, solver)
+    SOOExt.build_reduced!(ls) || return (DampedLinearSolve.NotPositiveDefinite, nothing)
+    S, g = copy(ls.S), copy(ls.g_S)
+    if solver === :auto
+        F = cholesky(Symmetric(copy(S), :U); check = false)
+        issuccess(F) && return (DampedLinearSolve.Success, F \ g)
+    end
+    bk = bunchkaufman(Symmetric(S, :U); check = false)
+    issuccess(bk) || return (DampedLinearSolve.NotPositiveDefinite, nothing)
+    xr = bk \ g
+    return (DampedLinearSolve.is_indefinite(bk) ? DampedLinearSolve.Indefinite : DampedLinearSolve.Success, xr)
+end
+as3_solve_allocs(ls, s) = @allocated DampedLinearSolve.solve!(ls, s)
+
+@testset "The dense Schur system's Bunch-Kaufman solve equals the reduced reference and allocates nothing (AS3)" begin
+    p = standard_problem()
+    q = standard_problem()
+    q.H[1, 1] = -50.0                        # S indefinite, so Cholesky fails
+    zeroS(ls) = (ls.H.R .= 0; ls.H.C_data .= 0; ls)   # S = 0: Bunch-Kaufman finds an exactly zero pivot
+    for (name, mk, expected) in (("positive definite", () -> make_schur_ls(:dense, p), Dict(:auto => :Success, :ldl => :Success)),
+                                 ("indefinite", () -> make_schur_ls(:dense, q), Dict(:auto => :Indefinite, :ldl => :Indefinite)),
+                                 ("singular", () -> zeroS(make_schur_ls(:dense, p)), Dict(:auto => :NotPositiveDefinite, :ldl => :NotPositiveDefinite)))
+        for s in (:auto, :ldl)
+            @testset "$name, $s" begin
+                ls = mk()
+                DampedLinearSolve.dampen!(ls, 0.0)
+                st_ref, xr_ref = as3_reference(ls, s)
+                @test Symbol(st_ref) === expected[s]
+                @test DampedLinearSolve.solve!(ls, static(s)) == st_ref
+                isnothing(xr_ref) || @test norm(ls.x_r - xr_ref) <= 1e-12 * norm(xr_ref)
+                as3_solve_allocs(ls, static(s))
+                @test as3_solve_allocs(ls, static(s)) == 0
+            end
+        end
+    end
+end
+
 end # module DampedLinearSolveSchurTests

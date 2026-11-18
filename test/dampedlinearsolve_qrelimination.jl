@@ -208,6 +208,23 @@ lp1_bytes(ls, lambda, scaling) = (lp1_solve!(ls, lambda, scaling); @allocated lp
         end
     end
 
+    # From SecondOrderOptimization's TP6 (TF2): a sparse reduced system's J̃ and r̃ are the dense path's, entry for entry,
+    # and filling them allocates nothing
+    @testset "The sparse reduced Jacobian is the dense one's, entry for entry (TP6): under-determined block = $under" for under in (false, true)
+        p = TP3Problem(tp3_structure(; under))
+        x = 0.1 .* randn(Xoshiro(2), p.lay.n)
+        lsD = tp3_system(p, Matrix{Float64}, :qr, x)
+        lsP = tp3_system(p, SparseMatrixCSC{Float64, Int}, :qr, x)
+        red = lsP.reduced
+        @test red isa QREXT.SparseQRReduced
+        tp3_solve!(lsP, :qr, 0.3, nothing); tp3_solve!(lsD, :qr, 0.3, nothing)
+        mt = size(red.Jt, 1)
+        Jd, rtd = zeros(mt, size(red.Jt, 2)), zeros(mt)
+        reduced_jacobian!(Jd, rtd, lsP.ws)
+        @test Matrix(red.Jt) == Jd && red.rt == rtd
+        @test tp6_fill_bytes(red, lsP.ws) == 0
+    end
+
     @testset "Meets the linear-system interface: $RT" for RT in keys(TP3_SOLVERS)
         jst = tp3_structure()
         n = jst.schur.nr + sum(jst.schur.e_dims)
