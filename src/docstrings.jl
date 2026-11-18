@@ -526,64 +526,11 @@ the `UInt16` sizes stored by `BlockRLE`) are widened to `Int` before use.
 blockrange
 
 """
-    SchurJacobianStructure(structure::SchurStructure, e_rows; free_rows=Int[], free_retained=Vector{Int}[], nchunks)
-    SchurJacobianStructure(r_dims, e_dims, couplings, e_rows; free_rows=Int[], free_retained=Vector{Int}[], nchunks=1)
-
-Layout of a tall linear least-squares problem `min ‖J x - r‖²`, `x = [x_r; x_e]` (retained variables first),
-partitioned like `structure` (same retained and eliminated blocks, same couplings, same block order).
-It is the Jacobian-path counterpart of a [`SchurStructure`](@ref), and holds one, unchanged, in its
-`schur` field.
-
-Every row of `J` involves at most one eliminated block (the Schur condition). The rows that involve
-eliminated block `e` form its *table*, `e_rows[e]` rows by the columns of every retained block coupled to
-`e`, then `e`'s own columns, then the residual:
-
-```
-T_e = [ J_r | J_e | r ]        (e_rows[e] + d_e) × (c_e + d_e + 1)
-```
-
-where `c_e` is the sum of the coupled retained dimensions (at most `structure.max_coupled_dim`). The last
-`d_e` rows are damping rows, zero in the raw storage and written by [`reduce_qr!`](@ref). Rows that
-involve no eliminated block are given as *free groups*: group `g` has `free_rows[g]` rows and the retained
-blocks `free_retained[g]`, and its table is `[ J_r | r ]`.
-
-Tables are numbered `t = 1:ntables`: table `e` (`e <= structure.neblocks`) belongs to eliminated block
-`e`, table `structure.neblocks + g` to free group `g`. A table's retained blocks are its *entries*,
-numbered globally: entries `1:length(structure.entry_retained)` are the coupling entries of `structure`
-(same index `c`, same order, sorted by retained block within each eliminated block), followed by the
-entries of the free groups (retained blocks sorted within each group). [`coupling_entry`](@ref) finds an
-entry from its table and retained block.
-
-`nchunks` sets how many disjoint ranges of retained blocks (`col_chunks`) the column-ownership kernels are
-threaded over; it defaults to the number of chunks of `structure`.
-
-Throws `DimensionMismatch` if `e_rows` (or `free_retained`) has the wrong length, and `ArgumentError` for
-a table with no rows, or a free group that references a retained block that does not exist or lists one
-twice.
-
-# Example
-```jldoctest
-julia> using BlockLinearSystems
-
-julia> # Two retained blocks (6 and 3), two eliminated blocks (3 and 3); 4 and 6 rows each; one free group of 2 rows
-       jst = SchurJacobianStructure([6, 3], [3, 3], [[1, 2], [2]], [4, 6]; free_rows=[2], free_retained=[[1]]);
-
-julia> jst.ntables
-3
-
-julia> reduced_nrows(jst)   # 4 + 6 + 2
-12
-```
-"""
-SchurJacobianStructure
-
-"""
     SchurBlockJacobian{T, RType}(structure::SchurJacobianStructure)
     SchurBlockJacobian{T, RType}(data::Vector{T}, structure::SchurJacobianStructure)
 
-Raw storage of a tall least-squares problem: the tables of `structure` (see
-[`SchurJacobianStructure`](@ref)), each column-major, in one flat vector `data` at
-`structure.table_offsets`. It is the Jacobian prototype a caller fills, the analogue of
+Raw storage of a tall least-squares problem laid out by `structure` (see [`SchurJacobianStructure`](@ref)):
+one dense table per eliminated block and per free group, in one flat vector `data`. It is the Jacobian prototype a caller fills, the analogue of
 [`SchurBlockHessian`](@ref) on the Hessian path. `T` may be any floating-point type; `Float64` and
 `Float32` are tested.
 
@@ -599,10 +546,9 @@ same for both.
 The data-taking form uses `data` as the storage (no copy); its length must be the structure's table
 length, else `DimensionMismatch`.
 
-Fill it through [`coupling_block`](@ref), [`eliminated_block`](@ref) and [`residual_block`](@ref). The
-rows of a table belong to one eliminated block (or one free group), so threads that fill different
-tables never write the same memory and need no per-thread copies. The damping rows are not reachable
-through the views and stay zero. [`reduce_qr!`](@ref) reads these tables and never modifies them, so a
+Fill it by row block, through [`blockentry`](@ref), [`block`](@ref) and [`residual_block`](@ref). The rows of
+different row blocks are disjoint, so threads that fill different row blocks never write the same memory and need
+no per-thread copies. The damping rows are not reachable through the views and stay zero. [`reduce_qr!`](@ref) reads these tables and never modifies them, so a
 change of the damping re-factors from them.
 
 **Fields.** `data` and `structure` may be read for operations on the whole system: zero it, copy it, compare
@@ -653,12 +599,12 @@ julia> using BlockLinearSystems, Static, StaticArrays
 
 julia> J = SchurBlockJacobian{Float64, Matrix{Float64}}(SchurJacobianStructure([6, 3], [3, 3], [[1, 2], [2]], [4, 6]));
 
-julia> u = coupling_entry(J.structure, 1, 2)   # retained block 2 in eliminated block 1's table
+julia> u = BlockLinearSystems.coupling_entry(J.structure, 1, 2)   # retained block 2 in eliminated block 1's table
 2
 
-julia> coupling_block(J, u, 3, static(2), static(3)) .= @SMatrix [1.0 2.0 3.0; 4.0 5.0 6.0];   # rows 3:4 of that table
+julia> BlockLinearSystems.coupling_block(J, u, 3, static(2), static(3)) .= @SMatrix [1.0 2.0 3.0; 4.0 5.0 6.0];   # rows 3:4 of that table
 
-julia> Matrix(coupling_block(J, u))   # all four data rows
+julia> Matrix(BlockLinearSystems.coupling_block(J, u))   # all four data rows
 4×3 Matrix{Float64}:
  0.0  0.0  0.0
  0.0  0.0  0.0

@@ -1,4 +1,5 @@
 using Random, LinearAlgebra, SparseArrays, StaticArrays, Static, Test, BlockLinearSystems
+using BlockLinearSystems: sort_schur_blocks   # internal: withdrawn from the exports by EL4
 using Polyester
 include("fixtures/load.jl")
 using Main.SchurFixtures, Main.AllocFixtures

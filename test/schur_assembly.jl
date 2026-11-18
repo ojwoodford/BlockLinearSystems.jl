@@ -1,4 +1,5 @@
 using Random, LinearAlgebra, SparseArrays, StaticArrays, Static, HybridArrays, Test, BlockLinearSystems
+using BlockLinearSystems: coupling_entry, retained_block, eliminated_block, coupling_block   # internal: withdrawn from the exports by EL4
 using BlockLinearSystems: validblock   # internal names
 include("fixtures/load.jl")
 using Main.SchurFixtures

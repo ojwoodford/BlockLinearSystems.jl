@@ -4,6 +4,7 @@ module QRFixtures
 
 using Random, LinearAlgebra, SparseArrays, BlockLinearSystems
 using Main.SchurFixtures
+using BlockLinearSystems: eliminated_block, coupling_block   # internal: withdrawn from the exports by EL4
 
 export QRTestProblem, qr_problems, qr_scaling, qr_dense, qr_dense_r, relerr, schur_hessian, schur_reduced, qr_solve, dense_ls, qr_rtol, sparse_reduced_problems
 

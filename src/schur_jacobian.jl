@@ -14,9 +14,15 @@
 # do not involve x_e. The bottom rows of every table, then the free rows, form the reduced problem
 # min ||J~ x_r - r~||^2, with J~'J~ the Schur complement of J'J (without the retained damping).
 
-# SchurJacobianStructure(structure::SchurStructure, e_rows; free_rows=Int[], free_retained=Vector{Int}[], nchunks)
+# SchurJacobianStructure(structure::SchurStructure, e_rows; free_rows=Int[], free_retained=Vector{Int}[], nchunks, rowblocks)
 # SchurJacobianStructure(r_dims, e_dims, couplings, e_rows; free_rows, free_retained, nchunks=1)
-# Layout of a tall (Jacobian) least-squares problem partitioned like `structure`.
+# Internal: the layout of a tall least-squares problem already partitioned like `structure` (same blocks, couplings and
+# order). Table e (e <= neblocks) holds the e_rows[e] rows that involve eliminated block e, then d_e damping rows; table
+# neblocks + g holds free group g (free_rows[g] rows, the retained blocks free_retained[g]). A table's retained blocks
+# are its entries, numbered globally: the coupling entries of `structure` (same index and order), then the free groups'
+# entries (sorted within each group); coupling_entry finds one. `nchunks` is the number of disjoint ranges of retained
+# blocks (col_chunks) the column-ownership kernels thread over. The public constructor, from a description, is in
+# schur_description.jl.
 struct SchurJacobianStructure
     schur::SchurStructure            # Partition, block offsets, couplings and chunks
     e_rows::Vector{Int}              # Number of residual rows m_e of each eliminated block's table
@@ -293,9 +299,6 @@ end
     @boundscheck (1 <= t <= jst.ntables) || throw(BoundsError(J, t))
     return table_residual_block(J, t, 1, data_rows(jst, Int(t)))
 end
-# The table-indexed form under its old name, until its last caller outside this package (NLLSModel) has moved to the
-# row-block form; EL4 removes it
-@inline residual_block(J::SchurBlockJacobian, t::Integer, row::Integer, nrows) = table_residual_block(J, t, row, nrows)
 
 # ------------------------------------------------------------------------------------------------------------------
 # Addressing by row block (a structure built from a description)

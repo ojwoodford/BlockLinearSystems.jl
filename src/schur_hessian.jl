@@ -1,7 +1,6 @@
 """
     SchurBlockHessian{T, RType}(structure::SchurStructure; pattern=nothing)
     SchurBlockHessian(R, like::SchurBlockHessian)
-    SchurBlockHessian(structure, R, E_data, C_data; pattern=nothing)
 
 A Hessian (or any symmetric matrix) laid out for elimination by `structure`: the retained part `R`, the
 eliminated blocks `E_data` and the coupling blocks `C_data`.
@@ -20,18 +19,14 @@ of the same kind and size as `like.R` (`DimensionMismatch` otherwise).
 zero it, add another system's part of the same structure to it, copy it, compare structures by identity.
 Where a block lives inside them is not public: fill the system with [`addblock!`](@ref).
 
-`pattern` optionally carries the result of [`build_schur_pattern`](@ref) for this structure, so that
-code which receives only the matrix can build a reduced system without recomputing it. `nothing` (the
-default) means "build it when needed". The pattern must come from
-`build_schur_pattern(structure; extra_blocks=retained_block_pairs(R))`, or from a superset of those
-pairs; only its size is checked (`size(pattern.S_sparse, 1) == structure.nr`, else `ArgumentError`).
+`pattern` optionally carries the result of [`build_schur_pattern`](@ref)`(structure)`, so that code which
+receives only the matrix can build a reduced system without recomputing it. `nothing` means "build it when
+needed". Only its size is checked (`ArgumentError` if it is not the retained dimension).
 
 The pattern is shared between every system built from `H`, including its [`copy_structure`](@ref)
 copies, so treat it as read-only structure: in particular, copy `pattern.S_sparse` before using it as
 value storage. Callers may attach extra entries to the named tuple (for example
 `merge(pattern, (S_factor = fac,))`); this package ignores entries it does not know.
-
-The positional form `SchurBlockHessian(R, E_data, C_data, structure)` (field order) is also accepted.
 """
 struct SchurBlockHessian{T, RType}
     R::RType                         # Matrix{T} (dense) or SparseBlockLinearSystem (sparse)

@@ -81,12 +81,12 @@ for t in 1:jst.ntables
     for u in jst.table_ptr[t]:jst.table_ptr[t+1]-1          # the retained blocks of table t
         r = jst.entry_retained[u]
         B = randn(rng, m, r_dims[r])
-        coupling_block(J, u) .= B
+        BlockLinearSystems.coupling_block(J, u) .= B
         rows[:, st.boffsets_r[r] .+ (0:r_dims[r]-1)] .= B
     end
     if t <= st.neblocks
         E = randn(rng, m, e_dims[t])
-        eliminated_block(J, t) .= E
+        BlockLinearSystems.eliminated_block(J, t) .= E
         rows[:, nr .+ st.boffsets_e[t] .+ (0:e_dims[t]-1)] .= E
     end
     rv = randn(rng, m)

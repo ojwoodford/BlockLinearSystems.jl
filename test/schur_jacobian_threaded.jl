@@ -1,4 +1,5 @@
 using Test, StaticArrays, Static, BlockLinearSystems
+using BlockLinearSystems: eliminated_block, coupling_block   # internal: withdrawn from the exports by EL4
 using BlockLinearSystems: table_residual_block   # internal: the table-indexed residual view
 include("fixtures/load.jl")
 using Main.QRFixtures

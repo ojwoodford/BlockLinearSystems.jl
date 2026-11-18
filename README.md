@@ -107,13 +107,13 @@ n_E = sum(abs2, st.e_dims)                                                # E_e 
 n_C = sum(st.e_dims[e] * st.r_dims[st.entry_retained[c]]                  # C_er blocks, each d_e × d_r
           for e in 1:st.neblocks for c in st.eliminated_ptr[e]:st.eliminated_ptr[e+1]-1)
 H = SchurBlockHessian(st, zeros(nr, nr), zeros(n_E), zeros(n_C))
-# Fill R, E and C through block views (here a diagonally dominant H):
+# Fill R, E and C (here a diagonally dominant H) through the internal block views:
 H.R .= Matrix(10.0I, nr, nr)
 for e in 1:st.neblocks
-    eliminated_block(H, e) .= Matrix(4.0I, st.e_dims[e], st.e_dims[e])
+    BlockLinearSystems.eliminated_block(H, e) .= Matrix(4.0I, st.e_dims[e], st.e_dims[e])
 end
 for c in eachindex(st.entry_retained)
-    coupling_block(H, c) .= 0.1
+    BlockLinearSystems.coupling_block(H, c) .= 0.1
 end
 b_r, b_e = ones(nr), ones(ne)
 scaling_r, scaling_e, lambda = ones(nr), ones(ne), 0.1   # damping lambda * diag(scaling)
@@ -144,12 +144,12 @@ using BlockLinearSystems, LinearAlgebra
 
 jst = SchurJacobianStructure([6, 6, 6], [3, 3, 3, 1], [[1, 2], [1, 2, 3], [2, 3], [3]], [8, 10, 6, 3])  # ..., rows per eliminated block
 J = SchurBlockJacobian{Float64, Matrix{Float64}}(jst)   # reduced-system storage: Matrix{T} or SparseMatrixCSC{T, Int}
-# Fill each table through coupling_block(J, u[, row, nrows]), eliminated_block(J, e[, ...]) and the residual column:
+# Fill each table through the internal views of its retained, eliminated and residual columns:
 for u in eachindex(jst.entry_retained)
-    coupling_block(J, u) .= randn.()
+    BlockLinearSystems.coupling_block(J, u) .= randn.()
 end
 for e in 1:jst.schur.neblocks
-    eliminated_block(J, e) .= randn.()
+    BlockLinearSystems.eliminated_block(J, e) .= randn.()
 end
 for t in 1:jst.ntables
     BlockLinearSystems.table_residual_block(J, t) .= randn.()

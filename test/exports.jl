@@ -7,12 +7,12 @@ const PUBLIC_API = sort([
     :SchurBlockHessian, :SchurJacobianStructure, :SchurReductionWorkspace, :SchurStructure,
     :SparseBlockLinearSystem, :TransposedPattern,
     :addblock!, :backsubstitute!, :block, :blockentry, :blockorder, :block_sparse_nnz, :blockrange, :blocksizes, :build_r_to_s_map,
-    :build_reduced_jacobian_pattern, :build_schur_pattern, :copy_structure, :coupling_block, :coupling_entry, :computestartindices, :eliminated_block, :find_diag_inds,
+    :build_reduced_jacobian_pattern, :build_schur_pattern, :copy_structure, :computestartindices, :find_diag_inds,
     :factor_diagonal_blocks!, :free_block_pairs, :jtj_diag!, :jtj_quadform, :jtr!, :nblocks, :nretained, :reduce_qr!, :reduce_schur_dense!,
     :reduce_schur_sparse!, :reduced_diagonal_blocks!, :reduced_jacobian!, :reduced_mul!,
     :reduced_normal_dense!, :reduced_normal_sparse!, :reduced_nrows, :reduced_residual!, :reduced_tmul!,
-    :reset_schur_dense!, :reset_schur_sparse!, :residual_block, :solve_diagonal_blocks!, :retained_block, :retained_block_pairs,
-    :schur_jacobian_bytes, :sort_schur_blocks, :sparse_with_map, :symmetrifyfull, :symmetrifyfull!,
+    :reset_schur_dense!, :reset_schur_sparse!, :residual_block, :solve_diagonal_blocks!, :retained_block_pairs,
+    :schur_jacobian_bytes, :sparse_with_map, :symmetrifyfull, :symmetrifyfull!,
     :fromthreadargs, :threadargs, :trial_workspace, :uniformscaling!, :zero!,
 ])
 
@@ -39,7 +39,10 @@ const PUBLIC_API = sort([
     # Internal names stay defined (qualified access), and the old alias is gone
     for name in (:copyto!, :inv_sym_block, :expand_block_perm, :validblock, :symmetrifysparse, :blockdata,
                  :eachstoredblock, :nruns, :runlength, :runblocksize, :matrixdimension, :runblockrange,
-                 :runmatrixrange, :eachrun, :BlockOffsets, :makesparseindices)
+                 :runmatrixrange, :eachrun, :BlockOffsets, :makesparseindices,
+                 # withdrawn by EL4: the front door (description, addblock!, blockentry) replaces them
+                 :sort_schur_blocks, :coupling_entry, :retained_block, :eliminated_block, :coupling_block,
+                 :table_residual_block)
         @test isdefined(BlockLinearSystems, name) && !(name in exported)
     end
     @test !isdefined(BlockLinearSystems, :SchurBlockStructure)

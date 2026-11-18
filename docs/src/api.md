@@ -70,7 +70,6 @@ reduce_schur_sparse!
 backsubstitute!
 LinearAlgebra.dot(::AbstractVector{<:Real}, ::SchurBlockHessian{<:Real}, ::AbstractVector{<:Real})
 addblock!
-retained_block
 ```
 
 ### Reduced-System Sparsity
@@ -79,12 +78,6 @@ retained_block
 build_schur_pattern
 retained_block_pairs
 build_r_to_s_map
-```
-
-### Variable Ordering
-
-```@docs
-sort_schur_blocks
 ```
 
 ## QR Elimination (Jacobian Path)
@@ -99,11 +92,8 @@ least-squares problem `min ‖J x - r‖²` by QR. See the [QR elimination tutor
 SchurJacobianStructure
 SchurBlockJacobian
 schur_jacobian_bytes
-coupling_block
-eliminated_block
 residual_block
 blockentry
-coupling_entry
 QRReductionWorkspace
 reduce_qr!
 reduced_nrows
