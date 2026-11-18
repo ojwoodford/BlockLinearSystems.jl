@@ -206,3 +206,35 @@ end
     ro[3] = 100
     @test d.rowblockoffsets == [1, 3, 6] && d.columnblockoffsets == [1, 3, 6]
 end
+
+# Measured in a function, so that @allocated sees concrete types: build a system on `data` with `like`'s layout and
+# write one block, as a caller wrapping a matrix it was handed does
+build_and_write(data, like) = (d = DenseBlockLinearSystem(data, like); block(d, 2, 1)[1, 1] = 1.0; d.data)
+alloc_build_and_write(data, like) = (build_and_write(data, like); @allocated build_and_write(data, like))
+
+@testset "A system on new data with another system's layout (DL1)" begin
+    like = DenseBlockLinearSystem{Float64}([2, 3], [3])
+    data = zeros(5, 3)
+    d = DenseBlockLinearSystem(data, like)
+    @test d isa DenseBlockLinearSystem{Float64, Matrix{Float64}}
+    @test d.data === data
+    # The layout is shared with `like`, not rebuilt: it belongs to a system, which never mutates it
+    @test d.rowblockoffsets === like.rowblockoffsets && d.columnblockoffsets === like.columnblockoffsets
+    @test d.rowblocksizes === like.rowblocksizes && d.columnblocksizes === like.columnblocksizes
+    # It writes into `data`, not into `like.data`
+    block(d, 2, 1) .= 1.0
+    @test all(==(1.0), data[3:5, :]) && all(iszero, data[1:2, :]) && all(iszero, like.data)
+    # Another element type or storage: the layout does not depend on them
+    @test eltype(DenseBlockLinearSystem(zeros(Float32, 5, 3), like)) == Float32
+    v = view(zeros(6, 4), 1:5, 1:3)
+    @test DenseBlockLinearSystem(v, like).data === v
+    # `data` of another size throws
+    @test_throws DimensionMismatch DenseBlockLinearSystem(zeros(5, 4), like)
+    @test_throws DimensionMismatch DenseBlockLinearSystem(zeros(4, 3), like)
+    # A warm call allocates nothing
+    @test alloc_build_and_write(data, like) == 0
+    # copy_structure shares the layout too, as its docstring says
+    c = copy_structure(like)
+    @test c.rowblockoffsets === like.rowblockoffsets && c.columnblockoffsets === like.columnblockoffsets
+    @test c.data !== like.data && all(iszero, c.data)
+end

@@ -33,8 +33,11 @@ SparseBlockLinearSystem
     DenseBlockLinearSystem{T}(rowblocksizes, columnblocksizes=rowblocksizes)
     DenseBlockLinearSystem{T}(data::AbstractMatrix{T}, rowblocksizes, columnblocksizes=rowblocksizes)
     DenseBlockLinearSystem(data::AbstractMatrix{T}, rowblocksizes, columnblocksizes=rowblocksizes)
+    DenseBlockLinearSystem(data::AbstractMatrix{T}, like::DenseBlockLinearSystem)
 
 Block-partitioned dense matrix backed by a matrix buffer `data` (such as `Matrix{T}`, `SubArray`, or `FixedSizeMatrix{T}`), partitioned into blocks of the sizes given (each 1 to 65535). Without `data`, a zeroed `Matrix{T}` is allocated.
+
+With `like`, the system takes the block layout of `like`, which it shares rather than copies, and allocates nothing: use it to give a matrix you are handed the layout of a system you already have. `data` must have the size of `like`, and may have any element type and storage; it is used as it is, not zeroed.
 
 # Fields
 - `data::AbstractMatrix{T}`: Underlying matrix buffer of size `(sum(rowblocksizes), sum(columnblocksizes))`.
@@ -56,6 +59,16 @@ julia> bdm.data[3:5, 1:2]
  1.0  4.0
  2.0  5.0
  3.0  6.0
+
+julia> H = zeros(5, 5);
+
+julia> block(DenseBlockLinearSystem(H, bdm), 2, 2) .= 1.0;   # H, with the layout of bdm
+
+julia> H[3:5, 3]
+3-element Vector{Float64}:
+ 1.0
+ 1.0
+ 1.0
 ```
 """
 DenseBlockLinearSystem
