@@ -76,9 +76,17 @@ DenseBlockLinearSystem
 """
     block(M, i, j)
     block(M, i, j, rows, cols)
+    block(J::SchurBlockJacobian, k, entry, nrows, ncols)
 
 Returns a mutable view into block `(i, j)` of `M` (`SparseBlockLinearSystem` or `DenseBlockLinearSystem`).
 When `rows` and/or `cols` are passed as `StaticInt`, returns a stack-wrapped `SizedMatrix` or `HybridArray` view for SIMD-accelerated block operations.
+
+For a [`SchurBlockJacobian`](@ref) whose structure was built from a description, the view of row block `k`'s
+rows of `J` in the columns of `entry`, a handle from [`blockentry`](@ref)`(J.structure, k, j)` for layout column
+block `j`: `nrows × ncols`, which must be the row block's number of rows and the column block's size. Sizes may
+be `Int`, `StaticInt` or `Val`; both static give a `SizedMatrix`, one a `HybridArray`. Sizes and the handle are
+checked under `@boundscheck`; the view allocates nothing. The rows of different row blocks are disjoint, so a
+fill may be threaded over row blocks.
 
 # Example
 ```jldoctest
@@ -598,7 +606,8 @@ through the views and stay zero. [`reduce_qr!`](@ref) reads these tables and nev
 change of the damping re-factors from them.
 
 **Fields.** `data` and `structure` may be read for operations on the whole system: zero it, copy it, compare
-structures by identity. Where a block lives inside `data` is not public.
+structures by identity. Where a block lives inside `data` is not public: address it by row block with
+[`blockentry`](@ref), [`block`](@ref) and [`residual_block`](@ref).
 
 `copy(J)` returns a `SchurBlockJacobian` with its own copy of the tables and the same structure, and
 `copyto!(dest, src)` copies the tables of one into another of the same structure.
@@ -670,15 +679,45 @@ J.structure.schur.neblocks`): all of its data rows, or rows `row:row+nrows-1`. S
 eliminated_block
 
 """
-    residual_block(J::SchurBlockJacobian, t)
-    residual_block(J::SchurBlockJacobian, t, row, nrows)
+    residual_block(J::SchurBlockJacobian, k[, nrows])
 
-Mutable view of the residual column of table `t` (an eliminated block's table or a free group's): all of
-its data rows, or rows `row:row+nrows-1`. A `SizedVector` for a static `nrows`, otherwise a plain view.
-The residual is `r` of `min ‖J x - r‖²`: callers that hold `f(x) ≈ f(x0) + J dx` store `r = -f(x0)`, or
-store `f(x0)` and negate the step, as with the Schur systems.
+Mutable view of row block `k`'s rows of the residual column, for a [`SchurBlockJacobian`](@ref) whose
+structure was built from a description. `nrows`, if given, must be the row block's number of rows (checked
+under `@boundscheck`); a static `nrows` gives a `SizedVector`, otherwise a plain view. It allocates nothing.
+The residual is `r` of `min ‖J x - r‖²`: callers that hold `f(x) ≈ f(x0) + J dx` store `r = -f(x0)`, or store
+`f(x0)` and negate the step, as with the Schur systems.
 """
 residual_block
+
+"""
+    blockentry(structure::SchurJacobianStructure, k, j) -> Int
+
+A handle for layout column block `j` in row block `k` of a structure built from a description, for
+[`block`](@ref)`(J, k, entry, nrows, ncols)`. For setup: keep one per (row block, column block) to be written.
+What the integer encodes is internal. Throws `ArgumentError` if row block `k` does not touch column block `j`,
+`BoundsError` for an unknown row block.
+
+# Example
+```jldoctest
+julia> using BlockLinearSystems, Static, StaticArrays
+
+julia> jst = SchurJacobianStructure([3, 6], [[1, 2], [2]], [2, 6]; eliminated=[true, false]);   # a point, a camera
+
+julia> J = SchurBlockJacobian{Float64, Matrix{Float64}}(jst);
+
+julia> p = invperm(blockorder(jst));   # the layout number of each of the caller's blocks
+
+julia> block(J, 1, blockentry(jst, 1, p[1]), static(2), static(3)) .= @SMatrix [1.0 2.0 3.0; 4.0 5.0 6.0];
+
+julia> residual_block(J, 1) .= [0.5, -0.5];
+
+julia> Matrix(block(J, 1, blockentry(jst, 1, p[1]), 2, 3))
+2×3 Matrix{Float64}:
+ 1.0  2.0  3.0
+ 4.0  5.0  6.0
+```
+"""
+blockentry
 
 """
     coupling_entry(structure::SchurJacobianStructure, t, r) -> Int

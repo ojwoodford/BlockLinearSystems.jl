@@ -1,6 +1,7 @@
 using Random, LinearAlgebra, SparseArrays, StaticArrays, Static, HybridArrays, Test, BlockLinearSystems
+using BlockLinearSystems: table_residual_block   # internal: the table-indexed residual view
 include("fixtures/load.jl")
-using Main.QRFixtures
+using Main.QRFixtures, Main.DescriptionFixtures
 
 # Storage and assembly API of the tall (Jacobian) form. Its test problems are in fixtures/QRFixtures.jl.
 
@@ -113,8 +114,8 @@ end
 flat_index(jst, t, row, col) = jst.table_offsets[t] + (col - 1) * jst.table_nrows[t] + row - 1
 
 fill_static!(J, u, e, t) = (coupling_block(J, u, 2, static(2), static(6)) .= 1; eliminated_block(J, e, 1, static(2), static(3)) .= 2;
-                            residual_block(J, t, 3, static(2)) .= 3; nothing)
-fill_dynamic!(J, u, e, t) = (coupling_block(J, u, 2, 2, 6) .= 1; eliminated_block(J, e, 1, 2) .= 2; residual_block(J, t, 3, 2) .= 3; nothing)
+                            table_residual_block(J, t, 3, static(2)) .= 3; nothing)
+fill_dynamic!(J, u, e, t) = (coupling_block(J, u, 2, 2, 6) .= 1; eliminated_block(J, e, 1, 2) .= 2; table_residual_block(J, t, 3, 2) .= 3; nothing)
 allocs_fill_static(J, u, e, t) = @allocated fill_static!(J, u, e, t)
 allocs_fill_dynamic(J, u, e, t) = @allocated fill_dynamic!(J, u, e, t)
 
@@ -146,11 +147,11 @@ allocs_fill_dynamic(J, u, e, t) = @allocated fill_dynamic!(J, u, e, t)
                 @test all(J.data[flat_index(jst, t, i, c0 + j - 1)] == -(i + (j - 1) * m) for i in 1:m, j in 1:de)
                 @test eliminated_block(J, t, m - 1, 2) == E[m-1:m, :]
             end
-            rv = residual_block(J, t)
+            rv = table_residual_block(J, t)
             @test size(rv) == (m,)
             rv .= 0.5 .* (1:m)
             @test all(J.data[flat_index(jst, t, i, jst.table_ncols[t])] == 0.5i for i in 1:m)
-            @test residual_block(J, t, m - 1, 2) == rv[m-1:m]
+            @test table_residual_block(J, t, m - 1, 2) == rv[m-1:m]
         end
         # Nothing was written to the damping rows
         for e in 1:st.neblocks
@@ -166,8 +167,8 @@ allocs_fill_dynamic(J, u, e, t) = @allocated fill_dynamic!(J, u, e, t)
         @test_throws BoundsError eliminated_block(J, st.neblocks + 1)          # free tables have no eliminated block
         @test_throws BoundsError eliminated_block(J, 1, m1 - 1, static(3))
         @test_throws DimensionMismatch eliminated_block(J, 1, 1, 2, static(2))
-        @test_throws BoundsError residual_block(J, jst.ntables + 1)
-        @test_throws BoundsError residual_block(J, 1, m1, 2)
+        @test_throws BoundsError table_residual_block(J, jst.ntables + 1)
+        @test_throws BoundsError table_residual_block(J, 1, m1, 2)
         # Static sizes give statically sized views, also via Val; run-time sizes are type stable too
         @test coupling_block(J, u, 1, static(2), static(6)) isa SizedMatrix{2, 6, T}
         @test coupling_block(J, u, 1, Val(2), Val(6)) isa SizedMatrix{2, 6, T}
@@ -175,7 +176,7 @@ allocs_fill_dynamic(J, u, e, t) = @allocated fill_dynamic!(J, u, e, t)
         @test coupling_block(J, u, 1, static(2), 6) isa HybridArray
         @test coupling_block(J, u, 1, 2, static(6)) isa HybridArray
         @test eliminated_block(J, 1, 1, static(2), static(3)) isa SizedMatrix{2, 3, T}
-        @test residual_block(J, 1, 1, static(2)) isa SizedVector{2, T}
+        @test table_residual_block(J, 1, 1, static(2)) isa SizedVector{2, T}
         coupling_block(J, u, 1, static(2), static(6)) .= SMatrix{2, 6, T}(1:12)
         @test coupling_block(J, u)[1:2, :] == reshape(T.(1:12), 2, 6)
         @inferred coupling_block(J, u, 1, static(2), static(6))
@@ -183,11 +184,86 @@ allocs_fill_dynamic(J, u, e, t) = @allocated fill_dynamic!(J, u, e, t)
         @inferred coupling_block(J, u)
         @inferred eliminated_block(J, 1, 1, static(2), static(3))
         @inferred eliminated_block(J, 1)
-        @inferred residual_block(J, 1, 1, static(2))
-        @inferred residual_block(J, 1)
+        @inferred table_residual_block(J, 1, 1, static(2))
+        @inferred table_residual_block(J, 1)
         e, t = 1, 1
         fill_static!(J, u, e, t); fill_dynamic!(J, u, e, t)
         @test allocs_fill_static(J, u, e, t) == 0
         @test allocs_fill_dynamic(J, u, e, t) == 0
+    end
+end
+
+# Addressing a SchurBlockJacobian by row block (EL3): blockentry, block(J, k, entry, nrows, ncols), residual_block(J, k)
+
+# Two views are the same memory: what is written through one is read through the other, element by element
+function same_memory(v, ref)
+    size(v) == size(ref) || return false
+    saved = copy(ref)
+    marks = reshape((1:length(v)) .+ 0.5, size(v))
+    v .= marks
+    same = ref == marks
+    ref .= saved
+    return same
+end
+alloc_block(J, k, ent, m, d) = (block(J, k, ent, m, d); @allocated block(J, k, ent, m, d))
+alloc_residual(J, k, m) = (residual_block(J, k, m); @allocated residual_block(J, k, m))
+
+@testset "Addressing by row block (EL3)" begin
+    rng = Xoshiro(23)
+    for p in filter(p -> !isempty(p.e_dims), sparse_reduced_problems(Float64))
+        @testset "$(p.name)" begin
+            d = description(p, rng; empty=true)
+            jst = SchurJacobianStructure(d.blocksizes, d.rowblocks, d.rowblocksizes; eliminated=d.eliminated)
+            J = SchurBlockJacobian{Float64, Matrix{Float64}}(jst)
+            pos = invperm(blockorder(jst)); bs = blocksizes(jst); nr = nretained(jst)
+            for k in eachindex(d.rowblocks)
+                m = d.rowblocksizes[k]; t = jst.row_table[k]; row = jst.row_first[k]
+                for b in d.rowblocks[k]
+                    j = pos[b]
+                    ent = blockentry(jst, k, j)
+                    ref = j <= nr ? coupling_block(J, coupling_entry(jst, t, j), row, m) : eliminated_block(J, t, row, m)
+                    @test same_memory(block(J, k, ent, m, bs[j]), ref)
+                    @test alloc_block(J, k, ent, m, bs[j]) == 0
+                    # Static sizes on the first problem only: each size compiles its own view type
+                    if p.name == "bundle adjustment"
+                        for (mm, dd) in ((static(m), static(bs[j])), (static(m), bs[j]), (m, static(bs[j])))
+                            @test same_memory(block(J, k, ent, mm, dd), ref)
+                        end
+                        @test block(J, k, ent, static(m), static(bs[j])) isa SizedMatrix
+                        @test alloc_block(J, k, ent, static(m), static(bs[j])) == 0
+                    end
+                end
+                ref = BlockLinearSystems.table_residual_block(J, t, row, m)
+                @test same_memory(residual_block(J, k), ref)
+                @test alloc_residual(J, k, m) == 0
+                if p.name == "bundle adjustment"
+                    @test residual_block(J, k, static(m)) isa SizedVector && same_memory(residual_block(J, k, static(m)), ref)
+                    @test alloc_residual(J, k, static(m)) == 0
+                end
+            end
+        end
+    end
+
+    @testset "Errors" begin
+        # Column blocks 1 (retained, 6) and 3 (retained, 3), 2 (eliminated, 3); row blocks [1, 2], [3, 2], [1]
+        jst = SchurJacobianStructure([6, 3, 3], [[1, 2], [3, 2], [1]], [2, 4, 3]; eliminated=[false, true, false])
+        J = SchurBlockJacobian{Float64, Matrix{Float64}}(jst)
+        pos = invperm(blockorder(jst))
+        @test_throws ArgumentError("Row block 1 does not touch column block $(pos[3])") blockentry(jst, 1, pos[3])
+        @test_throws BoundsError blockentry(jst, 4, 1)
+        e1 = blockentry(jst, 1, pos[1]); e2 = blockentry(jst, 2, pos[3]); f = blockentry(jst, 3, pos[1])
+        @test_throws DimensionMismatch("Row block 1 has 2 rows, but 3 were requested") block(J, 1, e1, 3, 6)
+        @test_throws DimensionMismatch("The block of row block 1 has 6 columns, but 3 were requested") block(J, 1, e1, 2, 3)
+        # A handle of another row block's table
+        @test_throws ArgumentError("$f is not a block entry of row block 1; use blockentry") block(J, 1, f, 2, 6)
+        @test_throws ArgumentError block(J, 3, blockentry(jst, 1, pos[2]), 3, 3)
+        @test_throws BoundsError block(J, 0, e1, 2, 6)
+        @test_throws DimensionMismatch residual_block(J, 2, 2)
+        @test_throws BoundsError residual_block(J, 4)
+        # Rows of different row blocks of one table are disjoint
+        @test e2 != e1
+        E = BlockLinearSystems.eliminated_block(J, 1)   # all six rows of the eliminated block's table
+        @test same_memory(block(J, 1, blockentry(jst, 1, pos[2]), 2, 3), view(E, 1:2, :))
+        @test same_memory(block(J, 2, blockentry(jst, 2, pos[2]), 4, 3), view(E, 3:6, :))
     end
 end

@@ -1,4 +1,5 @@
 using Test, StaticArrays, Static, BlockLinearSystems
+using BlockLinearSystems: table_residual_block   # internal: the table-indexed residual view
 include("fixtures/load.jl")
 using Main.QRFixtures
 
@@ -16,7 +17,7 @@ using Main.QRFixtures
                 coupling_block(J, u, row, static(2), static(6)) .= SMatrix{2, 6}(ntuple(i -> sin(i + 7row + 13u), 12))
             end
             t <= jst.schur.neblocks && (eliminated_block(J, t, row, static(2), static(3)) .= SMatrix{2, 3}(ntuple(i -> cos(i + row + t), 6)))
-            residual_block(J, t, row, static(2)) .= SVector(row + t, row - t)
+            table_residual_block(J, t, row, static(2)) .= SVector(row + t, row - t)
         end
     end
     serial = copy_structure(J)

@@ -90,7 +90,7 @@ for t in 1:jst.ntables
         rows[:, nr .+ st.boffsets_e[t] .+ (0:e_dims[t]-1)] .= E
     end
     rv = randn(rng, m)
-    residual_block(J, t) .= rv
+    BlockLinearSystems.table_residual_block(J, t) .= rv
     global Jd = [Jd; rows]
     global rd = [rd; rv]
 end

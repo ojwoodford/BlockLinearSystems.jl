@@ -1,4 +1,5 @@
 using Random, LinearAlgebra, SparseArrays, StaticArrays, Static, Test, BlockLinearSystems
+using BlockLinearSystems: table_residual_block   # internal: the table-indexed residual view
 using Polyester   # BlockLinearSystems' kernels thread only with Polyester loaded
 include("fixtures/load.jl")
 using Main.SchurFixtures, Main.QRFixtures, Main.AllocFixtures
@@ -105,7 +106,7 @@ function illconditioned_problem(::Type{T}=Float64; delta=1e-8, seed=4) where T
     row = 0
     for t in 1:jst.ntables
         m = t <= jst.schur.neblocks ? jst.e_rows[t] : jst.free_rows[t - jst.schur.neblocks]
-        residual_block(J, t) .= rf[row+1:row+m]
+        table_residual_block(J, t) .= rf[row+1:row+m]
         row += m
     end
     p.rf .= rf

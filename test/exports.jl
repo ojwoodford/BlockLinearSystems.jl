@@ -6,7 +6,7 @@ const PUBLIC_API = sort([
     :BlockRLE, :DenseBlockLinearSystem, :QRReductionWorkspace, :SchurBlockJacobian,
     :SchurBlockHessian, :SchurJacobianStructure, :SchurReductionWorkspace, :SchurStructure,
     :SparseBlockLinearSystem, :TransposedPattern,
-    :backsubstitute!, :block, :blockorder, :block_sparse_nnz, :blockrange, :blocksizes, :build_r_to_s_map,
+    :addblock!, :backsubstitute!, :block, :blockentry, :blockorder, :block_sparse_nnz, :blockrange, :blocksizes, :build_r_to_s_map,
     :build_reduced_jacobian_pattern, :build_schur_pattern, :copy_structure, :coupling_block, :coupling_entry, :computestartindices, :eliminated_block, :find_diag_inds,
     :factor_diagonal_blocks!, :free_block_pairs, :jtj_diag!, :jtj_quadform, :jtr!, :nblocks, :nretained, :reduce_qr!, :reduce_schur_dense!,
     :reduce_schur_sparse!, :reduced_diagonal_blocks!, :reduced_jacobian!, :reduced_mul!,

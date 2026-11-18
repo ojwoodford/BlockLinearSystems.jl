@@ -11,7 +11,7 @@ export symmetrifyfull, symmetrifyfull!, sparse_with_map, block_sparse_nnz, compu
 export SchurStructure, SchurBlockHessian, SchurReductionWorkspace, trial_workspace, blockorder, nretained
 export sort_schur_blocks, build_schur_pattern, build_r_to_s_map, retained_block_pairs
 export reset_schur_dense!, reset_schur_sparse!, reduce_schur_dense!, reduce_schur_sparse!, backsubstitute!
-export retained_block, eliminated_block, coupling_block, coupling_entry
+export retained_block, eliminated_block, coupling_block, coupling_entry, addblock!, blockentry
 export SchurJacobianStructure, SchurBlockJacobian, schur_jacobian_bytes, residual_block
 export QRReductionWorkspace, reduce_qr!
 export reduced_nrows, free_block_pairs, reduced_mul!, reduced_tmul!, reduced_residual!, reduced_jacobian!,

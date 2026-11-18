@@ -18,7 +18,7 @@ of the same kind and size as `like.R` (`DimensionMismatch` otherwise).
 
 **Fields.** `R`, `E_data`, `C_data`, `structure` and `pattern` may be read for operations on a whole part:
 zero it, add another system's part of the same structure to it, copy it, compare structures by identity.
-Where a block lives inside them is not public.
+Where a block lives inside them is not public: fill the system with [`addblock!`](@ref).
 
 `pattern` optionally carries the result of [`build_schur_pattern`](@ref) for this structure, so that
 code which receives only the matrix can build a reduced system without recomputing it. `nothing` (the

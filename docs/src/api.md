@@ -69,6 +69,7 @@ reduce_schur_dense!
 reduce_schur_sparse!
 backsubstitute!
 LinearAlgebra.dot(::AbstractVector{<:Real}, ::SchurBlockHessian{<:Real}, ::AbstractVector{<:Real})
+addblock!
 retained_block
 ```
 
@@ -101,6 +102,7 @@ schur_jacobian_bytes
 coupling_block
 eliminated_block
 residual_block
+blockentry
 coupling_entry
 QRReductionWorkspace
 reduce_qr!

@@ -144,7 +144,7 @@ using BlockLinearSystems, LinearAlgebra
 
 jst = SchurJacobianStructure([6, 6, 6], [3, 3, 3, 1], [[1, 2], [1, 2, 3], [2, 3], [3]], [8, 10, 6, 3])  # ..., rows per eliminated block
 J = SchurBlockJacobian{Float64, Matrix{Float64}}(jst)   # reduced-system storage: Matrix{T} or SparseMatrixCSC{T, Int}
-# Fill each table through coupling_block(J, u[, row, nrows]), eliminated_block(J, e[, ...]) and residual_block(J, t[, ...]):
+# Fill each table through coupling_block(J, u[, row, nrows]), eliminated_block(J, e[, ...]) and the residual column:
 for u in eachindex(jst.entry_retained)
     coupling_block(J, u) .= randn.()
 end
@@ -152,7 +152,7 @@ for e in 1:jst.schur.neblocks
     eliminated_block(J, e) .= randn.()
 end
 for t in 1:jst.ntables
-    residual_block(J, t) .= randn.()
+    BlockLinearSystems.table_residual_block(J, t) .= randn.()
 end
 nr, ne = jst.schur.nr, sum(jst.schur.e_dims)
 scaling_e, lambda = ones(ne), 0.1

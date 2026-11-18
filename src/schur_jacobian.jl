@@ -279,19 +279,87 @@ end
     return eliminated_block(J, e, 1, data_rows(jst, Int(e)))
 end
 
-# residual_block(J::SchurBlockJacobian, t[, row, nrows])
+# table_residual_block(J::SchurBlockJacobian, t[, row, nrows])
 # View of the rows `row:row+nrows-1` of the residual column of table `t`.
-@inline function residual_block(J::SchurBlockJacobian, t::Integer, row::Integer, nrows)
+@inline function table_residual_block(J::SchurBlockJacobian, t::Integer, row::Integer, nrows)
     jst = J.structure
     @boundscheck (1 <= t <= jst.ntables) || throw(BoundsError(J, t))
     nr_ = as_size(nrows)
     @boundscheck check_rows(J, Int(t), row, dynamic(nr_))
     return sized_vview(table_matrix(J.data, jst, Int(t)), Int(row), nr_, @inbounds(jst.table_ncols[t]))
 end
-@inline function residual_block(J::SchurBlockJacobian, t::Integer)
+@inline function table_residual_block(J::SchurBlockJacobian, t::Integer)
     jst = J.structure
     @boundscheck (1 <= t <= jst.ntables) || throw(BoundsError(J, t))
-    return residual_block(J, t, 1, data_rows(jst, Int(t)))
+    return table_residual_block(J, t, 1, data_rows(jst, Int(t)))
+end
+# The table-indexed form under its old name, until its last caller outside this package (NLLSModel) has moved to the
+# row-block form; EL4 removes it
+@inline residual_block(J::SchurBlockJacobian, t::Integer, row::Integer, nrows) = table_residual_block(J, t, row, nrows)
+
+# ------------------------------------------------------------------------------------------------------------------
+# Addressing by row block (a structure built from a description)
+# ------------------------------------------------------------------------------------------------------------------
+
+# blockentry(jst, k, j) -> Int: the handle of layout column block j in row block k. A retained block's handle is its
+# entry in the row block's table (> 0), an eliminated block's is minus the block (< 0).
+function blockentry(jst::SchurJacobianStructure, k::Integer, j::Integer)
+    1 <= k <= length(jst.row_table) || throw(BoundsError(jst, k))
+    lo, hi = jst.row_ptr[k], jst.row_ptr[k + 1] - 1
+    idx = searchsortedfirst(view(jst.row_blocks, lo:hi), j) + lo - 1
+    (idx <= hi && jst.row_blocks[idx] == j) || throw(ArgumentError("Row block $k does not touch column block $j"))
+    nr = jst.schur.nrblocks
+    return j <= nr ? coupling_entry(jst, jst.row_table[k], j) : -(Int(j) - nr)
+end
+
+@inline function check_rowblock(J::SchurBlockJacobian, k::Int, nrows::Int)
+    jst = J.structure
+    1 <= k <= length(jst.row_table) || throw_rowblock_bounds(J, k)
+    m = @inbounds jst.row_nrows[k]
+    nrows == m || throw_rowblock_rows(k, m, nrows)
+    return nothing
+end
+
+@inline function check_rowblock_entry(J::SchurBlockJacobian, k::Int, entry::Int, nrows::Int, ncols::Int)
+    check_rowblock(J, k, nrows)
+    jst = J.structure
+    t = @inbounds jst.row_table[k]
+    if entry > 0
+        (entry <= length(jst.entry_table) && @inbounds(jst.entry_table[entry]) == t) || throw_not_an_entry(k, entry)
+        d = @inbounds Int(jst.schur.r_dims[jst.entry_retained[entry]])
+    else
+        (entry < 0 && -entry == t) || throw_not_an_entry(k, entry)
+        d = @inbounds Int(jst.schur.e_dims[-entry])
+    end
+    ncols == d || throw_rowblock_cols(k, d, ncols)
+    return nothing
+end
+
+@noinline throw_rowblock_bounds(J, k) = throw(BoundsError(J, k))
+@noinline throw_rowblock_rows(k, m, n) = throw(DimensionMismatch("Row block $k has $m rows, but $n were requested"))
+@noinline throw_rowblock_cols(k, d, n) = throw(DimensionMismatch("The block of row block $k has $d columns, but $n were requested"))
+@noinline throw_not_an_entry(k, entry) = throw(ArgumentError("$entry is not a block entry of row block $k; use blockentry"))
+
+# block(J, k, entry, nrows, ncols): row block k's rows in the columns of `entry`
+@inline function block(J::SchurBlockJacobian, k::Integer, entry::Integer, nrows, ncols)
+    jst = J.structure
+    nr_, nc_ = as_size(nrows), as_size(ncols)
+    @boundscheck check_rowblock_entry(J, Int(k), Int(entry), dynamic(nr_), dynamic(nc_))
+    row = @inbounds jst.row_first[k]
+    return entry > 0 ? (@inbounds coupling_block(J, entry, row, nr_, nc_)) : (@inbounds eliminated_block(J, -entry, row, nr_, nc_))
+end
+
+# residual_block(J, k[, nrows]): row block k's rows of the residual column
+@inline function residual_block(J::SchurBlockJacobian, k::Integer, nrows)
+    jst = J.structure
+    nr_ = as_size(nrows)
+    @boundscheck check_rowblock(J, Int(k), dynamic(nr_))
+    return @inbounds table_residual_block(J, jst.row_table[k], jst.row_first[k], nr_)
+end
+@inline function residual_block(J::SchurBlockJacobian, k::Integer)
+    jst = J.structure
+    @boundscheck (1 <= k <= length(jst.row_table)) || throw_rowblock_bounds(J, k)
+    return residual_block(J, k, @inbounds jst.row_nrows[k])
 end
 
 # Element data of the workspace: a factored copy of the tables, and per-chunk scratch for blocks above D_STATIC

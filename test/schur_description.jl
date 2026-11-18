@@ -89,3 +89,138 @@ qr_fixture_problems() = filter(p -> !isempty(p.e_dims), sparse_reduced_problems(
         @test_throws UndefKeywordError SchurStructure(bs, good)
     end
 end
+
+# A system laid out, allocated and filled through the front door (EL1-EL3), reduced and solved through DampedLinearSolve,
+# against today's route: the positional structure, storage built by hand, filled through the views by offset
+module FrontDoorSolveTests
+
+using Test, BlockLinearSystems, Random, SparseArrays, LinearAlgebra
+using DampedLinearSolve: makehessiansystem, makejacobiansystem, dampen!, solve!, getb, getx, Success
+using BlockLinearSystems: retained_block, eliminated_block, coupling_block, coupling_entry, table_residual_block
+include(joinpath(@__DIR__, "fixtures", "load.jl"))
+using Main.SchurFixtures, Main.QRFixtures, Main.DescriptionFixtures
+
+# Layout ranges of a structure's blocks in the full vector
+layout_range(st, b) = (o = computestartindices(blocksizes(st)); o[b]:o[b] + blocksizes(st)[b] - 1)
+
+# The fixture's matrix in the layout order of `st`, for a description whose caller numbering is q (fixture block -> caller)
+function layout_matrix(p::SchurTestProblem, q, st)
+    nr = length(p.r_dims)
+    fst = schur_structure(p)
+    frange(i) = i <= nr ? (fst.boffsets_r[i]:fst.boffsets_r[i] + p.r_dims[i] - 1) :
+                          (fst.nr + fst.boffsets_e[i - nr]:fst.nr + fst.boffsets_e[i - nr] + p.e_dims[i - nr] - 1)
+    pos = invperm(blockorder(st))
+    n = size(p.H, 1)
+    perm = zeros(Int, n)   # layout index of each fixture index
+    for i in 1:length(q)
+        perm[frange(i)] .= layout_range(st, pos[q[i]])
+    end
+    A = zeros(n, n); A[perm, perm] .= p.H
+    b = zeros(n); b[perm] .= p.b
+    return A, b
+end
+
+function pairs_of(st, extra)
+    nr = st.nrblocks
+    pairs = [(b, b) for b in 1:nblocks(st)]
+    for e in 1:st.neblocks, c in st.eliminated_ptr[e]:st.eliminated_ptr[e+1]-1
+        push!(pairs, (st.entry_retained[c], nr + e))
+    end
+    pat = build_schur_pattern(st; extra_blocks=extra).block_pattern
+    for j in 1:nr, k in nzrange(pat, j)
+        rowvals(pat)[k] < j && push!(pairs, (rowvals(pat)[k], j))
+    end
+    return pairs
+end
+
+function solve_hessian(H, b, lambda, scaling)
+    ls = makehessiansystem(H, :auto)
+    getb(ls) .= b
+    dampen!(ls, lambda, scaling)
+    @test solve!(ls, :auto) == Success
+    return copy(getx(ls))
+end
+
+@testset "A whole solve through the front door equals today's route (EL3)" begin
+    rng = Xoshiro(31)
+    @testset "Hessian path: $name, $kind" for (name, p) in (("coupled groups", coupled_groups_problem()), ("mixed dimensions", mixed_dims_problem())), kind in (:dense, :sparse)
+        # A description in a shuffled caller numbering q: one row block per eliminated block with all its couplings,
+        # and one per retained pair
+        q, bs, el = caller_numbering(rng, p.r_dims, p.e_dims)
+        nr = length(p.r_dims)
+        rbs = [[q[nr + e]; q[c]] for (e, c) in enumerate(p.couplings)]
+        append!(rbs, [[q[r1], q[r2]] for (r1, r2) in p.rr_pairs])
+        d = Description(bs, el, rbs, ones(Int, length(rbs)))
+        st = SchurStructure(d.blocksizes, d.rowblocks; eliminated=d.eliminated)
+        st_old, old = old_hessian(d)
+        A, b = layout_matrix(p, q, st)
+        RT = kind === :dense ? Matrix{Float64} : SparseBlockLinearSystem{Float64}
+        # The front door
+        H = SchurBlockHessian{Float64, RT}(st)
+        for (i, j) in pairs_of(st, ())
+            addblock!(H, i, j, A, layout_range(st, i), layout_range(st, j))
+        end
+        # Today's route: storage by hand (as NLLSModel builds it), filled through the views
+        E = zeros(sum(abs2, st_old.e_dims)); C = zeros(sum(Int(st_old.e_dims[e]) * Int(st_old.r_dims[st_old.entry_retained[c]]) for e in 1:st_old.neblocks for c in st_old.eliminated_ptr[e]:st_old.eliminated_ptr[e+1]-1))
+        H0 = if kind === :dense
+            SchurBlockHessian(st_old, zeros(st_old.nr, st_old.nr), E, C)
+        else
+            pat = build_schur_pattern(st_old; extra_blocks=old.extra)
+            SchurBlockHessian(st_old, SparseBlockLinearSystem{Float64}(TransposedPattern(pat.block_pattern), st_old.r_dims, st_old.r_dims), E, C; pattern=pat)
+        end
+        for (i, j) in pairs_of(st_old, old.extra)
+            a, c = minmax(i, j)
+            ra, rc = layout_range(st, a), layout_range(st, c)
+            if a == c
+                a <= st_old.nrblocks ? (retained_block(H0, a, a) .+= A[ra, ra]) : (eliminated_block(H0, a - st_old.nrblocks) .+= A[ra, ra])
+            elseif c <= st_old.nrblocks
+                kind === :dense ? (retained_block(H0, a, c) .+= A[ra, rc]) : (retained_block(H0, c, a) .+= A[rc, ra])
+            else
+                coupling_block(H0, coupling_entry(st_old, c - st_old.nrblocks, a)) .+= A[ra, rc]'
+            end
+        end
+        @test (kind === :dense ? H.R == H0.R : H.R.data == H0.R.data) && H.E_data == H0.E_data && H.C_data == H0.C_data
+        scaling = abs.(diag(A))
+        for lambda in (0.0, 0.3)
+            x, x0 = solve_hessian(H, b, lambda, scaling), solve_hessian(H0, b, lambda, scaling)
+            @test x == x0
+            @test norm(A * x + lambda * scaling .* x - b) <= 1e-8 * norm(b)
+        end
+    end
+
+    @testset "Jacobian path: $(p.name), $RT" for p in filter(p -> !isempty(p.e_dims), qr_problems(Float64)), RT in (Matrix{Float64}, SparseMatrixCSC{Float64, Int})
+        d = description(p, rng; empty=true)
+        jst = SchurJacobianStructure(d.blocksizes, d.rowblocks, d.rowblocksizes; eliminated=d.eliminated)
+        jst_old, old, table, first = old_jacobian(d)
+        J, J0 = SchurBlockJacobian{Float64, RT}(jst), SchurBlockJacobian{Float64, RT}(jst_old)
+        pos = invperm(blockorder(jst)); bs = blocksizes(jst); nr = nretained(jst)
+        for (k, rb) in enumerate(d.rowblocks)
+            m = d.rowblocksizes[k]
+            for c in rb
+                j = pos[c]
+                X = randn(rng, m, bs[j])
+                block(J, k, blockentry(jst, k, j), m, bs[j]) .= X
+                (j <= nr ? coupling_block(J0, coupling_entry(jst_old, table[k], j), first[k], m) : eliminated_block(J0, table[k], first[k], m)) .= X
+            end
+            r = randn(rng, m)
+            residual_block(J, k) .= r
+            table_residual_block(J0, table[k], first[k], m) .= r
+        end
+        @test J.data == J0.data
+        n = sum(bs)
+        g = BlockLinearSystems.jtr!(zeros(n), J)
+        scaling = 0.5 .+ rand(rng, n)
+        for lambda in (0.0, 0.3)
+            xs = map((J, J0)) do JJ
+                ls = makejacobiansystem(JJ, n, :auto)
+                getb(ls) .= g
+                dampen!(ls, lambda, scaling)
+                @test solve!(ls, :auto) == Success
+                copy(getx(ls))
+            end
+            @test xs[1] == xs[2]
+        end
+    end
+end
+
+end # module FrontDoorSolveTests

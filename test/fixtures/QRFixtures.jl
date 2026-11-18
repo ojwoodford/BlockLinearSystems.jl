@@ -48,7 +48,7 @@ function QRTestProblem(name, rng, ::Type{T}, r_dims, e_dims, couplings, e_rows;
             Jf[rows, nr .+ (st.boffsets_e[t]:st.boffsets_e[t]+e_dims[t]-1)] .= E
         end
         rv = randn(rng, T, mt)
-        residual_block(J, t) .= rv
+        BlockLinearSystems.table_residual_block(J, t) .= rv
         rf[rows] .= rv
         row += mt
     end
@@ -99,7 +99,7 @@ function qr_dense(J::SchurBlockJacobian{T}) where T
     end
     return reduce(vcat, blocks)
 end
-qr_dense_r(J::SchurBlockJacobian) = reduce(vcat, [collect(residual_block(J, t)) for t in 1:J.structure.ntables])
+qr_dense_r(J::SchurBlockJacobian) = reduce(vcat, [collect(BlockLinearSystems.table_residual_block(J, t)) for t in 1:J.structure.ntables])
 
 relerr(a, b) = norm(Float64.(a) - Float64.(b)) / norm(Float64.(b))
 
