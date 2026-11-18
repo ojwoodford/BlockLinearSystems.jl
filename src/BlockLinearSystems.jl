@@ -8,7 +8,7 @@ using SIRBSDispatch: sirbsdispatch
 export SparseBlockLinearSystem, DenseBlockLinearSystem, TransposedPattern, BlockRLE
 export block, blocksizes, nblocks, blockrange, zero!, copy_structure, uniformscaling!
 export symmetrifyfull, symmetrifyfull!, sparse_with_map, block_sparse_nnz, computestartindices, find_diag_inds
-export SchurStructure, SchurBlockHessian, SchurReductionWorkspace, trial_workspace
+export SchurStructure, SchurBlockHessian, SchurReductionWorkspace, trial_workspace, blockorder, nretained
 export sort_schur_blocks, build_schur_pattern, build_r_to_s_map, retained_block_pairs
 export reset_schur_dense!, reset_schur_sparse!, reduce_schur_dense!, reduce_schur_sparse!, backsubstitute!
 export retained_block, eliminated_block, coupling_block, coupling_entry
@@ -30,6 +30,7 @@ include("schur_hessian.jl")
 include("schur_reduction.jl")
 include("linalg.jl")
 include("schur_jacobian.jl")
+include("schur_description.jl")
 include("qr_reduction.jl")
 include("qr_reduced.jl")
 include("diagonal_blocks.jl")

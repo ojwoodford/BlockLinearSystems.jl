@@ -58,6 +58,8 @@ to many small eliminated variable blocks. See the [Schur reduction tutorial](tut
 
 ```@docs
 SchurStructure
+blockorder
+nretained
 SchurBlockHessian
 SchurReductionWorkspace
 trial_workspace

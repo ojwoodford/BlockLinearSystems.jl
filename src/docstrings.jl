@@ -272,8 +272,11 @@ makesparseindices
 """
     blocksizes(sys, dim) -> BlockRLE
     blocksizes(sys) -> Tuple{BlockRLE, BlockRLE}
+    blocksizes(structure::Union{SchurStructure, SchurJacobianStructure}) -> Vector{Int}
 
 Returns the block dimensions along dimension `dim` (1 for rows, 2 for columns), or a tuple of `(rowblocksizes, columnblocksizes)`.
+For a [`SchurStructure`](@ref) or [`SchurJacobianStructure`](@ref), the sizes of its column blocks in layout order
+(retained, then eliminated), as a new `Vector{Int}`: for setup.
 
 # Example
 ```jldoctest
@@ -292,8 +295,11 @@ blocksizes
 """
     nblocks(sys, dim) -> Int
     nblocks(sys) -> Tuple{Int, Int}
+    nblocks(structure::Union{SchurStructure, SchurJacobianStructure}) -> Int
 
-Returns the number of blocks along dimension `dim`, or `(n_rowblocks, n_colblocks)`.
+Returns the number of blocks along dimension `dim`, or `(n_rowblocks, n_colblocks)`. For a
+[`SchurStructure`](@ref) or [`SchurJacobianStructure`](@ref), the number of its column blocks, retained and
+eliminated.
 
 # Example
 ```jldoctest

@@ -1,7 +1,47 @@
 """
-    SchurStructure
+    SchurStructure(blocksizes, rowblocks; eliminated, nchunks=1)
 
-Metadata describing bipartite variable partitioning, block offsets, and coupling sparsity.
+The layout of an elimination on the Hessian path: which column blocks are retained and which eliminated, their
+order, their couplings and the storage they need. The caller *describes* the problem in its own block numbering;
+this package lays it out. [`SchurBlockHessian`](@ref) then allocates the storage, which the caller fills by
+block. [`SchurJacobianStructure`](@ref) is the Jacobian-path counterpart, described the same way.
+
+- `blocksizes::AbstractVector{<:Integer}`: the size of each column block (a group of unknowns), 1 to 65535.
+- `rowblocks::AbstractVector{<:AbstractVector{<:Integer}}`: for each row block (a group of rows filled together,
+  for example one cost of a least-squares problem), the column blocks it touches; it contributes to every pair of
+  them. It is only iterated, never mutated or kept, so it may be a lazy vector (views into one flat vector, say).
+- `eliminated::AbstractVector{Bool}` (required): which column blocks to eliminate.
+- `nchunks`: how many chunks of eliminated blocks the threaded reduction divides each group into.
+
+`blocksizes`, `rowblocks` and `eliminated` are in the caller's numbering. Every other function takes and returns
+the *layout numbering*: retained blocks first, then eliminated ones. [`blockorder`](@ref)`(st)[p]` is the caller's
+number of layout block `p`; layout blocks `1:nretained(st)` ([`nretained`](@ref)) are retained;
+[`blocksizes`](@ref)`(st)` and [`nblocks`](@ref)`(st)` give the sizes in layout order and their number. Retained
+blocks are ordered by size, descending; eliminated blocks by size, descending, then by the first retained block
+they share a row block with. Each eliminated block is coupled to the retained blocks it shares a row block with;
+retained blocks that share a row block get a block of the reduced system, whether or not they also share an
+eliminated block.
+
+The gradient, the right-hand side and the solution of an eliminated system are in layout order: block `p` starts
+at `computestartindices(blocksizes(st))[p]`.
+
+Rejected before any work, naming blocks in the caller's numbering: lengths that disagree (`DimensionMismatch`); a
+block size outside 1 to 65535; a column block out of range, or listed twice in one row block; a row block that
+touches more than one eliminated block; no retained block, or no eliminated block (`ArgumentError`). An eliminated
+block in no row block is allowed on this path.
+
+The fields of a `SchurStructure` are internal.
+
+# Example
+```jldoctest
+julia> using BlockLinearSystems
+
+julia> # Blocks 1 and 3 (size 3) are eliminated, 2 and 4 (size 6) retained; one row block per observation
+       st = SchurStructure([3, 6, 3, 6], [[1, 2], [2, 3], [3, 4], [2, 4]]; eliminated=[true, false, true, false]);
+
+julia> blockorder(st), nretained(st), blocksizes(st)
+([2, 4, 1, 3], 2, [6, 6, 3, 3])
+```
 """
 struct SchurStructure
     nr::Int                          # Total scalar dimension of retained variables
@@ -17,13 +57,17 @@ struct SchurStructure
     coffsets::Vector{Int}           # Start offset in flat C_data for each coupling block
     max_coupled_dim::Int                 # Maximum over eliminated blocks e of sum_{r coupled to e} d_r
     chunks::Vector{Vector{UnitRange{Int}}} # chunks[run][chunk_id], for each run of e_dims
+    order::Vector{Int}                     # Caller's number of each layout block (1:n when built positionally)
+    retained_pairs::Vector{Tuple{Int, Int}} # Pairs (i < j) of retained blocks that share a row block, sorted
 end
 
 function SchurStructure(
     r_dims::AbstractVector{<:Integer},
     e_dims::AbstractVector{<:Integer},
     couplings::AbstractVector{<:AbstractVector{<:Integer}};
-    nchunks::Int=1
+    nchunks::Int=1,
+    order::Union{Nothing, AbstractVector{<:Integer}}=nothing,
+    retained_pairs=Tuple{Int, Int}[]
 )
     nrblocks = length(r_dims)
     neblocks = length(e_dims)
@@ -97,11 +141,19 @@ function SchurStructure(
         chunks[g_idx] = group_chunks
     end
 
+    ntotal = nrblocks + neblocks
+    order_ = order === nothing ? collect(1:ntotal) : collect(Int, order)
+    length(order_) == ntotal || throw(DimensionMismatch("order has length $(length(order_)), but there are $ntotal blocks"))
+    pairs = sort!(Tuple{Int, Int}[(Int(i), Int(j)) for (i, j) in retained_pairs])
+    for (i, j) in pairs
+        1 <= i < j <= nrblocks || throw(ArgumentError("Retained pair ($i, $j) must satisfy 1 <= i < j <= $nrblocks"))
+    end
+
     return SchurStructure(
         nr, nrblocks, neblocks,
         r_rle, e_rle, boffsets_r, boffsets_e,
         eoffsets, eliminated_ptr, entry_retained, coffsets,
-        max_coupled_dim, chunks
+        max_coupled_dim, chunks, order_, unique!(pairs)
     )
 end
 
@@ -202,6 +254,10 @@ function build_schur_pattern(structure::SchurStructure, ::Type{T}=Float64; extra
                 push!(J_cov, r2)
             end
         end
+    end
+    for (i, j) in structure.retained_pairs
+        push!(I_cov, i)
+        push!(J_cov, j)
     end
     for (i, j) in extra_blocks
         (1 <= i <= nrblocks && 1 <= j <= nrblocks) || throw(ArgumentError("Extra block pair ($i, $j) is outside the $nrblocks retained blocks"))

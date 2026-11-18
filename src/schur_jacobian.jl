@@ -35,13 +35,21 @@ struct SchurJacobianStructure
     reduced_offsets::Vector{Int}     # First row of each table's rows in the reduced problem, length ntables + 1
     doffsets::Vector{Int}            # Start of each retained block's diagonal block in a flat d_r x d_r array, length nrblocks + 1
     col_chunks::Vector{UnitRange{Int}} # Disjoint ranges of retained blocks, for threading by column ownership
+    # The row blocks of a description (empty when built positionally): each one's table, first row in it and number
+    # of rows, and the layout blocks it touches (CSR, ascending)
+    row_table::Vector{Int}
+    row_first::Vector{Int}
+    row_nrows::Vector{Int}
+    row_ptr::Vector{Int}
+    row_blocks::Vector{Int}
 end
 
 function SchurJacobianStructure(
     structure::SchurStructure, e_rows::AbstractVector{<:Integer};
     free_rows::AbstractVector{<:Integer}=Int[],
     free_retained::AbstractVector{<:AbstractVector{<:Integer}}=Vector{Int}[],
-    nchunks::Int=maximum(length, structure.chunks; init=1)
+    nchunks::Int=maximum(length, structure.chunks; init=1),
+    rowblocks=(table=Int[], first=Int[], nrows=Int[], ptr=[1], blocks=Int[])
 )
     st = structure
     ne = st.neblocks
@@ -130,7 +138,8 @@ function SchurJacobianStructure(
         st, collect(Int, e_rows), collect(Int, free_rows), ntables,
         table_nrows, table_ncols, table_top, table_offsets, table_ptr,
         entry_retained, entry_col, entry_table, retained_ptr, retained_entry,
-        reduced_offsets, doffsets, partition_columns(retained_ptr, nchunks)
+        reduced_offsets, doffsets, partition_columns(retained_ptr, nchunks),
+        rowblocks.table, rowblocks.first, rowblocks.nrows, rowblocks.ptr, rowblocks.blocks
     )
 end
 
