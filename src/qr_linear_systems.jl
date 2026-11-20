@@ -6,7 +6,7 @@
 # `check_jacobian_linsolver`):
 #
 #   RType               :auto            :qr              :cholesky / :ldl            :lsmr (with Krylov)
-#   Matrix{Float64}     dense QR of J̃    dense QR of J̃    S = J̃ᵀJ̃, dense factor      LSMR on J̃
+#   Matrix{Float64}     S = J̃ᵀJ̃, Chol.   dense QR of J̃    S = J̃ᵀJ̃, dense factor      LSMR on J̃
 #   SparseMatrixCSC     SPQR of J̃        SPQR of J̃        S = J̃ᵀJ̃, sparse factor     LSMR on J̃
 #
 # The sparse J̃ has a fixed pattern (BlockLinearSystems' `build_reduced_jacobian_pattern`), built once and filled
@@ -100,14 +100,17 @@ end
 const ReducedSym = Union{StaticSymbol{:auto}, StaticSymbol{:qr}, StaticSymbol{:cholesky}, StaticSymbol{:ldl}, StaticSymbol{:lsmr}}
 
 reduced_system(J::SchurBlockJacobian, ws, linsolver) = reduced_system(J, ws, static(linsolver_symbol(linsolver)))
-function reduced_system(J::SchurBlockJacobian{Float64, Matrix{Float64}}, ws, ::Union{StaticSymbol{:auto}, StaticSymbol{:qr}})
+function reduced_system(J::SchurBlockJacobian{Float64, Matrix{Float64}}, ws, ::StaticSymbol{:qr})
     jst = J.structure
     nr, mt = jst.schur.nr, reduced_nrows(jst)
     sys = DampedLinearSolve.makejacobiansystem(mt + nr, nr, static(:qr))
     dampen!(sys, 0.0)
     return DenseQRReduced(sys)
 end
-function reduced_system(J::SchurBlockJacobian{Float64, Matrix{Float64}}, ws, ::Union{StaticSymbol{:cholesky}, StaticSymbol{:ldl}})
+# `:auto` is the normal equations of the dense J̃ (Cholesky, falling back to Bunch-Kaufman): measured 2026-11-20 against QR of
+# J̃ on bundle adjustment (4 to 320 cameras, start points moved) and a bipartite sweep (reduced dimension 150 to 3000), where
+# it counted wherever QR did and was 5.8x and 19.8x faster in the mean (recommender-thresholds.md, A6)
+function reduced_system(J::SchurBlockJacobian{Float64, Matrix{Float64}}, ws, ::Union{StaticSymbol{:auto}, StaticSymbol{:cholesky}, StaticSymbol{:ldl}})
     sys = makehessiansystem(J.structure.schur.nr, static(:ldl))   # holds the Bunch-Kaufman workspace
     return DenseNormalReduced(sys)
 end
@@ -230,7 +233,7 @@ DampedLinearSolve.solve!(ls::QRSchurLinearSystem, ::StaticSymbol{S}) where S = r
 reduced_solve!(ls, red, s::StaticSymbol{S}, lambda, s_r) where S = reducedmismatch(ls, S)
 
 # Dense: [J̃ r̃; √(λ s_r) 0] written into the undamped Jacobian system, whose QR of the whole matrix then gives R x_r = q
-function reduced_solve!(ls::QRSchurLinearSystem, red::DenseQRReduced, ::Union{StaticSymbol{:auto}, StaticSymbol{:qr}}, lambda, s_r)
+function reduced_solve!(ls::QRSchurLinearSystem, red::DenseQRReduced, ::StaticSymbol{:qr}, lambda, s_r)
     nr = length(ls.xr)
     sys = red.sys
     A = getA(sys)
@@ -264,8 +267,8 @@ function reduced_solve!(ls::QRSchurLinearSystem, red::SparseQRReduced, ::Union{S
 end
 
 # S = J̃ᵀJ̃ + λ diag(s_r) (upper triangle), then the dense Schur system's rule: Cholesky, falling back to
-# Bunch-Kaufman, or Bunch-Kaufman for :ldl
-function reduced_solve!(ls::QRSchurLinearSystem, red::DenseNormalReduced, s::Union{StaticSymbol{:cholesky}, StaticSymbol{:ldl}}, lambda, s_r)
+# Bunch-Kaufman, for :auto and :cholesky, or Bunch-Kaufman for :ldl
+function reduced_solve!(ls::QRSchurLinearSystem, red::DenseNormalReduced, s::Union{StaticSymbol{:auto}, StaticSymbol{:cholesky}, StaticSymbol{:ldl}}, lambda, s_r)
     sys = red.sys
     S, g = getA(sys), getb(sys)
     reduced_normal_dense!(S, g, ls.ws)
