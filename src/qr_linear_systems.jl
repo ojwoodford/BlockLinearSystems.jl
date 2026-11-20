@@ -42,7 +42,6 @@ DampedLinearSolve.structurekey(J::SchurBlockJacobian) = (typeof(J), J.structure)
 
 jacobian_ncols(J::SchurBlockJacobian) = J.structure.schur.nr + sum(Int, J.structure.schur.e_dims; init=0)
 jacobian_nrows(J::SchurBlockJacobian) = sum(t -> data_rows(J.structure, t), 1:J.structure.ntables; init=0)
-data_rows(jst, t) = jst.table_nrows[t] - (t <= jst.schur.neblocks ? jst.table_top[t] : 0)
 
 Base.size(A::SchurJacobianHessian) = (n = length(A.colnorm2); (n, n))
 Base.size(A::SchurJacobianHessian, d::Integer) = size(A)[d]

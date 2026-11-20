@@ -615,4 +615,47 @@ as3_solve_allocs(ls, s) = @allocated DampedLinearSolve.solve!(ls, s)
     end
 end
 
+@testset "The Schur systems' diagonal, contract checks and error paths" begin
+    for (name, p) in (("standard", standard_problem()), ("retained-retained couplings", coupled_groups_problem()),
+                      ("mixed eliminated sizes", mixed_dims_problem()))
+        n = length(p.b)
+        for kind in (:dense, :sparse)
+            @testset "$name, $kind" begin
+                ls = make_schur_ls(kind, p)
+                @test DampedLinearSolve.getdiag!(zeros(n), ls) ≈ diag(p.H)
+                # A trial copy, through this package's copy_structure
+                lt = BlockLinearSystems.copy_structure(ls)
+                @test typeof(lt) === typeof(ls) && lt.x === ls.x && lt.b !== ls.b && lt.b == ls.b
+                # Not a reduced solver
+                DampedLinearSolve.dampen!(ls, 0.1)
+                @test_throws ArgumentError DampedLinearSolve.solve!(ls, static(:qr))
+            end
+        end
+    end
+    # A retained block whose diagonal block sparse R does not store has a zero diagonal
+    p = standard_problem()
+    H = sparse_schur_hessian(p)
+    BlockLinearSystems.zero!(H)
+    ls = SOOExt.SparseSchurLinearSystem(H, copy(p.b), zeros(length(p.b)))
+    H.R.indices[1, 1] = 0
+    @test all(iszero, DampedLinearSolve.getdiag!(fill(1.0, length(p.b)), ls))
+
+    # The prototype's checks and workspace key
+    for H in (dense_schur_hessian(p), sparse_schur_hessian(p))
+        n = length(p.b)
+        @test isnothing(DampedLinearSolve.checkhessian(H, n))
+        @test_throws DimensionMismatch DampedLinearSolve.checkhessian(H, n + 1)
+        @test_throws ArgumentError DampedLinearSolve.checkhessian(to_float32(H), n)
+        @test DampedLinearSolve.structurekey(H) == (typeof(H), H.structure)
+    end
+
+    # A singular S fails the sparse system's LDLᵀ, alone (:ldl) and as the fallback of a failed Cholesky (:auto)
+    for s in (:auto, :ldl)
+        ls = make_schur_ls(:sparse, p)
+        ls.H.R.data .= 0; ls.H.C_data .= 0
+        DampedLinearSolve.dampen!(ls, 0.0)
+        @test DampedLinearSolve.solve!(ls, static(s)) == DampedLinearSolve.NotPositiveDefinite
+    end
+end
+
 end # module DampedLinearSolveSchurTests

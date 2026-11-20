@@ -245,6 +245,53 @@ lp1_bytes(ls, lambda, scaling) = (lp1_solve!(ls, lambda, scaling); @allocated lp
         end
         @test lp1_bytes(lsl, 1e-4, d) == 0
     end
+
+    # The prototype's side of the contract, which the optimizer calls before it builds a system
+    @testset "The prototype's checks, sizes and workspace key: $RT" for RT in keys(TP3_SOLVERS)
+        p = TP3Problem(tp3_structure())
+        J = SchurBlockJacobian{Float64, RT}(p.jst)
+        @test isnothing(SOO.checkjacobian(J))
+        @test_throws ArgumentError SOO.checkjacobian(SchurBlockJacobian{Float32, RT === Matrix{Float64} ? Matrix{Float32} : SparseMatrixCSC{Float32, Int}}(p.jst))
+        @test SOO.jacobian_ncols(J) == p.lay.n
+        @test SOO.jacobian_nrows(J) == p.lay.m
+        @test SOO.structurekey(J) == SOO.structurekey(SchurBlockJacobian{Float64, RT}(p.jst))
+        @test SOO.structurekey(J) != SOO.structurekey(SchurBlockJacobian{Float64, RT}(tp3_structure()))   # another structure
+        for s in TP3_SOLVERS[RT]
+            @test isnothing(SOO.check_jacobian_linsolver(J, s))
+        end
+        @test_throws ArgumentError SOO.check_jacobian_linsolver(J, :foo)
+        @test_throws ArgumentError QREXT.QRSchurLinearSystem(J, static(:foo))
+    end
+
+    @testset "isfinitesystem, and a solve asked for another linsolver throws: $RT" for RT in keys(TP3_SOLVERS)
+        p = TP3Problem(tp3_structure())
+        x = 0.1 .* randn(Xoshiro(2), p.lay.n)
+        ls = tp3_system(p, RT, :qr, x)
+        @test SOO.isfinitesystem(ls)
+        dampen!(ls, 0.3)
+        @test_throws ArgumentError solve!(ls, static(:foo))        # not a reduced solver
+        @test_throws ArgumentError solve!(ls, static(:cholesky))   # a reduced solver, but not the one it was built for
+        getA(ls).J.data[1] = NaN
+        @test !SOO.isfinitesystem(ls)
+    end
+
+    @testset "The LSMR reduced system: damping without a scaling, and its operators' sizes" begin
+        p = TP3Problem(tp3_structure())
+        x = 0.1 .* randn(Xoshiro(2), p.lay.n)
+        ls = tp3_system(p, Matrix{Float64}, :lsmr, x)
+        red = ls.reduced
+        @test dampen!(red, 0.5, ones(length(red.x))) === red && red.scaling !== nothing
+        @test dampen!(red, 0.25) === red
+        @test red.lambda == 0.25 && red.scaling === nothing
+        KE = Base.get_extension(BlockLinearSystems, :KrylovExt)
+        A = KE.AugmentedOperator(red)
+        nr, mt = length(red.x), red.mt
+        @test size(A) == (mt + nr, nr) && size(A, 1) == mt + nr && size(A, 2) == nr
+        @test size(A') == (nr, mt + nr) && size(A', 1) == nr && size(A', 2) == mt + nr
+        N = KE.BlockJacobi(red)
+        @test size(N) == (nr, nr) && size(N, 1) == nr && size(N, 2) == nr
+        @test eltype(N) === Float64
+    end
 end
 
 end # module DampedLinearSolveQREliminationTests

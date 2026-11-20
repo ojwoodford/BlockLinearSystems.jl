@@ -73,10 +73,6 @@ function dense_jacobian(J::SchurBlockJacobian)
     end
     return Jd
 end
-function dense_residual(J::SchurBlockJacobian)
-    jst = J.structure
-    return reduce(vcat, [table_view(J, t)[1:data_rows(jst, t), end] for t in 1:jst.ntables])
-end
 
 DampedLinearSolve.conformance_matrix(A::SchurJacobianHessian) = conformance_gram(dense_jacobian(A.J))
 # JᵀJ, summed in row order (as the column norms are summed), so its diagonal equals them exactly

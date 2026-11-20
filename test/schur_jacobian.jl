@@ -66,6 +66,11 @@ end
     C.data .= 1
     @test J.data == before
     @test zero!(C) === C && all(iszero, C.data)
+    # copy has its own tables with the same values; copyto! copies values between Jacobians of one structure
+    D = copy(J)
+    @test typeof(D) === typeof(J) && D.structure === J.structure && D.data !== J.data && D.data == J.data
+    @test copyto!(C, J) === C && C.data == J.data
+    @test_throws ArgumentError copyto!(C, qr_problems(Float64)[3].J)   # an equal but distinct structure
     # The damping rows are zero in the raw storage
     for e in 1:jst.schur.neblocks
         M, de = jst.table_nrows[e], jst.table_top[e]
