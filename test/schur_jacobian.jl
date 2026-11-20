@@ -1,102 +1,12 @@
 using Random, LinearAlgebra, SparseArrays, StaticArrays, Static, HybridArrays, Test, BlockLinearSystems
+using BlockLinearSystems: QRReductionWorkspace, reduce_qr!, free_block_pairs, reduced_normal_dense!, reduced_normal_sparse!, schur_jacobian_bytes   # internal: the kernels, withdrawn from the exports by EL6
+using BlockLinearSystems: coupling_entry, eliminated_block, coupling_block   # internal: withdrawn from the exports by EL4
+using BlockLinearSystems: table_residual_block   # internal: the table-indexed residual view
+include("fixtures/load.jl")
+using Main.QRFixtures, Main.DescriptionFixtures
 
-# Storage and assembly API of the tall (Jacobian) form, and the random test problems the QR elimination tests use.
+# Storage and assembly API of the Jacobian form. Its test problems are in fixtures/QRFixtures.jl.
 
-"""
-    QRTestProblem
-
-Random tables for a tall problem `min ‖J x - r‖²`, filled through the assembly API, together with the same `J`
-and `r` assembled densely (rows in table order: eliminated tables, then free groups; columns `[x_r; x_e]`).
-"""
-struct QRTestProblem{T}
-    name::String
-    r_dims::Vector{Int}
-    e_dims::Vector{Int}
-    couplings::Vector{Vector{Int}}
-    J::SchurBlockJacobian{T, Matrix{T}}
-    Jf::Matrix{T}
-    rf::Vector{T}
-end
-
-function QRTestProblem(name, rng, ::Type{T}, r_dims, e_dims, couplings, e_rows;
-                       free_rows=Int[], free_retained=Vector{Int}[], nchunks=1) where T
-    jst = SchurJacobianStructure(r_dims, e_dims, couplings, e_rows; free_rows, free_retained, nchunks)
-    J = SchurBlockJacobian{T, Matrix{T}}(jst)
-    st = jst.schur
-    nr, ne = sum(r_dims), sum(e_dims)
-    m = sum(e_rows) + sum(free_rows; init=0)
-    Jf = zeros(T, m, nr + ne)
-    rf = zeros(T, m)
-    row = 0
-    for t in 1:jst.ntables
-        mt = t <= st.neblocks ? e_rows[t] : free_rows[t - st.neblocks]
-        rows = row+1:row+mt
-        for u in jst.table_ptr[t]:jst.table_ptr[t+1]-1
-            r = jst.entry_retained[u]
-            B = randn(rng, T, mt, r_dims[r])
-            coupling_block(J, u) .= B
-            Jf[rows, st.boffsets_r[r]:st.boffsets_r[r]+r_dims[r]-1] .= B
-        end
-        if t <= st.neblocks
-            E = randn(rng, T, mt, e_dims[t])
-            eliminated_block(J, t) .= E
-            Jf[rows, nr .+ (st.boffsets_e[t]:st.boffsets_e[t]+e_dims[t]-1)] .= E
-        end
-        rv = randn(rng, T, mt)
-        residual_block(J, t) .= rv
-        rf[rows] .= rv
-        row += mt
-    end
-    return QRTestProblem{T}(name, collect(r_dims), collect(e_dims), [collect(c) for c in couplings], J, Jf, rf)
-end
-
-function qr_problems(::Type{T}; nchunks=1, seed=1) where T
-    rng = Random.Xoshiro(seed)
-    probs = QRTestProblem{T}[]
-    # Bundle-adjustment-like: many small eliminated blocks, each coupled to a few retained blocks, 2 rows per coupling
-    ba_c = [sort(randperm(rng, 8)[1:rand(rng, 2:4)]) for _ in 1:60]
-    push!(probs, QRTestProblem("bundle adjustment", rng, T, fill(6, 8), fill(3, 60), ba_c, 2 .* length.(ba_c); nchunks))
-    # Mixed eliminated dimensions, one above D_STATIC and two of dimension 1
-    mixed_e = [12, 9, 8, 5, 3, 2, 1, 1]
-    mixed_c = [[1, 3], [2, 4], [1, 2, 4], [3], [1, 4], [2, 3], [1], [4]]
-    push!(probs, QRTestProblem("mixed dimensions", rng, T, [6, 3, 9, 6], mixed_e, mixed_c, mixed_e .+ 4 .+ rand(rng, 0:6, 8); nchunks))
-    # Free groups: rows that involve no eliminated block, one of them the only rows of retained block 5
-    push!(probs, QRTestProblem("free groups", rng, T, [6, 6, 6, 6, 3], [3, 3, 3, 2, 2, 1], [[1, 2], [2, 3], [3, 4], [1, 4], [2], [1, 3]],
-                               [8, 8, 7, 6, 5, 4]; free_rows=[7, 3, 6], free_retained=[[2, 1], [3], [5, 4, 2]], nchunks))
-    # An eliminated block coupled to every retained block
-    push!(probs, QRTestProblem("coupled to all", rng, T, [6, 6, 3, 6], [3, 3, 3, 3], [[1, 2, 3, 4], [1, 2], [3, 4], [2, 4]],
-                               [24, 8, 8, 8]; nchunks))
-    # A single eliminated block
-    push!(probs, QRTestProblem("single eliminated block", rng, T, [6, 3], [4], [[1, 2]], [20]; nchunks))
-    return probs
-end
-
-# Damping diagonal: Marquardt-like (diag(J'J)) but deliberately non-uniform
-qr_scaling(p::QRTestProblem{T}, rng) where T = vec(sum(abs2, p.Jf; dims=1)) .* T.(0.5 .+ rand(rng, size(p.Jf, 2)))
-
-# Dense J and r from the tables (rows in table order), for problems whose tables were modified after construction
-function qr_dense(J::SchurBlockJacobian{T}) where T
-    jst = J.structure
-    st = jst.schur
-    nr, ne = st.nr, sum(Int, st.e_dims)
-    blocks = Matrix{T}[]
-    for t in 1:jst.ntables
-        m = t <= st.neblocks ? jst.e_rows[t] : jst.free_rows[t - st.neblocks]
-        A = zeros(T, m, nr + ne)
-        for u in jst.table_ptr[t]:jst.table_ptr[t+1]-1
-            r = jst.entry_retained[u]
-            A[:, st.boffsets_r[r] .+ (0:Int(st.r_dims[r])-1)] .= coupling_block(J, u)
-        end
-        if t <= st.neblocks
-            A[:, nr .+ st.boffsets_e[t] .+ (0:Int(st.e_dims[t])-1)] .= eliminated_block(J, t)
-        end
-        push!(blocks, A)
-    end
-    return reduce(vcat, blocks)
-end
-qr_dense_r(J::SchurBlockJacobian) = reduce(vcat, [collect(residual_block(J, t)) for t in 1:J.structure.ntables])
-
-relerr(a, b) = norm(Float64.(a) - Float64.(b)) / norm(Float64.(b))
 
 @testset "SchurJacobianStructure: layout and validation (E1)" begin
     st = SchurStructure([6, 3, 6], [3, 3, 2], [[3, 1], [2], Int[]])
@@ -156,6 +66,11 @@ end
     C.data .= 1
     @test J.data == before
     @test zero!(C) === C && all(iszero, C.data)
+    # copy has its own tables with the same values; copyto! copies values between Jacobians of one structure
+    D = copy(J)
+    @test typeof(D) === typeof(J) && D.structure === J.structure && D.data !== J.data && D.data == J.data
+    @test copyto!(C, J) === C && C.data == J.data
+    @test_throws ArgumentError copyto!(C, qr_problems(Float64)[3].J)   # an equal but distinct structure
     # The damping rows are zero in the raw storage
     for e in 1:jst.schur.neblocks
         M, de = jst.table_nrows[e], jst.table_top[e]
@@ -206,8 +121,8 @@ end
 flat_index(jst, t, row, col) = jst.table_offsets[t] + (col - 1) * jst.table_nrows[t] + row - 1
 
 fill_static!(J, u, e, t) = (coupling_block(J, u, 2, static(2), static(6)) .= 1; eliminated_block(J, e, 1, static(2), static(3)) .= 2;
-                            residual_block(J, t, 3, static(2)) .= 3; nothing)
-fill_dynamic!(J, u, e, t) = (coupling_block(J, u, 2, 2, 6) .= 1; eliminated_block(J, e, 1, 2) .= 2; residual_block(J, t, 3, 2) .= 3; nothing)
+                            table_residual_block(J, t, 3, static(2)) .= 3; nothing)
+fill_dynamic!(J, u, e, t) = (coupling_block(J, u, 2, 2, 6) .= 1; eliminated_block(J, e, 1, 2) .= 2; table_residual_block(J, t, 3, 2) .= 3; nothing)
 allocs_fill_static(J, u, e, t) = @allocated fill_static!(J, u, e, t)
 allocs_fill_dynamic(J, u, e, t) = @allocated fill_dynamic!(J, u, e, t)
 
@@ -239,11 +154,11 @@ allocs_fill_dynamic(J, u, e, t) = @allocated fill_dynamic!(J, u, e, t)
                 @test all(J.data[flat_index(jst, t, i, c0 + j - 1)] == -(i + (j - 1) * m) for i in 1:m, j in 1:de)
                 @test eliminated_block(J, t, m - 1, 2) == E[m-1:m, :]
             end
-            rv = residual_block(J, t)
+            rv = table_residual_block(J, t)
             @test size(rv) == (m,)
             rv .= 0.5 .* (1:m)
             @test all(J.data[flat_index(jst, t, i, jst.table_ncols[t])] == 0.5i for i in 1:m)
-            @test residual_block(J, t, m - 1, 2) == rv[m-1:m]
+            @test table_residual_block(J, t, m - 1, 2) == rv[m-1:m]
         end
         # Nothing was written to the damping rows
         for e in 1:st.neblocks
@@ -259,8 +174,8 @@ allocs_fill_dynamic(J, u, e, t) = @allocated fill_dynamic!(J, u, e, t)
         @test_throws BoundsError eliminated_block(J, st.neblocks + 1)          # free tables have no eliminated block
         @test_throws BoundsError eliminated_block(J, 1, m1 - 1, static(3))
         @test_throws DimensionMismatch eliminated_block(J, 1, 1, 2, static(2))
-        @test_throws BoundsError residual_block(J, jst.ntables + 1)
-        @test_throws BoundsError residual_block(J, 1, m1, 2)
+        @test_throws BoundsError table_residual_block(J, jst.ntables + 1)
+        @test_throws BoundsError table_residual_block(J, 1, m1, 2)
         # Static sizes give statically sized views, also via Val; run-time sizes are type stable too
         @test coupling_block(J, u, 1, static(2), static(6)) isa SizedMatrix{2, 6, T}
         @test coupling_block(J, u, 1, Val(2), Val(6)) isa SizedMatrix{2, 6, T}
@@ -268,7 +183,7 @@ allocs_fill_dynamic(J, u, e, t) = @allocated fill_dynamic!(J, u, e, t)
         @test coupling_block(J, u, 1, static(2), 6) isa HybridArray
         @test coupling_block(J, u, 1, 2, static(6)) isa HybridArray
         @test eliminated_block(J, 1, 1, static(2), static(3)) isa SizedMatrix{2, 3, T}
-        @test residual_block(J, 1, 1, static(2)) isa SizedVector{2, T}
+        @test table_residual_block(J, 1, 1, static(2)) isa SizedVector{2, T}
         coupling_block(J, u, 1, static(2), static(6)) .= SMatrix{2, 6, T}(1:12)
         @test coupling_block(J, u)[1:2, :] == reshape(T.(1:12), 2, 6)
         @inferred coupling_block(J, u, 1, static(2), static(6))
@@ -276,8 +191,8 @@ allocs_fill_dynamic(J, u, e, t) = @allocated fill_dynamic!(J, u, e, t)
         @inferred coupling_block(J, u)
         @inferred eliminated_block(J, 1, 1, static(2), static(3))
         @inferred eliminated_block(J, 1)
-        @inferred residual_block(J, 1, 1, static(2))
-        @inferred residual_block(J, 1)
+        @inferred table_residual_block(J, 1, 1, static(2))
+        @inferred table_residual_block(J, 1)
         e, t = 1, 1
         fill_static!(J, u, e, t); fill_dynamic!(J, u, e, t)
         @test allocs_fill_static(J, u, e, t) == 0
@@ -285,29 +200,77 @@ allocs_fill_dynamic(J, u, e, t) = @allocated fill_dynamic!(J, u, e, t)
     end
 end
 
-@testset "Filling different tables from different threads is race-free (E1)" begin
-    p = qr_problems(Float64)[1]
-    J = p.J
-    jst = J.structure
-    function fill_table!(J, t)
-        jst = J.structure
-        m = t <= jst.schur.neblocks ? jst.e_rows[t] : jst.free_rows[t - jst.schur.neblocks]
-        for row in 1:2:m - 1                        # two rows per residual, as a caller would write them
-            for u in jst.table_ptr[t]:jst.table_ptr[t+1]-1
-                coupling_block(J, u, row, static(2), static(6)) .= SMatrix{2, 6}(ntuple(i -> sin(i + 7row + 13u), 12))
+# Addressing a SchurBlockJacobian by row block (EL3): blockentry, block(J, k, entry, nrows, ncols), residual_block(J, k)
+
+# Two views are the same memory: what is written through one is read through the other, element by element
+function same_memory(v, ref)
+    size(v) == size(ref) || return false
+    saved = copy(ref)
+    marks = reshape((1:length(v)) .+ 0.5, size(v))
+    v .= marks
+    same = ref == marks
+    ref .= saved
+    return same
+end
+alloc_block(J, k, ent, m, d) = (block(J, k, ent, m, d); @allocated block(J, k, ent, m, d))
+alloc_residual(J, k, m) = (residual_block(J, k, m); @allocated residual_block(J, k, m))
+
+@testset "Addressing by row block (EL3)" begin
+    rng = Xoshiro(23)
+    for p in filter(p -> !isempty(p.e_dims), sparse_reduced_problems(Float64))
+        @testset "$(p.name)" begin
+            d = description(p, rng; empty=true)
+            jst = SchurJacobianStructure(d.blocksizes, d.rowblocks, d.rowblocksizes; eliminated=d.eliminated)
+            J = SchurBlockJacobian{Float64, Matrix{Float64}}(jst)
+            pos = invperm(blockorder(jst)); bs = blocksizes(jst); nr = nretained(jst)
+            for k in eachindex(d.rowblocks)
+                m = d.rowblocksizes[k]; t = jst.row_table[k]; row = jst.row_first[k]
+                for b in d.rowblocks[k]
+                    j = pos[b]
+                    ent = blockentry(jst, k, j)
+                    ref = j <= nr ? coupling_block(J, coupling_entry(jst, t, j), row, m) : eliminated_block(J, t, row, m)
+                    @test same_memory(block(J, k, ent, m, bs[j]), ref)
+                    @test alloc_block(J, k, ent, m, bs[j]) == 0
+                    # Static sizes on the first problem only: each size compiles its own view type
+                    if p.name == "bundle adjustment"
+                        for (mm, dd) in ((static(m), static(bs[j])), (static(m), bs[j]), (m, static(bs[j])))
+                            @test same_memory(block(J, k, ent, mm, dd), ref)
+                        end
+                        @test block(J, k, ent, static(m), static(bs[j])) isa SizedMatrix
+                        @test alloc_block(J, k, ent, static(m), static(bs[j])) == 0
+                    end
+                end
+                ref = BlockLinearSystems.table_residual_block(J, t, row, m)
+                @test same_memory(residual_block(J, k), ref)
+                @test alloc_residual(J, k, m) == 0
+                if p.name == "bundle adjustment"
+                    @test residual_block(J, k, static(m)) isa SizedVector && same_memory(residual_block(J, k, static(m)), ref)
+                    @test alloc_residual(J, k, static(m)) == 0
+                end
             end
-            t <= jst.schur.neblocks && (eliminated_block(J, t, row, static(2), static(3)) .= SMatrix{2, 3}(ntuple(i -> cos(i + row + t), 6)))
-            residual_block(J, t, row, static(2)) .= SVector(row + t, row - t)
         end
     end
-    serial = copy_structure(J)
-    for t in 1:jst.ntables
-        fill_table!(serial, t)
+
+    @testset "Errors" begin
+        # Column blocks 1 (retained, 6) and 3 (retained, 3), 2 (eliminated, 3); row blocks [1, 2], [3, 2], [1]
+        jst = SchurJacobianStructure([6, 3, 3], [[1, 2], [3, 2], [1]], [2, 4, 3]; eliminated=[false, true, false])
+        J = SchurBlockJacobian{Float64, Matrix{Float64}}(jst)
+        pos = invperm(blockorder(jst))
+        @test_throws ArgumentError("Row block 1 does not touch column block $(pos[3])") blockentry(jst, 1, pos[3])
+        @test_throws BoundsError blockentry(jst, 4, 1)
+        e1 = blockentry(jst, 1, pos[1]); e2 = blockentry(jst, 2, pos[3]); f = blockentry(jst, 3, pos[1])
+        @test_throws DimensionMismatch("Row block 1 has 2 rows, but 3 were requested") block(J, 1, e1, 3, 6)
+        @test_throws DimensionMismatch("The block of row block 1 has 6 columns, but 3 were requested") block(J, 1, e1, 2, 3)
+        # A handle of another row block's table
+        @test_throws ArgumentError("$f is not a block entry of row block 1; use blockentry") block(J, 1, f, 2, 6)
+        @test_throws ArgumentError block(J, 3, blockentry(jst, 1, pos[2]), 3, 3)
+        @test_throws BoundsError block(J, 0, e1, 2, 6)
+        @test_throws DimensionMismatch residual_block(J, 2, 2)
+        @test_throws BoundsError residual_block(J, 4)
+        # Rows of different row blocks of one table are disjoint
+        @test e2 != e1
+        E = BlockLinearSystems.eliminated_block(J, 1)   # all six rows of the eliminated block's table
+        @test same_memory(block(J, 1, blockentry(jst, 1, pos[2]), 2, 3), view(E, 1:2, :))
+        @test same_memory(block(J, 2, blockentry(jst, 2, pos[2]), 4, 3), view(E, 3:6, :))
     end
-    threaded = copy_structure(J)
-    Threads.@threads for t in 1:jst.ntables
-        fill_table!(threaded, t)
-    end
-    @test threaded.data == serial.data
-    @test count(!iszero, serial.data) > 0.8 * sum(jst.e_rows[e] * jst.table_ncols[e] for e in 1:jst.schur.neblocks)
 end

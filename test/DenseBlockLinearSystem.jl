@@ -1,3 +1,4 @@
+using Test, Random, LinearAlgebra, StaticArrays, Static, HybridArrays
 using BlockLinearSystems
 using BlockLinearSystems: BlockOffsets, blockdata, eachstoredblock, validblock   # internal names
 @testset "DenseBlockLinearSystem" begin
@@ -121,15 +122,6 @@ using BlockLinearSystems: BlockOffsets, blockdata, eachstoredblock, validblock  
     @test DenseBlockLinearSystem{Float64}(data53, bo, co) isa DenseBlockLinearSystem
     @test DenseBlockLinearSystem(data53, bo, co) isa DenseBlockLinearSystem
 
-    # Raw vector offset constructors
-    rbs_vec = [2, 3]
-    cbs_vec = [3]
-    bdm_raw_sq = DenseBlockLinearSystem{Float64, Matrix{Float64}}(data55, [1, 3, 6], [1, 3, 6], rbs_vec, rbs_vec)
-    @test size(bdm_raw_sq) == (5, 5)
-    bdm_raw_rect = DenseBlockLinearSystem{Float64, Matrix{Float64}}(data53, [1, 3, 6], [1, 4], rbs_vec, cbs_vec)
-    @test size(bdm_raw_rect) == (5, 3)
-    @test DenseBlockLinearSystem{Float64}(data55, [1, 3, 6], [1, 3, 6], rbs_vec, rbs_vec) isa DenseBlockLinearSystem
-
     # Keyword argument constructors
     @test size(DenseBlockLinearSystem{Float64}(; offsets=[1, 3, 6])) == (5, 5)
     @test size(DenseBlockLinearSystem{Float64}(; offsets=[1, 3, 6], coloffsets=[1, 4])) == (5, 3)
@@ -171,22 +163,7 @@ end
     @test occursin("strictly increasing", sprint(showerror, err))
 end
 
-@testset "Offsets are checked against the block sizes and never shared with the caller (AB8)" begin
-    rbs, cbs = BlockRLE([2, 3]), BlockRLE([3])
-    data = zeros(5, 3)
-    # The 5-argument constructors check the offsets against the sizes, with BlockRLE or vector sizes
-    for (ro, co) in (([1, 3, 7], [1, 4]), ([1, 4, 6], [1, 4]), ([1, 3], [1, 4]), ([1, 3, 6], [1, 3]), ([1, 3, 6], [1, 4, 5]))
-        @test_throws DimensionMismatch DenseBlockLinearSystem{Float64, Matrix{Float64}}(data, ro, co, rbs, cbs)
-        @test_throws DimensionMismatch DenseBlockLinearSystem{Float64, Matrix{Float64}}(data, ro, co, [2, 3], [3])
-        @test_throws DimensionMismatch DenseBlockLinearSystem{Float64}(data, ro, co, [2, 3], [3])
-    end
-    @test_throws DimensionMismatch DenseBlockLinearSystem{Float64, Matrix{Float64}}(zeros(5, 4), [1, 3, 6], [1, 4], rbs, cbs)
-    ro, co = [1, 3, 6], [1, 4]
-    d = DenseBlockLinearSystem{Float64, Matrix{Float64}}(data, ro, co, rbs, cbs)
-    ro[2] = 100; co[2] = 100   # mutating the caller's vectors does not change the system
-    @test d.rowblockoffsets == [1, 3, 6] && d.columnblockoffsets == [1, 4]
-    @test size(block(d, 2, 1)) == (3, 3)
-
+@testset "Offsets are never shared with the caller (AB8)" begin
     # The BlockOffsets and offsets-keyword constructors do not keep the caller's vector
     for make in ((r, c) -> DenseBlockLinearSystem{Float64}(BlockOffsets(r), BlockOffsets(c)),
                  (r, c) -> DenseBlockLinearSystem{Float64}(zeros(5, 3), BlockOffsets(r), BlockOffsets(c)),
@@ -204,4 +181,40 @@ end
     d = DenseBlockLinearSystem{Float64}(BlockOffsets(ro))
     ro[3] = 100
     @test d.rowblockoffsets == [1, 3, 6] && d.columnblockoffsets == [1, 3, 6]
+    # The 5-argument forms, which took the offsets beside the sizes, are gone (DL2)
+    for T in (DenseBlockLinearSystem{Float64, Matrix{Float64}}, DenseBlockLinearSystem{Float64})
+        @test_throws MethodError T(zeros(5, 3), [1, 3, 6], [1, 4], [2, 3], [3])
+    end
+end
+
+# Measured in a function, so that @allocated sees concrete types: build a system on `data` with `like`'s layout and
+# write one block, as a caller wrapping a matrix it was handed does
+build_and_write(data, like) = (d = DenseBlockLinearSystem(data, like); block(d, 2, 1)[1, 1] = 1.0; d.data)
+alloc_build_and_write(data, like) = (build_and_write(data, like); @allocated build_and_write(data, like))
+
+@testset "A system on new data with another system's layout (DL1)" begin
+    like = DenseBlockLinearSystem{Float64}([2, 3], [3])
+    data = zeros(5, 3)
+    d = DenseBlockLinearSystem(data, like)
+    @test d isa DenseBlockLinearSystem{Float64, Matrix{Float64}}
+    @test d.data === data
+    # The layout is shared with `like`, not rebuilt: it belongs to a system, which never mutates it
+    @test d.rowblockoffsets === like.rowblockoffsets && d.columnblockoffsets === like.columnblockoffsets
+    @test d.rowblocksizes === like.rowblocksizes && d.columnblocksizes === like.columnblocksizes
+    # It writes into `data`, not into `like.data`
+    block(d, 2, 1) .= 1.0
+    @test all(==(1.0), data[3:5, :]) && all(iszero, data[1:2, :]) && all(iszero, like.data)
+    # Another element type or storage: the layout does not depend on them
+    @test eltype(DenseBlockLinearSystem(zeros(Float32, 5, 3), like)) == Float32
+    v = view(zeros(6, 4), 1:5, 1:3)
+    @test DenseBlockLinearSystem(v, like).data === v
+    # `data` of another size throws
+    @test_throws DimensionMismatch DenseBlockLinearSystem(zeros(5, 4), like)
+    @test_throws DimensionMismatch DenseBlockLinearSystem(zeros(4, 3), like)
+    # A warm call allocates nothing
+    @test alloc_build_and_write(data, like) == 0
+    # copy_structure shares the layout too, as its docstring says
+    c = copy_structure(like)
+    @test c.rowblockoffsets === like.rowblockoffsets && c.columnblockoffsets === like.columnblockoffsets
+    @test c.data !== like.data && all(iszero, c.data)
 end

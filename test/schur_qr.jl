@@ -1,74 +1,14 @@
 using Random, LinearAlgebra, SparseArrays, StaticArrays, Static, Test, BlockLinearSystems
+using BlockLinearSystems: SchurReductionWorkspace, reset_schur_dense!, reduce_schur_dense!, backsubstitute!, QRReductionWorkspace, reduce_qr!, reduced_nrows, free_block_pairs, reduced_mul!, reduced_tmul!, reduced_residual!, reduced_jacobian!, build_reduced_jacobian_pattern, reduced_normal_dense!, reduced_normal_sparse!, reduced_diagonal_blocks!, jtr!, jtj_diag!, jtj_quadform   # internal: the kernels, withdrawn from the exports by EL6
+using BlockLinearSystems: coupling_entry, eliminated_block, coupling_block   # internal: withdrawn from the exports by EL4
+using BlockLinearSystems: table_residual_block   # internal: the table-indexed residual view
+using Polyester   # BlockLinearSystems' kernels thread only with Polyester loaded
+include("fixtures/load.jl")
+using Main.SchurFixtures, Main.QRFixtures, Main.AllocFixtures
 
-# QR elimination on the Jacobian path, tested against the Schur reduction (schur_problems.jl must be included
-# first: its SchurTestProblem and dense/sparse_schur_hessian build the Hessian side) and against dense least squares.
-# The test problems come from schur_jacobian.jl.
+# QR elimination on the Jacobian path, tested against the Schur reduction (fixtures/SchurFixtures.jl builds the
+# Hessian side) and against dense least squares. The test problems and comparison helpers are in fixtures/QRFixtures.jl.
 
-# The Hessian side: H = J'J and b = J'r as a SchurBlockHessian (dense or sparse R), in element type T
-function schur_hessian(p::QRTestProblem{T}, kind) where T
-    J64 = Float64.(p.Jf)
-    H = J64' * J64
-    b = J64' * Float64.(p.rf)
-    jst = p.J.structure
-    rr = [(r2, r1) for (r1, r2) in free_block_pairs(jst)]   # lower-triangle block coordinates
-    sp = SchurTestProblem(H, b, p.r_dims, p.e_dims, p.couplings, rr)
-    Hs = kind === :dense ? dense_schur_hessian(sp) : sparse_schur_hessian(sp)
-    R = Hs.R isa Matrix ? T.(Hs.R) :
-        SparseBlockLinearSystem{T}(T.(Hs.R.data), Hs.R.indices, Hs.R.indicestransposed, Hs.R.rowblocksizes, Hs.R.columnblocksizes, Hs.R.m, Hs.R.n)
-    return SchurBlockHessian(Hs.structure, R, T.(Hs.E_data), T.(Hs.C_data)), T.(b)
-end
-
-# Existing Schur reduction: (S, g_S, ws, ok, pattern) with S including the retained damping
-function schur_reduced(Hs::SchurBlockHessian{T}, b, sc, lambda) where T
-    st = Hs.structure
-    nr, n = st.nr, length(b)
-    ws = SchurReductionWorkspace{T}(st, 1)
-    g = zeros(T, nr)
-    lambda = T(lambda)
-    b_r, b_e, sc_r, sc_e = b[1:nr], b[nr+1:n], sc[1:nr], sc[nr+1:n]
-    if Hs.R isa Matrix
-        S = zeros(T, nr, nr)
-        reset_schur_dense!(S, Hs.R, sc_r, lambda, ws)
-        ok = reduce_schur_dense!(S, g, b_r, b_e, sc_e, lambda, st, Hs.E_data, Hs.C_data, ws)
-        return (S, g, ws, ok, nothing)
-    else
-        pattern = build_schur_pattern(st, T; extra_blocks=retained_block_pairs(Hs.R))
-        S = copy(pattern.S_sparse)
-        reset_schur_sparse!(S.nzval, Hs.R.data, build_r_to_s_map(Hs.R, pattern, st.boffsets_r), pattern.diag_inds, sc_r, lambda, ws)
-        ok = reduce_schur_sparse!(S, g, b_r, b_e, sc_e, lambda, st, Hs.E_data, Hs.C_data,
-                                  pattern.block_colptr, pattern.block_rowval, pattern.block_row_offsets, pattern.col_heights, ws)
-        return (S, g, ws, ok, pattern)
-    end
-end
-
-# The QR route to the full solution: eliminate, dense QR of [J̃; √(λ s_r)], back-substitute
-function qr_solve(p::QRTestProblem{T}, sc, lambda) where T
-    J = p.J
-    jst = J.structure
-    nr = jst.schur.nr
-    n = size(p.Jf, 2)
-    ws = QRReductionWorkspace(J)
-    reduce_qr!(ws, J, sc[nr+1:n], T(lambda)) || return (zeros(T, n), false, ws)
-    Jt = zeros(T, reduced_nrows(jst), nr)
-    rt = zeros(T, reduced_nrows(jst))
-    reduced_jacobian!(Jt, rt, ws)
-    A = [Jt; Diagonal(sqrt.(T(lambda) .* sc[1:nr]))]
-    x_r = qr(A) \ [rt; zeros(T, nr)]
-    x_e = zeros(T, n - nr)
-    backsubstitute!(x_e, x_r, ws)
-    return ([x_r; x_e], true, ws)
-end
-
-# Dense reference: min ‖J x - r‖² + λ Σ s_i x_i², by QR in Float64
-function dense_ls(p::QRTestProblem, sc, lambda)
-    J64 = Float64.(p.Jf)
-    n = size(J64, 2)
-    A = [J64; Diagonal(sqrt.(lambda .* Float64.(sc)))]
-    return qr(A) \ [Float64.(p.rf); zeros(n)]
-end
-
-qr_rtol(::Type{Float64}) = 1e-9
-qr_rtol(::Type{Float32}) = 2e-3
 
 @testset "QR elimination equals the Schur reduction of J'J (E4)" begin
     for T in (Float64, Float32)
@@ -168,7 +108,7 @@ function illconditioned_problem(::Type{T}=Float64; delta=1e-8, seed=4) where T
     row = 0
     for t in 1:jst.ntables
         m = t <= jst.schur.neblocks ? jst.e_rows[t] : jst.free_rows[t - jst.schur.neblocks]
-        residual_block(J, t) .= rf[row+1:row+m]
+        table_residual_block(J, t) .= rf[row+1:row+m]
         row += m
     end
     p.rf .= rf
@@ -278,22 +218,6 @@ end
     end
 end
 
-# The problems of R4: those of qr_problems (no free group, blocks above D_STATIC, free groups), the tutorial's
-# structure, an under-determined eliminated block with a free group, and no eliminated block at all (with a retained
-# block that no row touches, so a column of J̃ stores nothing)
-function sparse_reduced_problems(::Type{T}; nchunks=1) where T
-    rng = Random.Xoshiro(40)
-    probs = qr_problems(T; nchunks)
-    push!(probs, QRTestProblem("tutorial", rng, T, [6, 6, 6], [3, 3, 3, 3, 2, 1],
-                               [[1, 2], [1, 2, 3], [2, 3], [1, 3], [1, 2], [3]], [8, 10, 6, 6, 4, 3];
-                               free_rows=[12], free_retained=[[1, 3]], nchunks))
-    push!(probs, QRTestProblem("under-determined", rng, T, [6, 6], [12, 12, 12], [[1, 2], [1], [2]], [28, 15, 10];
-                               free_rows=[8], free_retained=[[1, 2]], nchunks))
-    push!(probs, QRTestProblem("no eliminated block", rng, T, [3, 2, 4], Int[], Vector{Int}[], Int[];
-                               free_rows=[5, 4], free_retained=[[1, 2], [2]], nchunks))
-    return probs
-end
-
 qr_sparse_jacobian_allocs(Jt, rt, ws) = @allocated reduced_jacobian!(Jt, rt, ws)
 
 @testset "Sparse reduced Jacobian: the dense one, entry for entry, filled in place (R4)" begin
@@ -320,19 +244,14 @@ qr_sparse_jacobian_allocs(Jt, rt, ws) = @allocated reduced_jacobian!(Jt, rt, ws)
                                   (jst.table_nrows[jst.entry_table[u]] - jst.table_top[jst.entry_table[u]])
                                   for u in eachindex(jst.entry_retained); init=0)
             # The same matrix whether the fill is serial or threaded
-            old = BlockLinearSystems.SCHUR_THREAD_MIN_WORK[]
-            try
-                for minwork in (typemax(Int), 0)
-                    BlockLinearSystems.SCHUR_THREAD_MIN_WORK[] = minwork
-                    threaded = minwork == 0 && nt > 1 && length(jst.col_chunks) > 1
-                    fill!(nonzeros(Jsp), T(NaN))
-                    reduced_jacobian!(Jsp, rts, ws)
-                    @test Matrix(Jsp) == Jt
-                    @test threaded_allocs_ok(qr_sparse_jacobian_allocs(Jsp, rts, ws), threaded)
-                    @test threaded_allocs_ok(qr_sparse_jacobian_allocs(Jsp, rts, ws), threaded)
-                end
-            finally
-                BlockLinearSystems.SCHUR_THREAD_MIN_WORK[] = old
+            for minwork in (typemax(Int), 0)
+                wsm = with_min_work(ws, minwork)
+                threaded = minwork == 0 && nt > 1 && length(jst.col_chunks) > 1
+                fill!(nonzeros(Jsp), T(NaN))
+                reduced_jacobian!(Jsp, rts, wsm)
+                @test Matrix(Jsp) == Jt
+                @test threaded_allocs_ok(qr_sparse_jacobian_allocs(Jsp, rts, wsm), threaded)
+                @test threaded_allocs_ok(qr_sparse_jacobian_allocs(Jsp, rts, wsm), threaded)
             end
             @inferred reduced_jacobian!(Jsp, rts, ws)
             # A matrix without the pattern is rejected before anything is written
@@ -381,10 +300,10 @@ end
         rt, D, d, gg = zeros(T, m), zeros(T, jst.doffsets[end] - 1), zeros(T, n), zeros(T, n)
         vf = randn(rng, T, n)
         # No allocation, serial or threaded (R2; bounded when threaded on Julia 1.10)
-        old_minwork = BlockLinearSystems.SCHUR_THREAD_MIN_WORK[]
-        try
+        ws0 = ws
+        begin
             for minwork in (typemax(Int), 0)
-                BlockLinearSystems.SCHUR_THREAD_MIN_WORK[] = minwork
+                ws = with_min_work(ws0, minwork)
                 threaded = minwork == 0 && Threads.nthreads() > 1
                 # warm calls: the first call of the threaded path compiles it
                 qr_mul_allocs(y, ws, v); qr_tmul_allocs(g, ws, w); qr_backsub_allocs(x_e, v, ws)
@@ -398,9 +317,8 @@ end
                     @test qr_misc_allocs(rt, D, d, gg, ws, J, vf) <= (threaded && VERSION < v"1.11" ? 5 * 3072 * Threads.nthreads() : 0)
                 end
             end
-        finally
-            BlockLinearSystems.SCHUR_THREAD_MIN_WORK[] = old_minwork
         end
+        ws = ws0
         # Type stability
         @inferred reduced_mul!(y, ws, v)
         @inferred reduced_tmul!(g, ws, w)
@@ -415,12 +333,11 @@ end
 end
 
 @testset "Threading: identical results for any chunking, serial below the work threshold (E4)" begin
-    old = BlockLinearSystems.SCHUR_THREAD_MIN_WORK[]
-    try
+    begin
         for T in (Float64, Float32)
-            serial = qr_problems(T; nchunks=1)
+            serial = qr_problems(T; nchunks=1, min_work=1 << 40)
             for (k, p1) in enumerate(serial)
-                p4 = qr_problems(T; nchunks=4)[k]
+                p4 = qr_problems(T; nchunks=4, min_work=0)[k]
                 @test p4.J.data == p1.J.data
                 jst1, jst4 = p1.J.structure, p4.J.structure
                 @test length(jst4.col_chunks) == 4
@@ -431,7 +348,6 @@ end
                 sc_e = qr_scaling(p1, rng)[nr+1:n]
                 v, w = randn(rng, T, nr), randn(rng, T, m)
                 results = map(((p1, 1 << 40), (p4, 0))) do (p, minwork)
-                    BlockLinearSystems.SCHUR_THREAD_MIN_WORK[] = minwork
                     jst = p.J.structure
                     @test BlockLinearSystems.qr_threaded(jst, 4) == (minwork == 0 && Threads.nthreads() > 1)
                     ws = QRReductionWorkspace(p.J)
@@ -447,13 +363,11 @@ end
                 @test all(results[1][i] == results[2][i] for i in 2:length(results[1]))
             end
         end
-        # Below the threshold the serial path is taken
-        BlockLinearSystems.SCHUR_THREAD_MIN_WORK[] = old
+        # Below the default threshold the serial path is taken, and with one chunk always
         p = qr_problems(Float64; nchunks=4)[end]
-        @test BlockLinearSystems.table_length(p.J.structure) < old
+        @test BlockLinearSystems.table_length(p.J.structure) < BlockLinearSystems.DEFAULT_MIN_WORK
         @test !BlockLinearSystems.qr_threaded(p.J.structure, 4)
-    finally
-        BlockLinearSystems.SCHUR_THREAD_MIN_WORK[] = old
+        @test !BlockLinearSystems.qr_threaded(qr_problems(Float64; nchunks=1, min_work=0)[1].J.structure, 1)
     end
 end
 
@@ -480,9 +394,10 @@ end
 
 @testset "The lowest failing block is reported under threads (C1)" begin
     # Eight chunks of 50 blocks each, threaded whatever the work: a chunk must not stop at a failure recorded
-    # by another chunk while it still has lower blocks to check. Repeated, since the interleaving varies.
+    # by another chunk while it still has lower blocks to check. Repeated, since the interleaving varies; on one
+    # thread there is no interleaving, so once.
     ne = 400
-    jst = SchurJacobianStructure(fill(6, 4), fill(3, ne), [[mod1(e, 4)] for e in 1:ne], fill(5, ne); nchunks=8)
+    jst = SchurJacobianStructure(fill(6, 4), fill(3, ne), [[mod1(e, 4)] for e in 1:ne], fill(5, ne); nchunks=8, min_work=0)
     st = jst.schur
     J = SchurBlockJacobian{Float64, Matrix{Float64}}(jst)
     E_data, C_data = zeros(9ne), zeros(18 * length(st.entry_retained))
@@ -490,9 +405,7 @@ end
     qws, sws = QRReductionWorkspace(J), SchurReductionWorkspace{Float64}(st, 8)
     S, g = zeros(24, 24), zeros(24)
     rng = Random.Xoshiro(5)
-    old = BlockLinearSystems.SCHUR_THREAD_MIN_WORK[]
-    try
-        BlockLinearSystems.SCHUR_THREAD_MIN_WORK[] = 0
+    begin
         # Every block fails (all zero, undamped), then only blocks 57, 150, 230 and 390 do
         for failing in (1:ne, [57, 150, 230, 390])
             for e in 1:ne
@@ -501,7 +414,7 @@ end
                 E_data[st.eoffsets[e] .+ (0:8)] .= ok ? vec(Matrix(1.0I(3))) : zeros(9)
             end
             qr_found, schur_found = Set{Int}(), Set{Int}()
-            for _ in 1:200
+            for _ in 1:(Threads.nthreads() == 1 ? 1 : 200)
                 reduce_qr!(qws, J, ones(3ne), 0.0)
                 push!(qr_found, qws.failed_block[])
                 reset_schur_dense!(S, R, ones(24), 0.0, sws)
@@ -511,7 +424,5 @@ end
             @test qr_found == Set(first(failing))
             @test schur_found == Set(first(failing))
         end
-    finally
-        BlockLinearSystems.SCHUR_THREAD_MIN_WORK[] = old
     end
 end

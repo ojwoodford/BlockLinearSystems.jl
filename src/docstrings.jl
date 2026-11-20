@@ -33,8 +33,11 @@ SparseBlockLinearSystem
     DenseBlockLinearSystem{T}(rowblocksizes, columnblocksizes=rowblocksizes)
     DenseBlockLinearSystem{T}(data::AbstractMatrix{T}, rowblocksizes, columnblocksizes=rowblocksizes)
     DenseBlockLinearSystem(data::AbstractMatrix{T}, rowblocksizes, columnblocksizes=rowblocksizes)
+    DenseBlockLinearSystem(data::AbstractMatrix{T}, like::DenseBlockLinearSystem)
 
 Block-partitioned dense matrix backed by a matrix buffer `data` (such as `Matrix{T}`, `SubArray`, or `FixedSizeMatrix{T}`), partitioned into blocks of the sizes given (each 1 to 65535). Without `data`, a zeroed `Matrix{T}` is allocated.
+
+With `like`, the system takes the block layout of `like`, which it shares rather than copies, and allocates nothing: use it to give a matrix you are handed the layout of a system you already have. `data` must have the size of `like`, and may have any element type and storage; it is used as it is, not zeroed.
 
 # Fields
 - `data::AbstractMatrix{T}`: Underlying matrix buffer of size `(sum(rowblocksizes), sum(columnblocksizes))`.
@@ -56,6 +59,16 @@ julia> bdm.data[3:5, 1:2]
  1.0  4.0
  2.0  5.0
  3.0  6.0
+
+julia> H = zeros(5, 5);
+
+julia> block(DenseBlockLinearSystem(H, bdm), 2, 2) .= 1.0;   # H, with the layout of bdm
+
+julia> H[3:5, 3]
+3-element Vector{Float64}:
+ 1.0
+ 1.0
+ 1.0
 ```
 """
 DenseBlockLinearSystem
@@ -63,9 +76,17 @@ DenseBlockLinearSystem
 """
     block(M, i, j)
     block(M, i, j, rows, cols)
+    block(J::SchurBlockJacobian, k, entry, nrows, ncols)
 
 Returns a mutable view into block `(i, j)` of `M` (`SparseBlockLinearSystem` or `DenseBlockLinearSystem`).
 When `rows` and/or `cols` are passed as `StaticInt`, returns a stack-wrapped `SizedMatrix` or `HybridArray` view for SIMD-accelerated block operations.
+
+For a [`SchurBlockJacobian`](@ref) whose structure was built from a description, the view of row block `k`'s
+rows of `J` in the columns of `entry`, a handle from [`blockentry`](@ref)`(J.structure, k, j)` for layout column
+block `j`: `nrows × ncols`, which must be the row block's number of rows and the column block's size. Sizes may
+be `Int`, `StaticInt` or `Val`; both static give a `SizedMatrix`, one a `HybridArray`. Sizes and the handle are
+checked under `@boundscheck`; the view allocates nothing. The rows of different row blocks are disjoint, so a
+fill may be threaded over row blocks.
 
 # Example
 ```jldoctest
@@ -259,8 +280,11 @@ makesparseindices
 """
     blocksizes(sys, dim) -> BlockRLE
     blocksizes(sys) -> Tuple{BlockRLE, BlockRLE}
+    blocksizes(structure::Union{SchurStructure, SchurJacobianStructure}) -> Vector{Int}
 
 Returns the block dimensions along dimension `dim` (1 for rows, 2 for columns), or a tuple of `(rowblocksizes, columnblocksizes)`.
+For a [`SchurStructure`](@ref) or [`SchurJacobianStructure`](@ref), the sizes of its column blocks in layout order
+(retained, then eliminated), as a new `Vector{Int}`: for setup.
 
 # Example
 ```jldoctest
@@ -279,8 +303,11 @@ blocksizes
 """
     nblocks(sys, dim) -> Int
     nblocks(sys) -> Tuple{Int, Int}
+    nblocks(structure::Union{SchurStructure, SchurJacobianStructure}) -> Int
 
-Returns the number of blocks along dimension `dim`, or `(n_rowblocks, n_colblocks)`.
+Returns the number of blocks along dimension `dim`, or `(n_rowblocks, n_colblocks)`. For a
+[`SchurStructure`](@ref) or [`SchurJacobianStructure`](@ref), the number of its column blocks, retained and
+eliminated.
 
 # Example
 ```jldoctest
@@ -499,88 +526,40 @@ the `UInt16` sizes stored by `BlockRLE`) are widened to `Int` before use.
 blockrange
 
 """
-    SchurJacobianStructure(structure::SchurStructure, e_rows; free_rows=Int[], free_retained=Vector{Int}[], nchunks)
-    SchurJacobianStructure(r_dims, e_dims, couplings, e_rows; free_rows=Int[], free_retained=Vector{Int}[], nchunks=1)
-
-Layout of a tall linear least-squares problem `min ‖J x - r‖²`, `x = [x_r; x_e]` (retained variables first),
-partitioned like `structure` (same retained and eliminated blocks, same couplings, same block order).
-It is the Jacobian-path counterpart of a [`SchurStructure`](@ref), and holds one, unchanged, in its
-`schur` field.
-
-Every row of `J` involves at most one eliminated block (the Schur condition). The rows that involve
-eliminated block `e` form its *table*, `e_rows[e]` rows by the columns of every retained block coupled to
-`e`, then `e`'s own columns, then the residual:
-
-```
-T_e = [ J_r | J_e | r ]        (e_rows[e] + d_e) × (c_e + d_e + 1)
-```
-
-where `c_e` is the sum of the coupled retained dimensions (at most `structure.max_coupled_dim`). The last
-`d_e` rows are damping rows, zero in the raw storage and written by [`reduce_qr!`](@ref). Rows that
-involve no eliminated block are given as *free groups*: group `g` has `free_rows[g]` rows and the retained
-blocks `free_retained[g]`, and its table is `[ J_r | r ]`.
-
-Tables are numbered `t = 1:ntables`: table `e` (`e <= structure.neblocks`) belongs to eliminated block
-`e`, table `structure.neblocks + g` to free group `g`. A table's retained blocks are its *entries*,
-numbered globally: entries `1:length(structure.entry_retained)` are the coupling entries of `structure`
-(same index `c`, same order, sorted by retained block within each eliminated block), followed by the
-entries of the free groups (retained blocks sorted within each group). [`coupling_entry`](@ref) finds an
-entry from its table and retained block.
-
-`nchunks` sets how many disjoint ranges of retained blocks (`col_chunks`) the column-ownership kernels are
-threaded over; it defaults to the number of chunks of `structure`.
-
-Throws `DimensionMismatch` if `e_rows` (or `free_retained`) has the wrong length, and `ArgumentError` for
-a table with no rows, or a free group that references a retained block that does not exist or lists one
-twice.
-
-# Example
-```jldoctest
-julia> using BlockLinearSystems
-
-julia> # Two retained blocks (6 and 3), two eliminated blocks (3 and 3); 4 and 6 rows each; one free group of 2 rows
-       jst = SchurJacobianStructure([6, 3], [3, 3], [[1, 2], [2]], [4, 6]; free_rows=[2], free_retained=[[1]]);
-
-julia> jst.ntables
-3
-
-julia> reduced_nrows(jst)   # 4 + 6 + 2
-12
-```
-"""
-SchurJacobianStructure
-
-"""
     SchurBlockJacobian{T, RType}(structure::SchurJacobianStructure)
     SchurBlockJacobian{T, RType}(data::Vector{T}, structure::SchurJacobianStructure)
 
-Raw storage of a tall least-squares problem: the tables of `structure` (see
-[`SchurJacobianStructure`](@ref)), each column-major, in one flat vector `data` at
-`structure.table_offsets`. It is the Jacobian prototype a caller fills, the analogue of
+Raw storage of a least-squares problem laid out by `structure` (see [`SchurJacobianStructure`](@ref)):
+one dense table per eliminated block and per free group, in one flat vector `data`. It is the Jacobian prototype a caller fills, the analogue of
 [`SchurBlockHessian`](@ref) on the Hessian path. `T` may be any floating-point type; `Float64` and
 `Float32` are tested.
 
-`RType` is the storage of the reduced system in the retained variables, `S = J̃ᵀJ̃` (and `J̃`), that a
-solver builds after [`reduce_qr!`](@ref): `Matrix{T}` (dense, filled by [`reduced_normal_dense!`](@ref))
-or `SparseMatrixCSC{T, Int}` (sparse, filled by [`reduced_normal_sparse!`](@ref)); anything else is an
-`ArgumentError`. It plays the part the type of `R` plays in `SchurBlockHessian{T, RType}`, and is chosen
-by whoever builds the prototype (a modelling package, from its own storage option), so that a solver
-receiving only `J` can dispatch on `J isa SchurBlockJacobian{T, Matrix{T}}`. There is no default. This
-package's kernels do not read it: the tables, [`QRReductionWorkspace`](@ref) and every kernel are the
-same for both.
+`RType` is the storage of the reduced system in the retained variables, `J̃` and `S = J̃ᵀJ̃`, that the linear
+system built from `J` (DampedLinearSolve's `makejacobiansystem`) solves after eliminating: `Matrix{T}` (dense) or
+`SparseMatrixCSC{T, Int}` (sparse); anything else is an `ArgumentError`. It plays the part the type of `R` plays in
+`SchurBlockHessian{T, RType}`, and is chosen by whoever builds the prototype (a modelling package, from its own
+storage option), so that code receiving only `J` can dispatch on `J isa SchurBlockJacobian{T, Matrix{T}}`. There
+is no default. The tables are the same for both.
 
 The data-taking form uses `data` as the storage (no copy); its length must be the structure's table
 length, else `DimensionMismatch`.
 
-Fill it through [`coupling_block`](@ref), [`eliminated_block`](@ref) and [`residual_block`](@ref). The
-rows of a table belong to one eliminated block (or one free group), so threads that fill different
-tables never write the same memory and need no per-thread copies. The damping rows are not reachable
-through the views and stay zero. [`reduce_qr!`](@ref) reads these tables and never modifies them, so a
-change of the damping re-factors from them.
+Fill it by row block, through [`blockentry`](@ref), [`block`](@ref) and [`residual_block`](@ref). The rows of
+different row blocks are disjoint, so threads that fill different row blocks never write the same memory and need
+no per-thread copies. The damping rows are not reachable through the views and stay zero. The elimination reads
+these tables and never modifies them, so a change of the damping re-factors from them.
 
+**Fields.** `data` and `structure` may be read for operations on the whole system: zero it, copy it, compare
+structures by identity. Where a block lives inside `data` is not public: address it by row block with
+[`blockentry`](@ref), [`block`](@ref) and [`residual_block`](@ref).
+
+`copy(J)` returns a `SchurBlockJacobian` with its own copy of the tables and the same structure, and
+`copyto!(dest, src)` copies the tables of one into another of the same structure.
 [`zero!`](@ref) zeroes every table; [`copy_structure`](@ref) returns a new, zeroed `SchurBlockJacobian`
-of the same type, sharing only the (immutable) structure. [`schur_jacobian_bytes`](@ref) gives the
-memory needed before anything is allocated.
+of the same type, sharing only the (immutable) structure. Each table is dense in every retained block coupled to its
+eliminated block, `(m_e + d_e) × (c_e + d_e + 1)` for `m_e` rows, `d_e` eliminated and `c_e` coupled retained
+columns, and the elimination keeps a factored copy: far more than the Hessian path's `d_e² + d_e c_e` for an
+eliminated block seen by many rows.
 """
 SchurBlockJacobian
 
@@ -620,12 +599,12 @@ julia> using BlockLinearSystems, Static, StaticArrays
 
 julia> J = SchurBlockJacobian{Float64, Matrix{Float64}}(SchurJacobianStructure([6, 3], [3, 3], [[1, 2], [2]], [4, 6]));
 
-julia> u = coupling_entry(J.structure, 1, 2)   # retained block 2 in eliminated block 1's table
+julia> u = BlockLinearSystems.coupling_entry(J.structure, 1, 2)   # retained block 2 in eliminated block 1's table
 2
 
-julia> coupling_block(J, u, 3, static(2), static(3)) .= @SMatrix [1.0 2.0 3.0; 4.0 5.0 6.0];   # rows 3:4 of that table
+julia> BlockLinearSystems.coupling_block(J, u, 3, static(2), static(3)) .= @SMatrix [1.0 2.0 3.0; 4.0 5.0 6.0];   # rows 3:4 of that table
 
-julia> Matrix(coupling_block(J, u))   # all four data rows
+julia> Matrix(BlockLinearSystems.coupling_block(J, u))   # all four data rows
 4×3 Matrix{Float64}:
  0.0  0.0  0.0
  0.0  0.0  0.0
@@ -646,15 +625,45 @@ J.structure.schur.neblocks`): all of its data rows, or rows `row:row+nrows-1`. S
 eliminated_block
 
 """
-    residual_block(J::SchurBlockJacobian, t)
-    residual_block(J::SchurBlockJacobian, t, row, nrows)
+    residual_block(J::SchurBlockJacobian, k[, nrows])
 
-Mutable view of the residual column of table `t` (an eliminated block's table or a free group's): all of
-its data rows, or rows `row:row+nrows-1`. A `SizedVector` for a static `nrows`, otherwise a plain view.
-The residual is `r` of `min ‖J x - r‖²`: callers that hold `f(x) ≈ f(x0) + J dx` store `r = -f(x0)`, or
-store `f(x0)` and negate the step, as with the Schur systems.
+Mutable view of row block `k`'s rows of the residual column, for a [`SchurBlockJacobian`](@ref) whose
+structure was built from a description. `nrows`, if given, must be the row block's number of rows (checked
+under `@boundscheck`); a static `nrows` gives a `SizedVector`, otherwise a plain view. It allocates nothing.
+The residual is `r` of `min ‖J x - r‖²`: callers that hold `f(x) ≈ f(x0) + J dx` store `r = -f(x0)`, or store
+`f(x0)` and negate the step, as with the Schur systems.
 """
 residual_block
+
+"""
+    blockentry(structure::SchurJacobianStructure, k, j) -> Int
+
+A handle for layout column block `j` in row block `k` of a structure built from a description, for
+[`block`](@ref)`(J, k, entry, nrows, ncols)`. For setup: keep one per (row block, column block) to be written.
+What the integer encodes is internal. Throws `ArgumentError` if row block `k` does not touch column block `j`,
+`BoundsError` for an unknown row block.
+
+# Example
+```jldoctest
+julia> using BlockLinearSystems, Static, StaticArrays
+
+julia> jst = SchurJacobianStructure([3, 6], [[1, 2], [2]], [2, 6]; eliminated=[true, false]);   # a point, a camera
+
+julia> J = SchurBlockJacobian{Float64, Matrix{Float64}}(jst);
+
+julia> p = invperm(blockorder(jst));   # the layout number of each of the caller's blocks
+
+julia> block(J, 1, blockentry(jst, 1, p[1]), static(2), static(3)) .= @SMatrix [1.0 2.0 3.0; 4.0 5.0 6.0];
+
+julia> residual_block(J, 1) .= [0.5, -0.5];
+
+julia> Matrix(block(J, 1, blockentry(jst, 1, p[1]), 2, 3))
+2×3 Matrix{Float64}:
+ 1.0  2.0  3.0
+ 4.0  5.0  6.0
+```
+"""
+blockentry
 
 """
     coupling_entry(structure::SchurJacobianStructure, t, r) -> Int
@@ -714,8 +723,8 @@ for the Schur reduction. Free tables are copied, not checked.
 
 Statically sized in the eliminated dimension (unrolled over the columns) up to
 `BlockLinearSystems.D_STATIC`, dynamic above, over the runs of the structure's `e_dims` and their `chunks`.
-Threaded over the chunks of eliminated blocks when Polyester is loaded and there is enough work
-(`BlockLinearSystems.SCHUR_THREAD_MIN_WORK`), serial otherwise; tables are independent, so there is no
+Threaded over the chunks of eliminated blocks when Polyester is loaded and the structure's work is at least its
+`min_work`, serial otherwise; tables are independent, so there is no
 merge step. The raw tables are untouched, so calling it again with another `lambda` re-factors from them.
 It allocates nothing, serial or threaded (on Julia 1.10, a threaded call allocates a few hundred
 bytes per chunk; see [Threading](@ref)).
@@ -834,6 +843,26 @@ block, block `r` at `D[structure.doffsets[r]:structure.doffsets[r+1]-1]`; for bl
 preconditioning of an iterative solve on `J̃`.
 """
 reduced_diagonal_blocks!
+
+"""
+    factor_diagonal_blocks!(D::AbstractVector, dims) -> Bool
+
+Factor in place each square block of the flat array `D` by Cholesky, `B = L Lᵀ`, writing `L` into the block's
+lower triangle (its strict upper triangle is not read or written). Block `b`, of dimension `dims[b]`, is stored
+column-major after the blocks before it, as [`reduced_diagonal_blocks!`](@ref) lays them out. Returns `true` if
+every block is positive definite and finite; otherwise `false`, with `D` partly factored. Plain loops, for small
+blocks: no BLAS, no allocation.
+"""
+factor_diagonal_blocks!
+
+"""
+    solve_diagonal_blocks!(y, D::AbstractVector, dims, x) -> y
+
+`y = B⁻¹ x` for the block-diagonal matrix whose blocks [`factor_diagonal_blocks!`](@ref) has factored in `D`:
+block `b` of `x` and `y` holds entries after those of the blocks before it. `y` may be `x`. Plain loops, no
+allocation.
+"""
+solve_diagonal_blocks!
 
 """
     jtr!(g, src::Union{SchurBlockJacobian, QRReductionWorkspace}) -> g

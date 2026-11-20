@@ -1,3 +1,5 @@
+using Test, BlockLinearSystems
+
 # Every ```julia block of the README, run in order in one module (later examples may use earlier ones' variables),
 # so that the README's examples are kept working (AB7)
 @testset "README examples run" begin
@@ -8,7 +10,7 @@
     for (k, code) in enumerate(blocks)
         @test (include_string(mod, code, "README.md block $k"); true)
     end
-    # The two reduction examples solve their systems
-    @test mod.ws isa QRReductionWorkspace
+    # The two elimination examples solve their systems, through DampedLinearSolve's contract
+    @test all(isfinite, mod.x)
     @test all(isfinite, mod.x_r) && all(isfinite, mod.x_e)
 end

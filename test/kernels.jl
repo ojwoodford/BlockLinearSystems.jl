@@ -1,3 +1,4 @@
+using Test, Random, LinearAlgebra, StaticArrays, BlockLinearSystems
 using BlockLinearSystems: inv_sym_block   # internal names
 
 @testset "inv_sym_block in Float32 and Float64 (M4)" begin

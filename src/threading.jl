@@ -19,9 +19,13 @@ function batch_foreach(f::F, n::Integer) where F
     return nothing
 end
 
-const SCHUR_THREAD_MIN_WORK = Ref(4096)
+# The default work floor of a structure's kernels (its `min_work`), in the kernels' own measure of work: coupling
+# entries for the Schur reduction, table entries for QR elimination. A starting value, not measured (rules.md 26).
+const DEFAULT_MIN_WORK = 4096
 
-@inline use_threads(nitems::Integer, work::Integer=nitems) = nitems > 1 && work >= SCHUR_THREAD_MIN_WORK[] && Threads.nthreads() > 1
+# Whether a kernel threads over `nitems` items of a structure: more than one item (at most the structure's `nchunks`),
+# at least the structure's `min_work`, and more than one thread. The structure carries the decision; nothing global.
+@inline use_threads(nitems::Integer, work::Integer, min_work::Integer) = nitems > 1 && work >= min_work && Threads.nthreads() > 1
 
 @inline function foreach_index(f::F, n::Int, threaded::Bool) where F
     if threaded

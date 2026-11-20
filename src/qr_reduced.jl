@@ -94,9 +94,9 @@ end
 function backsubstitute!(x_e::AbstractVector{T}, x_r::AbstractVector, ws::QRReductionWorkspace{T}) where T
     jst = ws.structure
     st = jst.schur
-    threaded = qr_threaded(jst, st.neblocks)
     for g_idx in 1:nruns(st.e_dims)
         chunks = st.chunks[g_idx]
+        threaded = qr_threaded(jst, length(chunks))
         dispatch_dim(runblocksize(st.e_dims, g_idx)) do s_de
             foreach_index(length(chunks), threaded) do k
                 qr_backsubstitute_group!(x_e, x_r, ws.factored, jst, ws.scratch[k], chunks[k], s_de)
@@ -133,7 +133,7 @@ end
 end
 
 @inline foreach_table(f::F, jst::SchurJacobianStructure) where F =
-    foreach_range(f, jst.ntables, Threads.nthreads(), qr_threaded(jst, jst.ntables))
+    foreach_range(f, jst.ntables, qr_nchunks(jst), qr_threaded(jst, min(jst.ntables, qr_nchunks(jst))))
 
 # dot of n contiguous entries of a and b
 @inline function dot_run(a::AbstractVector{T}, ia::Int, b::AbstractVector, ib::Int, n::Int) where T
@@ -536,7 +536,7 @@ end
 @inline function foreach_eliminated_column(f::Ff, src) where Ff
     jst = src.structure
     st = jst.schur
-    foreach_range(st.neblocks, Threads.nthreads(), qr_threaded(jst, st.neblocks)) do e
+    foreach_range(st.neblocks, qr_nchunks(jst), qr_threaded(jst, min(st.neblocks, qr_nchunks(jst)))) do e
         @inbounds begin
             M = jst.table_nrows[e]
             C = jst.table_ncols[e]

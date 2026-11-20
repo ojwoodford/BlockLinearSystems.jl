@@ -1,4 +1,6 @@
 using Test, LinearAlgebra, SparseArrays, StaticArrays, Static, BlockLinearSystems
+using BlockLinearSystems: SchurReductionWorkspace, build_r_to_s_map   # internal: the kernels, withdrawn from the exports by EL6
+using BlockLinearSystems: sort_schur_blocks   # internal: withdrawn from the exports by EL4
 using BlockLinearSystems: expand_block_perm   # internal names
 
 @testset "Schur-Complement Linear Solver: Pure-Data Kernels & Equivalence" begin
@@ -90,14 +92,14 @@ using BlockLinearSystems: expand_block_perm   # internal names
         nr, nrblocks, neblocks,
         BlockRLE(r_dims), e_rle, boffsets_r, boffsets_e,
         eoffsets, eliminated_ptr, entry_retained, coffsets,
-        max_coupled_dim, chunks_K1
+        max_coupled_dim, chunks_K1, collect(1:nrblocks + neblocks), Tuple{Int, Int}[], 1, 4096
     )
 
     structure_K4 = BlockLinearSystems.SchurStructure(
         nr, nrblocks, neblocks,
         BlockRLE(r_dims), e_rle, boffsets_r, boffsets_e,
         eoffsets, eliminated_ptr, entry_retained, coffsets,
-        max_coupled_dim, chunks_K4
+        max_coupled_dim, chunks_K4, collect(1:nrblocks + neblocks), Tuple{Int, Int}[], 4, 4096
     )
 
     # --------------------------------------------------------------------------

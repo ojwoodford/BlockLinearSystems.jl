@@ -1,3 +1,4 @@
+using Test, Static
 using BlockLinearSystems
 using BlockLinearSystems: blockdata   # internal names
 # Run-time sized `block` accessors must be type stable and non-allocating (B9, B14)

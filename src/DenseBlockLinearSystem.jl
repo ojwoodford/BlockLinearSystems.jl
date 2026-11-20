@@ -15,14 +15,22 @@ struct DenseBlockLinearSystem{T, M<:AbstractMatrix{T}}
     rowblocksizes::BlockRLE{BlockSize, Int}
     columnblocksizes::BlockRLE{BlockSize, Int}
 
-    # The one inner constructor: the offsets are always derived from the sizes, so they cannot disagree with them
-    # and are never a vector the caller holds
+    # The offsets are derived from the sizes, or shared with another system (below), so they cannot disagree with the
+    # sizes and are never a vector a caller holds
     function DenseBlockLinearSystem{T, M}(data::M, rowblocksizes::BlockRLE{BlockSize, Int}, colblocksizes::BlockRLE{BlockSize, Int}=rowblocksizes) where {T, M<:AbstractMatrix{T}}
         # Block sizes are already validated (1 to MAX_BLOCK_DIM) by the BlockRLE constructor
         r_offsets = blockoffsets(rowblocksizes)
         c_offsets = rowblocksizes === colblocksizes ? r_offsets : blockoffsets(colblocksizes)
         size(data) == (r_offsets[end]-1, c_offsets[end]-1) || throw(DimensionMismatch("Matrix size $(size(data)) does not match block sizes ($(r_offsets[end]-1), $(c_offsets[end]-1))"))
         return new{T, M}(data, r_offsets, c_offsets, rowblocksizes, colblocksizes)
+    end
+
+    # A system on `data` with the layout of `like`, which it shares rather than rebuilds, so it allocates nothing.
+    # The offsets belong to a system, which never mutates them, so sharing them is safe
+    function DenseBlockLinearSystem(data::M, like::DenseBlockLinearSystem) where {T, M<:AbstractMatrix{T}}
+        m, n = like.rowblockoffsets[end] - 1, like.columnblockoffsets[end] - 1
+        size(data) == (m, n) || throw(DimensionMismatch("Matrix size $(size(data)) does not match the layout's size ($m, $n)"))
+        return new{T, M}(data, like.rowblockoffsets, like.columnblockoffsets, like.rowblocksizes, like.columnblocksizes)
     end
 end
 
@@ -45,15 +53,6 @@ end
 
 DenseBlockLinearSystem{T, M}(data::M, bo::BlockOffsets, co::BlockOffsets=bo) where {T, M<:AbstractMatrix{T}} =
     DenseBlockLinearSystem{T, M}(data, blocksizes_from_offsets(bo, co)...)
-
-# The offsets are redundant given the sizes: they are checked against them, and not kept
-function DenseBlockLinearSystem{T, M}(data::M, rowblockoffsets::AbstractVector{<:Integer}, columnblockoffsets::AbstractVector{<:Integer}, rbs::AbstractVector{<:Integer}, cbs::AbstractVector{<:Integer}) where {T, M<:AbstractMatrix{T}}
-    r_bs = as_block_rle(rbs)
-    c_bs = rbs === cbs ? r_bs : as_block_rle(cbs)
-    rowblockoffsets == blockoffsets(r_bs) || throw(DimensionMismatch("Row block offsets $rowblockoffsets do not match the row block sizes"))
-    columnblockoffsets == blockoffsets(c_bs) || throw(DimensionMismatch("Column block offsets $columnblockoffsets do not match the column block sizes"))
-    return DenseBlockLinearSystem{T, M}(data, r_bs, c_bs)
-end
 
 function DenseBlockLinearSystem{T}(rowblocksizes::AbstractVector{<:Integer}, colblocksizes::AbstractVector{<:Integer}=rowblocksizes) where T
     rbs = as_block_rle(rowblocksizes)
@@ -80,9 +79,6 @@ DenseBlockLinearSystem{T}(data::M, bo::BlockOffsets, co::BlockOffsets=bo) where 
 DenseBlockLinearSystem(data::AbstractMatrix{T}, bo::BlockOffsets, co::BlockOffsets=bo) where T =
     DenseBlockLinearSystem{T}(data, bo, co)
 
-DenseBlockLinearSystem{T}(data::M, rowblockoffsets::AbstractVector{<:Integer}, columnblockoffsets::AbstractVector{<:Integer}, rbs::AbstractVector{<:Integer}, cbs::AbstractVector{<:Integer}) where {T, M<:AbstractMatrix{T}} =
-    DenseBlockLinearSystem{T, M}(data, rowblockoffsets, columnblockoffsets, rbs, cbs)
-
 DenseBlockLinearSystem{T}(; offsets::Vector{Int}, coloffsets::Vector{Int}=offsets) where T =
     DenseBlockLinearSystem{T}(BlockOffsets(offsets), BlockOffsets(coloffsets))
 
@@ -94,7 +90,7 @@ DenseBlockLinearSystem(data::AbstractMatrix{T}; offsets::Vector{Int}, coloffsets
 
 function copy_structure(bdm::DenseBlockLinearSystem{T}) where T
     newdata = fill!(similar(bdm.data), zero(T))
-    return DenseBlockLinearSystem{T, typeof(newdata)}(newdata, bdm.rowblocksizes, bdm.columnblocksizes)
+    return DenseBlockLinearSystem(newdata, bdm)
 end
 
 uniformscaling!(bdm::DenseBlockLinearSystem, k) = uniformscaling!(bdm.data, k)

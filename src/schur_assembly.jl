@@ -80,3 +80,167 @@ end
     @boundscheck (1 <= i <= st.nrblocks && 1 <= j <= st.nrblocks) || throw(BoundsError(H, (i, j)))
     return retained_block(H, i, j, @inbounds(Int(st.r_dims[i])), @inbounds(Int(st.r_dims[j])))
 end
+
+# ------------------------------------------------------------------------------------------------------------------
+# Filling by block: addblock!
+# ------------------------------------------------------------------------------------------------------------------
+
+# The size of an index range: static for a statically sized one (`blockrange` with a `StaticInt` length), so that the
+# loops and views it sizes are static
+@inline range_size(::StaticArrays.StaticVector{N}) where N = StaticInt{N}()
+@inline range_size(r::AbstractVector) = length(r)
+
+# Coupling entry of retained block r in eliminated block e (0 if they are not coupled)
+@inline function find_coupling(st::SchurStructure, e::Int, r::Int)
+    lo = @inbounds st.eliminated_ptr[e]
+    hi = @inbounds st.eliminated_ptr[e + 1] - 1
+    c = searchsortedfirst(@inbounds(view(st.entry_retained, lo:hi)), r) + lo - 1
+    return (c <= hi && @inbounds(st.entry_retained[c]) == r) ? c : 0
+end
+
+"""
+    addblock!(H::SchurBlockHessian, i, j, B, rows, cols) -> H
+
+Add a contribution to the block of layout column blocks `(i, j)` of `H` (`d_i × d_j`): `B[rows, cols]` is that
+block and `B[cols, rows]` the block `(j, i)`, so `B` holds a symmetric contribution, of which the system reads
+the one block it stores, in whichever orientation it stores the pair (the retained part's stored triangle, an
+eliminated block, or a coupling block). Only that block is read, so the result is the same whichever order the
+call names the pair in, even for a `B` that is symmetric only to rounding. `rows` and `cols` are index vectors
+into `B`, static (from [`blockrange`](@ref) with a `StaticInt` length) or run-time; a static one gives a
+statically sized loop.
+
+- Add each unordered pair `{i, j}` once per contribution, in either order; `i == j` adds the full block.
+- A pair the system has no storage for is an error under `@boundscheck` (`ArgumentError`): two eliminated
+  blocks; a retained and an eliminated block that share no row block; two retained blocks that share no row
+  block or eliminated block, when the retained part is sparse (a dense one stores every pair). An unknown block
+  is a `BoundsError`, a wrong size a `DimensionMismatch`.
+- It allocates nothing.
+- Calls for pairs that involve different eliminated blocks write disjoint storage; calls for two retained
+  blocks do not. That is what a caller needs to thread its fill: give each thread whole eliminated blocks, and
+  each thread its own retained part ([`SchurBlockHessian`](@ref)`(R, like)`).
+
+# Example
+```jldoctest
+julia> using BlockLinearSystems
+
+julia> st = SchurStructure([3, 6], [[1, 2]]; eliminated=[true, false]);   # a point and a camera
+
+julia> H = SchurBlockHessian{Float64, Matrix{Float64}}(st);
+
+julia> p = invperm(blockorder(st));   # the layout number of each of the caller's blocks
+
+julia> B = ones(9, 9);   # the contribution of the one row block, over [point; camera]
+
+julia> addblock!(H, p[1], p[1], B, 1:3, 1:3); addblock!(H, p[2], p[2], B, 4:9, 4:9); addblock!(H, p[2], p[1], B, 4:9, 1:3);
+
+julia> sum(H.E_data), sum(H.C_data), sum(H.R)
+(9.0, 18.0, 36.0)
+```
+"""
+@inline function addblock!(H::SchurBlockHessian, i::Integer, j::Integer, B::AbstractMatrix, rows, cols)
+    st = H.structure
+    nr = st.nrblocks
+    i, j = Int(i), Int(j)
+    @boundscheck check_addblock(H, i, j, B, rows, cols)
+    if i == j
+        if i <= nr
+            @inbounds add_retained_diagonal!(H.R, st, i, B, rows)
+        else
+            @inbounds add_eliminated!(H.E_data, st, i - nr, B, rows)
+        end
+    elseif i <= nr && j <= nr
+        @inbounds add_retained_pair!(H.R, st, i, j, B, rows, cols)
+    elseif i <= nr
+        @inbounds add_coupling!(H.C_data, st, j - nr, i, B, rows, cols)
+    else
+        @inbounds add_coupling!(H.C_data, st, i - nr, j, B, cols, rows)
+    end
+    return H
+end
+
+@inline function check_addblock(H::SchurBlockHessian, i::Int, j::Int, B, rows, cols)
+    st = H.structure
+    n = st.nrblocks + st.neblocks
+    (1 <= i <= n && 1 <= j <= n) || throw_block_bounds(H, i, j)
+    di = i <= st.nrblocks ? Int(st.r_dims[i]) : Int(st.e_dims[i - st.nrblocks])
+    dj = j <= st.nrblocks ? Int(st.r_dims[j]) : Int(st.e_dims[j - st.nrblocks])
+    (length(rows) == di && length(cols) == dj) || throw_block_size(i, j, di, dj, length(rows), length(cols))
+    checkbounds(B, rows, cols)
+    checkbounds(B, cols, rows)
+    if i != j
+        if i > st.nrblocks && j > st.nrblocks
+            throw_no_storage(i, j, "are both eliminated")
+        elseif i <= st.nrblocks && j <= st.nrblocks
+            H.R isa SparseBlockLinearSystem && !validblock(H.R, max(i, j), min(i, j)) && throw_no_storage(i, j, "share no row block")
+        else
+            e, r = max(i, j) - st.nrblocks, min(i, j)
+            find_coupling(st, e, r) == 0 && throw_no_storage(i, j, "share no row block")
+        end
+    end
+    return nothing
+end
+
+@noinline throw_block_bounds(H, i, j) = throw(BoundsError(H, (i, j)))
+@noinline throw_block_size(i, j, di, dj, m, n) =
+    throw(DimensionMismatch("Block ($i, $j) has size ($di, $dj), but ($m, $n) was given"))
+@noinline throw_no_storage(i, j, why) = throw(ArgumentError("Blocks $i and $j $why: the system has no storage for the pair"))
+
+# The diagonal block of a retained block: all of B[rows, rows]
+@inline function add_retained_diagonal!(R::Matrix, st::SchurStructure, i::Int, B, rows)
+    ro = @inbounds st.boffsets_r[i]
+    n = length(rows)
+    @inbounds for col in 1:n, row in 1:n
+        R[ro + row - 1, ro + col - 1] += B[rows[row], rows[col]]
+    end
+    return nothing
+end
+@inline function add_retained_diagonal!(R::SparseBlockLinearSystem, st::SchurStructure, i::Int, B, rows)
+    n = range_size(rows)
+    @inbounds block(R, i, i, n, n) .+= view(B, rows, rows)
+    return nothing
+end
+
+# A pair of retained blocks. The dense retained part stores the upper triangle (block row <= block column) and the
+# sparse one the lower: each reads the block of B in the orientation it stores, B[rows, cols] for (i, j) or B[cols, rows]
+# for (j, i), and copies it without transposing.
+@inline function add_retained_pair!(R::Matrix, st::SchurStructure, i::Int, j::Int, B, rows, cols)
+    a, ra, b, rb = i < j ? (i, rows, j, cols) : (j, cols, i, rows)
+    ro_a = @inbounds st.boffsets_r[a]
+    ro_b = @inbounds st.boffsets_r[b]
+    na, nb = length(ra), length(rb)
+    @inbounds for col in 1:nb, row in 1:na
+        R[ro_a + row - 1, ro_b + col - 1] += B[ra[row], rb[col]]
+    end
+    return nothing
+end
+@inline function add_retained_pair!(R::SparseBlockLinearSystem, st::SchurStructure, i::Int, j::Int, B, rows, cols)
+    if i > j
+        @inbounds block(R, i, j, range_size(rows), range_size(cols)) .+= view(B, rows, cols)
+    else
+        @inbounds block(R, j, i, range_size(cols), range_size(rows)) .+= view(B, cols, rows)
+    end
+    return nothing
+end
+
+# An eliminated block: all of B[rows, rows], column-major in E_data
+@inline function add_eliminated!(E_data::Vector, st::SchurStructure, e::Int, B, rows)
+    idx = @inbounds st.eoffsets[e]
+    n = length(rows)
+    @inbounds for col in 1:n, row in 1:n
+        E_data[idx] += B[rows[row], rows[col]]
+        idx += 1
+    end
+    return nothing
+end
+
+# The coupling block of eliminated block e and retained block r, from B[rr, re] (retained rows, eliminated columns),
+# stored transposed (d_e x d_r, column-major) in C_data
+@inline function add_coupling!(C_data::Vector, st::SchurStructure, e::Int, r::Int, B, rr, re)
+    c = find_coupling(st, e, r)
+    co = @inbounds st.coffsets[c]
+    dr, de = length(rr), length(re)
+    @inbounds for col in 1:de, row in 1:dr
+        C_data[co + (row - 1) * de + col - 1] += B[rr[row], re[col]]
+    end
+    return nothing
+end

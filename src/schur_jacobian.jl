@@ -14,9 +14,15 @@
 # do not involve x_e. The bottom rows of every table, then the free rows, form the reduced problem
 # min ||J~ x_r - r~||^2, with J~'J~ the Schur complement of J'J (without the retained damping).
 
-# SchurJacobianStructure(structure::SchurStructure, e_rows; free_rows=Int[], free_retained=Vector{Int}[], nchunks)
+# SchurJacobianStructure(structure::SchurStructure, e_rows; free_rows=Int[], free_retained=Vector{Int}[], nchunks, rowblocks)
 # SchurJacobianStructure(r_dims, e_dims, couplings, e_rows; free_rows, free_retained, nchunks=1)
-# Layout of a tall (Jacobian) least-squares problem partitioned like `structure`.
+# Internal: the layout of a least-squares problem already partitioned like `structure` (same blocks, couplings and
+# order). Table e (e <= neblocks) holds the e_rows[e] rows that involve eliminated block e, then d_e damping rows; table
+# neblocks + g holds free group g (free_rows[g] rows, the retained blocks free_retained[g]). A table's retained blocks
+# are its entries, numbered globally: the coupling entries of `structure` (same index and order), then the free groups'
+# entries (sorted within each group); coupling_entry finds one. `nchunks` is the number of disjoint ranges of retained
+# blocks (col_chunks) the column-ownership kernels thread over. The public constructor, from a description, is in
+# schur_description.jl.
 struct SchurJacobianStructure
     schur::SchurStructure            # Partition, block offsets, couplings and chunks
     e_rows::Vector{Int}              # Number of residual rows m_e of each eliminated block's table
@@ -35,13 +41,21 @@ struct SchurJacobianStructure
     reduced_offsets::Vector{Int}     # First row of each table's rows in the reduced problem, length ntables + 1
     doffsets::Vector{Int}            # Start of each retained block's diagonal block in a flat d_r x d_r array, length nrblocks + 1
     col_chunks::Vector{UnitRange{Int}} # Disjoint ranges of retained blocks, for threading by column ownership
+    # The row blocks of a description (empty when built positionally): each one's table, first row in it and number
+    # of rows, and the layout blocks it touches (CSR, ascending)
+    row_table::Vector{Int}
+    row_first::Vector{Int}
+    row_nrows::Vector{Int}
+    row_ptr::Vector{Int}
+    row_blocks::Vector{Int}
 end
 
 function SchurJacobianStructure(
     structure::SchurStructure, e_rows::AbstractVector{<:Integer};
     free_rows::AbstractVector{<:Integer}=Int[],
     free_retained::AbstractVector{<:AbstractVector{<:Integer}}=Vector{Int}[],
-    nchunks::Int=maximum(length, structure.chunks; init=1)
+    nchunks::Int=maximum(length, structure.chunks; init=1),
+    rowblocks=(table=Int[], first=Int[], nrows=Int[], ptr=[1], blocks=Int[])
 )
     st = structure
     ne = st.neblocks
@@ -130,21 +144,24 @@ function SchurJacobianStructure(
         st, collect(Int, e_rows), collect(Int, free_rows), ntables,
         table_nrows, table_ncols, table_top, table_offsets, table_ptr,
         entry_retained, entry_col, entry_table, retained_ptr, retained_entry,
-        reduced_offsets, doffsets, partition_columns(retained_ptr, nchunks)
+        reduced_offsets, doffsets, partition_columns(retained_ptr, nchunks),
+        rowblocks.table, rowblocks.first, rowblocks.nrows, rowblocks.ptr, rowblocks.blocks
     )
 end
 
 function SchurJacobianStructure(
     r_dims::AbstractVector{<:Integer}, e_dims::AbstractVector{<:Integer},
     couplings::AbstractVector{<:AbstractVector{<:Integer}}, e_rows::AbstractVector{<:Integer};
-    nchunks::Int=1, kwargs...
+    nchunks::Int=1, min_work::Integer=DEFAULT_MIN_WORK, kwargs...
 )
-    return SchurJacobianStructure(SchurStructure(r_dims, e_dims, couplings; nchunks), e_rows; nchunks, kwargs...)
+    return SchurJacobianStructure(SchurStructure(r_dims, e_dims, couplings; nchunks, min_work), e_rows; nchunks, kwargs...)
 end
 
 # Total number of stored table entries, the work measure for the threading decision
 @inline table_length(jst::SchurJacobianStructure) = jst.table_offsets[end] - 1
-@inline qr_threaded(jst::SchurJacobianStructure, nitems::Integer) = use_threads(nitems, table_length(jst))
+@inline qr_threaded(jst::SchurJacobianStructure, nitems::Integer) = use_threads(nitems, table_length(jst), jst.schur.min_work)
+# The number of ranges the QR kernels that loop over tables or eliminated blocks split into: the structure's chunks
+@inline qr_nchunks(jst::SchurJacobianStructure) = max(jst.schur.nchunks, length(jst.col_chunks))
 
 # coupling_entry(structure::SchurJacobianStructure, t, r) -> Int
 # The entry of retained block `r` in table `t`.
@@ -157,7 +174,7 @@ function coupling_entry(jst::SchurJacobianStructure, t::Integer, r::Integer)
 end
 
 # SchurBlockJacobian{T, RType}(structure::SchurJacobianStructure)
-# Raw table storage of a tall least-squares problem. `RType` is the storage of the reduced system the caller will
+# Raw table storage of a least-squares problem. `RType` is the storage of the reduced system the caller will
 # build from it: `Matrix{T}` (dense, `reduced_normal_dense!`) or `SparseMatrixCSC{T, Int}` (sparse,
 # `reduced_normal_sparse!`). It is a type parameter, not a field, so that code receiving only the Jacobian can
 # dispatch on it; no method of this package reads it.
@@ -182,6 +199,15 @@ zero!(J::SchurBlockJacobian) = (fill!(J.data, zero(eltype(J.data))); J)
 # allocated, zeroed tables.
 copy_structure(J::SchurBlockJacobian{T, RType}) where {T, RType} =
     SchurBlockJacobian{T, RType}(zeros(T, length(J.data)), J.structure)
+
+# A copy with its own tables (the same values) and the same structure, and a copy of the values into a
+# `SchurBlockJacobian` of the same structure (as a cache of systems needs for a prototype)
+Base.copy(J::SchurBlockJacobian{T, RType}) where {T, RType} = SchurBlockJacobian{T, RType}(copy(J.data), J.structure)
+function Base.copyto!(dest::SchurBlockJacobian, src::SchurBlockJacobian)
+    dest.structure === src.structure || throw(ArgumentError("copyto!: the two SchurBlockJacobians have different structures"))
+    copyto!(dest.data, src.data)
+    return dest
+end
 
 # ------------------------------------------------------------------------------------------------------------------
 # Assembly views
@@ -261,19 +287,84 @@ end
     return eliminated_block(J, e, 1, data_rows(jst, Int(e)))
 end
 
-# residual_block(J::SchurBlockJacobian, t[, row, nrows])
+# table_residual_block(J::SchurBlockJacobian, t[, row, nrows])
 # View of the rows `row:row+nrows-1` of the residual column of table `t`.
-@inline function residual_block(J::SchurBlockJacobian, t::Integer, row::Integer, nrows)
+@inline function table_residual_block(J::SchurBlockJacobian, t::Integer, row::Integer, nrows)
     jst = J.structure
     @boundscheck (1 <= t <= jst.ntables) || throw(BoundsError(J, t))
     nr_ = as_size(nrows)
     @boundscheck check_rows(J, Int(t), row, dynamic(nr_))
     return sized_vview(table_matrix(J.data, jst, Int(t)), Int(row), nr_, @inbounds(jst.table_ncols[t]))
 end
-@inline function residual_block(J::SchurBlockJacobian, t::Integer)
+@inline function table_residual_block(J::SchurBlockJacobian, t::Integer)
     jst = J.structure
     @boundscheck (1 <= t <= jst.ntables) || throw(BoundsError(J, t))
-    return residual_block(J, t, 1, data_rows(jst, Int(t)))
+    return table_residual_block(J, t, 1, data_rows(jst, Int(t)))
+end
+
+# ------------------------------------------------------------------------------------------------------------------
+# Addressing by row block (a structure built from a description)
+# ------------------------------------------------------------------------------------------------------------------
+
+# blockentry(jst, k, j) -> Int: the handle of layout column block j in row block k. A retained block's handle is its
+# entry in the row block's table (> 0), an eliminated block's is minus the block (< 0).
+function blockentry(jst::SchurJacobianStructure, k::Integer, j::Integer)
+    1 <= k <= length(jst.row_table) || throw(BoundsError(jst, k))
+    lo, hi = jst.row_ptr[k], jst.row_ptr[k + 1] - 1
+    idx = searchsortedfirst(view(jst.row_blocks, lo:hi), j) + lo - 1
+    (idx <= hi && jst.row_blocks[idx] == j) || throw(ArgumentError("Row block $k does not touch column block $j"))
+    nr = jst.schur.nrblocks
+    return j <= nr ? coupling_entry(jst, jst.row_table[k], j) : -(Int(j) - nr)
+end
+
+@inline function check_rowblock(J::SchurBlockJacobian, k::Int, nrows::Int)
+    jst = J.structure
+    1 <= k <= length(jst.row_table) || throw_rowblock_bounds(J, k)
+    m = @inbounds jst.row_nrows[k]
+    nrows == m || throw_rowblock_rows(k, m, nrows)
+    return nothing
+end
+
+@inline function check_rowblock_entry(J::SchurBlockJacobian, k::Int, entry::Int, nrows::Int, ncols::Int)
+    check_rowblock(J, k, nrows)
+    jst = J.structure
+    t = @inbounds jst.row_table[k]
+    if entry > 0
+        (entry <= length(jst.entry_table) && @inbounds(jst.entry_table[entry]) == t) || throw_not_an_entry(k, entry)
+        d = @inbounds Int(jst.schur.r_dims[jst.entry_retained[entry]])
+    else
+        (entry < 0 && -entry == t) || throw_not_an_entry(k, entry)
+        d = @inbounds Int(jst.schur.e_dims[-entry])
+    end
+    ncols == d || throw_rowblock_cols(k, d, ncols)
+    return nothing
+end
+
+@noinline throw_rowblock_bounds(J, k) = throw(BoundsError(J, k))
+@noinline throw_rowblock_rows(k, m, n) = throw(DimensionMismatch("Row block $k has $m rows, but $n were requested"))
+@noinline throw_rowblock_cols(k, d, n) = throw(DimensionMismatch("The block of row block $k has $d columns, but $n were requested"))
+@noinline throw_not_an_entry(k, entry) = throw(ArgumentError("$entry is not a block entry of row block $k; use blockentry"))
+
+# block(J, k, entry, nrows, ncols): row block k's rows in the columns of `entry`
+@inline function block(J::SchurBlockJacobian, k::Integer, entry::Integer, nrows, ncols)
+    jst = J.structure
+    nr_, nc_ = as_size(nrows), as_size(ncols)
+    @boundscheck check_rowblock_entry(J, Int(k), Int(entry), dynamic(nr_), dynamic(nc_))
+    row = @inbounds jst.row_first[k]
+    return entry > 0 ? (@inbounds coupling_block(J, entry, row, nr_, nc_)) : (@inbounds eliminated_block(J, -entry, row, nr_, nc_))
+end
+
+# residual_block(J, k[, nrows]): row block k's rows of the residual column
+@inline function residual_block(J::SchurBlockJacobian, k::Integer, nrows)
+    jst = J.structure
+    nr_ = as_size(nrows)
+    @boundscheck check_rowblock(J, Int(k), dynamic(nr_))
+    return @inbounds table_residual_block(J, jst.row_table[k], jst.row_first[k], nr_)
+end
+@inline function residual_block(J::SchurBlockJacobian, k::Integer)
+    jst = J.structure
+    @boundscheck (1 <= k <= length(jst.row_table)) || throw_rowblock_bounds(J, k)
+    return residual_block(J, k, @inbounds jst.row_nrows[k])
 end
 
 # Element data of the workspace: a factored copy of the tables, and per-chunk scratch for blocks above D_STATIC
