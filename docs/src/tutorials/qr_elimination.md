@@ -147,10 +147,11 @@ dense-or-sparse option), so that a solver handed only `J` can dispatch on it. Th
 the same for both. `linsolver` then chooses how the reduced problem is solved:
 
 - `:qr`: a QR of `J̃` with the retained damping appended as rows: dense, or SPQR for the sparse storage.
-  It keeps the conditioning of `J`. `:auto` is this for the sparse storage.
-- `:cholesky`, `:ldl`: the normal equations `S = J̃ᵀJ̃`, the same system as the Schur route, which squares the
-  condition number again. `:auto` is `:cholesky` for the dense storage: measured faster than QR of `J̃`, and reaching
-  the same cost, on bundle adjustment and on a bipartite sweep (2026-11-20).
+  It keeps the conditioning of `J`.
+- `:auto`, `:cholesky`, `:ldl`: the normal equations `S = J̃ᵀJ̃`, the same system as the Schur route, which squares the
+  condition number again (`:auto` and `:cholesky`: Cholesky, falling back to Bunch–Kaufman or LDLᵀ). `:auto` is this
+  for both storages: measured faster than QR of `J̃`, and reaching the same cost, on bundle adjustment and on a
+  bipartite sweep (2026-11-20).
 - `:lsmr` (with Krylov.jl loaded, which loads the extension `KrylovExt`): matrix-free LSMR, `J̃` applied through the
   factored tables and never formed, block-Jacobi preconditioned.
 
