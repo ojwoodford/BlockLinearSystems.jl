@@ -13,7 +13,7 @@ contract (SecondOrderOptimization.jl, for one) runs on them unchanged; nothing e
 | [`SchurBlockHessian`](@ref) with a dense `R` | dense Schur complement | `:auto`, `:cholesky` (Cholesky, falling back to Bunch–Kaufman), `:ldl` (Bunch–Kaufman) |
 | [`SchurBlockHessian`](@ref) with a [`SparseBlockLinearSystem`](@ref) `R` | sparse Schur complement | `:auto`, `:cholesky` (CHOLMOD, falling back to LDLᵀ), `:ldl` (LDLᵀ) |
 | [`SchurBlockJacobian`](@ref)`{Float64, Matrix{Float64}}` | QR elimination, dense reduced system | `:qr` (QR of the reduced Jacobian); `:auto`, `:cholesky` (its normal equations, Cholesky falling back to Bunch–Kaufman), `:ldl` (Bunch–Kaufman); `:lsmr` (with Krylov.jl) |
-| [`SchurBlockJacobian`](@ref)`{Float64, SparseMatrixCSC{Float64, Int}}` | QR elimination, sparse reduced system | `:qr` (SPQR of the reduced Jacobian); `:auto`, `:cholesky` (its normal equations, CHOLMOD falling back to LDLᵀ), `:ldl` (LDLᵀ); `:lsmr` (with Krylov.jl) |
+| [`SchurBlockJacobian`](@ref)`{Float64, SparseMatrixCSC{Float64, Int}}` | QR elimination, sparse reduced system | `:auto`, `:qr` (SPQR of the reduced Jacobian); `:cholesky`, `:ldl` (its normal equations); `:lsmr` (with Krylov.jl) |
 
 `makehessiansystem(H, linsolver)` builds the Schur systems and `makejacobiansystem(J, n, linsolver)` the
 QR-eliminated ones; `checkhessian`, `checkjacobian` and `check_jacobian_linsolver` validate a

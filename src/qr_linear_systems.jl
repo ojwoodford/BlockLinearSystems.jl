@@ -7,7 +7,7 @@
 #
 #   RType               :auto            :qr              :cholesky / :ldl            :lsmr (with Krylov)
 #   Matrix{Float64}     S = J̃ᵀJ̃, Chol.   dense QR of J̃    S = J̃ᵀJ̃, dense factor      LSMR on J̃
-#   SparseMatrixCSC     S = J̃ᵀJ̃, CHOLMOD SPQR of J̃        S = J̃ᵀJ̃, sparse factor     LSMR on J̃
+#   SparseMatrixCSC     SPQR of J̃        SPQR of J̃        S = J̃ᵀJ̃, sparse factor     LSMR on J̃
 #
 # The sparse J̃ has a fixed pattern (BlockLinearSystems' `build_reduced_jacobian_pattern`), built once and filled
 # per damping value by `reduced_jacobian!`; its damped least-squares problem goes through the sparse Jacobian
@@ -114,15 +114,13 @@ function reduced_system(J::SchurBlockJacobian{Float64, Matrix{Float64}}, ws, ::U
     sys = makehessiansystem(J.structure.schur.nr, static(:ldl))   # holds the Bunch-Kaufman workspace
     return DenseNormalReduced(sys)
 end
-function reduced_system(J::SchurBlockJacobian{Float64, SparseMatrixCSC{Float64, Int}}, ws, ::StaticSymbol{:qr})
+# QR whatever the storage: `:auto` is QR of J̃ for a sparse RType too (decided 2026-11-15, TP6)
+function reduced_system(J::SchurBlockJacobian{Float64, SparseMatrixCSC{Float64, Int}}, ws, ::Union{StaticSymbol{:auto}, StaticSymbol{:qr}})
     Jt = build_reduced_jacobian_pattern(J.structure, Float64)
     sys = DampedLinearSolve.makejacobiansystem(Jt, J.structure.schur.nr, static(:qr))
     return SparseQRReduced(sys, getJ(getA(sys)), getr(getA(sys)))
 end
-# `:auto` is the normal equations of the sparse J̃ (CHOLMOD, falling back to LDLᵀ), as for a dense one: measured 2026-11-20
-# against SPQR of J̃ on bundle adjustment and a bipartite sweep, where it counted wherever SPQR did and was 1.21x and 1.37x
-# faster in the mean (recommender-thresholds.md, A6). It was QR before (decided 2026-11-15, TP6).
-function reduced_system(J::SchurBlockJacobian{Float64, SparseMatrixCSC{Float64, Int}}, ws, ::Union{StaticSymbol{:auto}, StaticSymbol{:cholesky}, StaticSymbol{:ldl}})
+function reduced_system(J::SchurBlockJacobian{Float64, SparseMatrixCSC{Float64, Int}}, ws, ::Union{StaticSymbol{:cholesky}, StaticSymbol{:ldl}})
     jst = J.structure
     pattern = build_schur_pattern(jst.schur, Float64; extra_blocks = free_block_pairs(jst))
     S = copy(pattern.S_sparse)
@@ -258,7 +256,7 @@ function reduced_solve!(ls::QRSchurLinearSystem, red::DenseQRReduced, ::StaticSy
 end
 
 # Sparse J̃ and r̃, then the damped least-squares problem by SPQR, as for a sparse Jacobian
-function reduced_solve!(ls::QRSchurLinearSystem, red::SparseQRReduced, ::StaticSymbol{:qr}, lambda, s_r)
+function reduced_solve!(ls::QRSchurLinearSystem, red::SparseQRReduced, ::Union{StaticSymbol{:auto}, StaticSymbol{:qr}}, lambda, s_r)
     reduced_jacobian!(red.Jt, red.rt, ls.ws)
     markstale!(getA(red.sys))
     copyto!(ls.sr, s_r)
@@ -292,12 +290,12 @@ function reduced_solve!(ls::QRSchurLinearSystem, red::AbstractLinearSystem, s::S
     return status
 end
 
-# Sparse S, then CHOLMOD Cholesky falling back to LDLᵀ (:auto, :cholesky), or LDLᵀ for :ldl: the sparse Schur system's rule
+# Sparse S, then CHOLMOD Cholesky falling back to LDLᵀ, or LDLᵀ for :ldl: the sparse Schur system's rule
 # The sparse reduced normal equations are solved here, not through a DampedLinearSolve sparse system: the reduction
 # writes one triangle of S, which a DampedLinearSolve sparse system (full symmetric storage) would need mirrored every
 # solve, and its LDLᵀ is LDLFactorizations' full-matrix path, not the upper-triangle one used here, so the iterates
 # would change in rounding. The persistent CHOLMOD copy also saves a conversion per solve.
-function reduced_solve!(ls::QRSchurLinearSystem, red::SparseNormalReduced, s::Union{StaticSymbol{:auto}, StaticSymbol{:cholesky}, StaticSymbol{:ldl}}, lambda, s_r)
+function reduced_solve!(ls::QRSchurLinearSystem, red::SparseNormalReduced, s::Union{StaticSymbol{:cholesky}, StaticSymbol{:ldl}}, lambda, s_r)
     reduced_normal_sparse!(red.S, red.g, ls.ws, red.pattern)
     nz = nonzeros(red.S)
     @inbounds for i in eachindex(s_r)
