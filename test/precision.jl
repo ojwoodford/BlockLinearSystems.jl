@@ -71,6 +71,9 @@ pr_solvers(kind) = kind === :dense || PR_CHOLMOD32 ? (:auto, :cholesky, :ldl) : 
             @test err isa ArgumentError && occursin("does not offer Float32", err.msg) && occursin(":ldl", err.msg)
         end
     end
+    # The indefiniteness tolerance of the sparse reduced LDLᵀ follows the element type
+    @test BlockLinearSystems.indefinite_rtol(Float64) === 1e-6
+    @test BlockLinearSystems.indefinite_rtol(Float32) ≈ Float64(eps(Float32))^(3 / 8)
     # The Float64 system is unchanged in kind
     @test systemeltype(makehessiansystem(dense_schur_hessian(p), :auto)) === Float64
 end
