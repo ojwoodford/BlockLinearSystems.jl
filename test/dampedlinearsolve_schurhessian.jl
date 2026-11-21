@@ -645,7 +645,9 @@ end
         n = length(p.b)
         @test isnothing(DampedLinearSolve.checkhessian(H, n))
         @test_throws DimensionMismatch DampedLinearSolve.checkhessian(H, n + 1)
-        @test_throws ArgumentError DampedLinearSolve.checkhessian(to_float32(H), n)
+        # Float64 and Float32 prototypes are accepted (single-precision.md); another element type is not
+        @test isnothing(DampedLinearSolve.checkhessian(to_float32(H), n))
+        @test_throws ArgumentError DampedLinearSolve.checkhessian(SchurBlockHessian(H.structure, H.R isa Matrix ? Float16.(H.R) : H.R, Float16.(H.E_data), Float16.(H.C_data)), n)
         @test DampedLinearSolve.structurekey(H) == (typeof(H), H.structure)
     end
 

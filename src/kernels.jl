@@ -97,9 +97,10 @@ const D_STATIC = 8
 @inline make_smat(arr::AbstractVector{T}, off::Int, ::StaticInt{D}) where {T, D} =
     SMatrix{D, D, T, D * D}(ntuple(i -> @inbounds(arr[off + i - 1]), Val(D * D)))
 
-# dot(a[ia:ia+de-1], b[ib:ib+de-1]) with a static or run-time dimension
-@inline function dot_dim(a::Vector{T}, ia::Int, b::Vector{T}, ib::Int, s_de::Union{StaticInt, Int}) where T
-    acc = zero(T)
+# dot(a[ia:ia+de-1], b[ib:ib+de-1]) with a static or run-time dimension, accumulated in the promoted element type
+# (Float64 for a Float32 block against a Float64 vector)
+@inline function dot_dim(a::Vector, ia::Int, b::Vector, ib::Int, s_de::Union{StaticInt, Int})
+    acc = zero(promote_type(eltype(a), eltype(b)))
     @inbounds for i in 0:dimval(s_de) - 1
         acc += a[ia + i] * b[ib + i]
     end

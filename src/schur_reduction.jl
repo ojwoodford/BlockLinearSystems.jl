@@ -14,10 +14,11 @@ Memory: `E_inv` takes `d_e²` values per eliminated block, and when any eliminat
 eliminated dimension). Eliminated blocks up to 65535 are supported, but large ones cost memory accordingly.
 """
 struct SchurReductionWorkspace{T}
-    W_scratch::Vector{Matrix{T}}          # per chunk: max_De x max_De scratch for blocks above D_STATIC (0 x 0 otherwise), for phase 1 and back-substitution
+    W_scratch::Vector{Matrix{T}}          # per chunk: max_De x max_De scratch for blocks above D_STATIC (0 x 0 otherwise), for phase 1
+    t_scratch::Vector{Vector{Float64}}    # per chunk: max_De scratch for the back-substitution of blocks above D_STATIC (empty otherwise)
     W_data::Vector{T}                     # W_er = E_e^-1 C_er for every coupling, same layout as C_data
     E_inv_data::Vector{T}                 # Cached E_e(lambda)^-1: length sum_e d_e^2
-    z_data::Vector{T}                     # Cached z_e = E_e(lambda)^-1 b_e: length sum_e d_e
+    z_data::Vector{Float64}               # Cached z_e = E_e(lambda)^-1 b_e: length sum_e d_e (b is Float64, whatever T is)
     retained_ptr::Vector{Int}                  # Retained-block-major CSR pointer into retained_entry
     retained_entry::Vector{Int}                # Coupling entries (indices into entry_retained) of each retained block, ascending
     entry_eliminated::Vector{Int}           # Eliminated block of each coupling entry
@@ -53,11 +54,12 @@ function SchurReductionWorkspace{T}(structure::SchurStructure, nchunks::Int) whe
     # One scratch matrix per phase-1 chunk, only used for blocks above D_STATIC
     nscratch = max(nchunks, maximum(length, structure.chunks; init=1))
     W_scratch = [Matrix{T}(undef, max_De > D_STATIC ? max_De : 0, max_De > D_STATIC ? max_De : 0) for _ in 1:nscratch]
+    t_scratch = [Vector{Float64}(undef, max_De > D_STATIC ? max_De : 0) for _ in 1:nscratch]
 
     total_r_size = sum(Int(d)^2 for d in structure.e_dims; init=0)
     total_e_scalars = sum(Int(d) for d in structure.e_dims; init=0)
     E_inv_data = Vector{T}(undef, total_r_size)
-    z_data = Vector{T}(undef, total_e_scalars)
+    z_data = Vector{Float64}(undef, total_e_scalars)
 
     ncoup = length(structure.entry_retained)
     total_c = 0
@@ -83,7 +85,7 @@ function SchurReductionWorkspace{T}(structure::SchurStructure, nchunks::Int) whe
     end
 
     return SchurReductionWorkspace{T}(
-        W_scratch, W_data, E_inv_data, z_data,
+        W_scratch, t_scratch, W_data, E_inv_data, z_data,
         retained_ptr, retained_entry, entry_eliminated, partition_columns(retained_ptr, max(nchunks, 1)),
         Base.Threads.Atomic{Int}(0)
     )
@@ -96,7 +98,7 @@ A workspace for a second linear system with the same structure: own `E_inv`/`z` 
 the scratch (`W_data`, `W_scratch`) is only live within one solve and is shared.
 """
 trial_workspace(ws::SchurReductionWorkspace{T}) where T = SchurReductionWorkspace{T}(
-    ws.W_scratch, ws.W_data, similar(ws.E_inv_data), similar(ws.z_data),
+    ws.W_scratch, ws.t_scratch, ws.W_data, similar(ws.E_inv_data), similar(ws.z_data),
     ws.retained_ptr, ws.retained_entry, ws.entry_eliminated, ws.col_chunks, Base.Threads.Atomic{Int}(0)
 )
 
@@ -111,15 +113,18 @@ Returns `false` if the damped block is numerically singular or not positive defi
 `Int` dimension, which uses a LAPACK Cholesky on the `scratch` matrix (O(d^3) per eliminated block plus
 O(d^2) per coupling row; no allocation).
 """
+# `T` is the element type of the matrices; `b_e`, `z_data`, `lambda` and the scaling are Float64. The damping is
+# formed in Float64 and narrowed to T once.
 @inline function factor_eliminated!(
-    E_inv_data::Vector{T}, z_data::Vector{T}, W_data::Vector{T}, ::Matrix{T},
+    E_inv_data::Vector{T}, z_data::Vector{<:Real}, W_data::Vector{T}, ::Matrix{T},
     structure::SchurStructure, E_data::Vector{T}, C_data::Vector{T},
-    b_e::AbstractVector{T}, scaling_e::AbstractVector{T}, lambda::T, e::Int, s_de::StaticInt{De}
+    b_e::AbstractVector, scaling_e::AbstractVector, lambda::Real, e::Int, s_de::StaticInt{De}
 ) where {T, De}
     eo = structure.eoffsets[e]
     sc_off = structure.boffsets_e[e]
 
-    res = inv_sym_block(make_smat(E_data, eo, s_de), lambda, make_svec(scaling_e, sc_off, s_de))
+    damp = SVector{De, T}(lambda .* make_svec(scaling_e, sc_off, s_de))
+    res = inv_sym_block(make_smat(E_data, eo, s_de), one(T), damp)
     res.success || return false
     E_inv = res.invH
     @inbounds for i in 1:(De * De)
@@ -145,9 +150,9 @@ O(d^2) per coupling row; no allocation).
 end
 
 @inline function factor_eliminated!(
-    E_inv_data::Vector{T}, z_data::Vector{T}, W_data::Vector{T}, scratch::Matrix{T},
+    E_inv_data::Vector{T}, z_data::Vector{<:Real}, W_data::Vector{T}, scratch::Matrix{T},
     structure::SchurStructure, E_data::Vector{T}, C_data::Vector{T},
-    b_e::AbstractVector{T}, scaling_e::AbstractVector{T}, lambda::T, e::Int, de::Int
+    b_e::AbstractVector, scaling_e::AbstractVector, lambda::Real, e::Int, de::Int
 ) where T
     eo = structure.eoffsets[e]
     sc_off = structure.boffsets_e[e]
@@ -177,7 +182,7 @@ end
     end
 
     @inbounds for i in 1:de
-        acc = zero(T)
+        acc = 0.0   # z_e is Float64: E⁻¹ in T times b_e in Float64, accumulated in Float64
         for j in 1:de
             acc += E_inv_data[eo + (j - 1) * de + i - 1] * b_e[sc_off + j - 1]
         end
@@ -208,10 +213,10 @@ Phase 1 over a chunk of eliminated blocks of uniform dimension. On failure the l
 eliminated block index is recorded in `failed_block`.
 """
 function factor_eliminated_group!(
-    E_inv_data::Vector{T}, z_data::Vector{T}, W_data::Vector{T}, scratch::Matrix{T},
+    E_inv_data::Vector{T}, z_data::Vector{<:Real}, W_data::Vector{T}, scratch::Matrix{T},
     failed_block::Base.Threads.Atomic{Int},
     structure::SchurStructure, E_data::Vector{T}, C_data::Vector{T},
-    b_e::AbstractVector{T}, scaling_e::AbstractVector{T}, lambda::T,
+    b_e::AbstractVector, scaling_e::AbstractVector, lambda::Real,
     e_chunk::UnitRange{Int}, s_de::Union{StaticInt, Int}
 ) where T
     @inbounds for e in e_chunk
@@ -235,7 +240,7 @@ end
 # Contribution of coupling entry c2 (eliminated block e, retained block r2) to g_S and to the column
 # block r2 of S: g_S[r2] -= C_er2' z_e and S[r1, r2] -= W_er1' C_er2 for every r1 <= r2 coupled to e.
 @inline function accumulate_entry_dense!(
-    S::Matrix{T}, g_S::Vector{T}, structure::SchurStructure, C_data::Vector{T}, W_data::Vector{T}, z_data::Vector{T},
+    S::Matrix{T}, g_S::AbstractVector, structure::SchurStructure, C_data::Vector{T}, W_data::Vector{T}, z_data::Vector{<:Real},
     c2::Int, e::Int, s_de::Union{StaticInt, Int}
 ) where T
     de = dimval(s_de)
@@ -270,7 +275,7 @@ Phase 2 for the retained blocks in `r_range`: write all contributions to their c
 triangle of `S` and to `g_S` directly. Chunks with disjoint `r_range` never write the same entry.
 """
 function accumulate_dense_columns!(
-    S::Matrix{T}, g_S::Vector{T}, structure::SchurStructure, C_data::Vector{T}, W_data::Vector{T}, z_data::Vector{T},
+    S::Matrix{T}, g_S::AbstractVector, structure::SchurStructure, C_data::Vector{T}, W_data::Vector{T}, z_data::Vector{<:Real},
     retained_ptr::Vector{Int}, retained_entry::Vector{Int}, entry_eliminated::Vector{Int}, r_range::UnitRange{Int}
 ) where T
     @inbounds for r2 in r_range
@@ -286,7 +291,7 @@ function accumulate_dense_columns!(
 end
 
 @inline function accumulate_entry_sparse!(
-    nzval::Vector{T}, g_S::Vector{T}, structure::SchurStructure, C_data::Vector{T}, W_data::Vector{T}, z_data::Vector{T},
+    nzval::Vector{T}, g_S::AbstractVector, structure::SchurStructure, C_data::Vector{T}, W_data::Vector{T}, z_data::Vector{<:Real},
     S_colptr::Vector{Ti}, block_colptr::Vector{Ti}, block_rowval::Vector{Ti}, block_row_offsets::Vector{Int}, col_heights::Vector{Int},
     c2::Int, e::Int, s_de::Union{StaticInt, Int}
 ) where {T, Ti}
@@ -332,7 +337,7 @@ end
 Sparse counterpart of [`accumulate_dense_columns!`](@ref), writing into `S.nzval`.
 """
 function accumulate_sparse_columns!(
-    nzval::Vector{T}, g_S::Vector{T}, structure::SchurStructure, C_data::Vector{T}, W_data::Vector{T}, z_data::Vector{T},
+    nzval::Vector{T}, g_S::AbstractVector, structure::SchurStructure, C_data::Vector{T}, W_data::Vector{T}, z_data::Vector{<:Real},
     retained_ptr::Vector{Int}, retained_entry::Vector{Int}, entry_eliminated::Vector{Int},
     S_colptr::Vector{Ti}, block_colptr::Vector{Ti}, block_rowval::Vector{Ti},
     block_row_offsets::Vector{Int}, col_heights::Vector{Int}, r_range::UnitRange{Int}
@@ -357,8 +362,8 @@ Reset dense reduced system S = R + lambda * diag(scaling_r) and the failure flag
 finite and non-negative (`ArgumentError` otherwise, before `S` is written).
 """
 function reset_schur_dense!(
-    S::Matrix{T}, R::Matrix{T}, scaling_r::AbstractVector{T},
-    lambda::T, ws::SchurReductionWorkspace{T}
+    S::Matrix{T}, R::Matrix{T}, scaling_r::AbstractVector,
+    lambda::Real, ws::SchurReductionWorkspace{T}
 ) where T
     check_damping(lambda, scaling_r, :scaling_r)
     copyto!(S, R)
@@ -377,8 +382,8 @@ finite and non-negative (`ArgumentError` otherwise, before `nzval` is written).
 """
 function reset_schur_sparse!(
     nzval::Vector{T}, R_nzval::Vector{T}, r_to_s_map::Vector{Int},
-    diag_inds::Vector{Int}, scaling_r::AbstractVector{T},
-    lambda::T, ws::SchurReductionWorkspace{T}
+    diag_inds::Vector{Int}, scaling_r::AbstractVector,
+    lambda::Real, ws::SchurReductionWorkspace{T}
 ) where T
     check_damping(lambda, scaling_r, :scaling_r)
     fill!(nzval, zero(T))
@@ -397,8 +402,8 @@ end
 
 # Phase 1 for all groups of eliminated blocks; false if any block failed
 function factor_all_eliminated!(
-    structure::SchurStructure, E_data::Vector{T}, C_data::Vector{T}, b_e::AbstractVector{T},
-    scaling_e::AbstractVector{T}, lambda::T, ws::SchurReductionWorkspace{T}
+    structure::SchurStructure, E_data::Vector{T}, C_data::Vector{T}, b_e::AbstractVector,
+    scaling_e::AbstractVector, lambda::Real, ws::SchurReductionWorkspace{T}
 ) where T
     for g_idx in 1:nruns(structure.e_dims)
         chunks = structure.chunks[g_idx]
@@ -421,8 +426,8 @@ Two-phase Schur reduction into the dense upper triangle of `S` (already holding 
 `lambda` and `scaling_e` must be finite and non-negative (`ArgumentError` otherwise, before any work).
 """
 function reduce_schur_dense!(
-    S::Matrix{T}, g_S::Vector{T}, b_r::AbstractVector{T}, b_e::AbstractVector{T},
-    scaling_e::AbstractVector{T}, lambda::T, structure::SchurStructure,
+    S::Matrix{T}, g_S::AbstractVector, b_r::AbstractVector, b_e::AbstractVector,
+    scaling_e::AbstractVector, lambda::Real, structure::SchurStructure,
     E_data::Vector{T}, C_data::Vector{T}, ws::SchurReductionWorkspace{T}
 ) where T
     check_damping(lambda, scaling_e, :scaling_e)
@@ -443,8 +448,8 @@ Two-phase Schur reduction into `S.nzval` (already holding `R` plus damping) and 
 `lambda` and `scaling_e` must be finite and non-negative (`ArgumentError` otherwise, before any work).
 """
 function reduce_schur_sparse!(
-    S::SparseMatrixCSC{T, Ti}, g_S::Vector{T}, b_r::AbstractVector{T}, b_e::AbstractVector{T},
-    scaling_e::AbstractVector{T}, lambda::T, structure::SchurStructure,
+    S::SparseMatrixCSC{T, Ti}, g_S::AbstractVector, b_r::AbstractVector, b_e::AbstractVector,
+    scaling_e::AbstractVector, lambda::Real, structure::SchurStructure,
     E_data::Vector{T}, C_data::Vector{T},
     block_colptr::Vector{Ti}, block_rowval::Vector{Ti},
     block_row_offsets::Vector{Int}, col_heights::Vector{Int},
@@ -471,11 +476,11 @@ and `E_inv` is applied once per eliminated block. Blocks above `BlockLinearSyste
 the workspace's per-chunk scratch (shared with its [`trial_workspace`](@ref)s), so nothing is allocated.
 """
 function backsubstitute!(
-    x_e::AbstractVector{T}, x_r::AbstractVector{T},
+    x_e::AbstractVector{TX}, x_r::AbstractVector{TR},
     structure::SchurStructure, C_data::Vector{T},
     ws::SchurReductionWorkspace{T}
-) where T
-    E_inv_data, z_data, scratch = ws.E_inv_data, ws.z_data, ws.W_scratch
+) where {T, TX, TR}
+    E_inv_data, z_data, scratch = ws.E_inv_data, ws.z_data, ws.t_scratch
     for g_idx in 1:nruns(structure.e_dims)
         de = runblocksize(structure.e_dims, g_idx)
         chunks = structure.chunks[g_idx]
@@ -490,12 +495,13 @@ function backsubstitute!(
     return nothing
 end
 
+# x_e, x_r, z and the coupling sum t are Float64; C and E⁻¹ are in T
 function backsubstitute_group!(
-    x_e::AbstractVector{T}, x_r::AbstractVector{T},
+    x_e::AbstractVector{TX}, x_r::AbstractVector{TR},
     structure::SchurStructure, C_data::Vector{T},
-    E_inv_data::Vector{T}, z_data::Vector{T}, ::Matrix{T},
+    E_inv_data::Vector{T}, z_data::Vector{TZ}, ::Vector{Float64},
     e_chunk::UnitRange{Int}, s_de::StaticInt{De}
-) where {T, De}
+) where {T, De, TX, TR, TZ}
     eliminated_ptr = structure.eliminated_ptr
     entry_retained = structure.entry_retained
     coffsets = structure.coffsets
@@ -508,7 +514,7 @@ function backsubstitute_group!(
         e_off = boffsets_e[e]
 
         # t = sum over the retained blocks r coupled to e of C_er * x_r
-        t = zero(SVector{De, T})
+        t = zero(SVector{De, Float64})
         for c in eliminated_ptr[e]:(eliminated_ptr[e + 1] - 1)
             r = entry_retained[c]
             dr = Int(r_dims[r])
@@ -528,18 +534,18 @@ function backsubstitute_group!(
 end
 
 # Blocks above D_STATIC dimensions: same computation with run-time loops; `t` is the first `de` entries of the
-# chunk's scratch matrix (max_De x max_De, max_De >= de)
+# chunk's Float64 scratch vector (max_De >= de)
 function backsubstitute_group!(
-    x_e::AbstractVector{T}, x_r::AbstractVector{T},
+    x_e::AbstractVector{TX}, x_r::AbstractVector{TR},
     structure::SchurStructure, C_data::Vector{T},
-    E_inv_data::Vector{T}, z_data::Vector{T}, t::Matrix{T},
+    E_inv_data::Vector{T}, z_data::Vector{TZ}, t::Vector{Float64},
     e_chunk::UnitRange{Int}, de::Int
-) where T
+) where {T, TX, TR, TZ}
     @inbounds for e in e_chunk
         e_off = structure.boffsets_e[e]
         eo = structure.eoffsets[e]
         for i in 1:de
-            t[i] = zero(T)
+            t[i] = 0.0
         end
         for c in structure.eliminated_ptr[e]:(structure.eliminated_ptr[e + 1] - 1)
             r = structure.entry_retained[c]
