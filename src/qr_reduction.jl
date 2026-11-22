@@ -43,7 +43,7 @@ end
 # Returns false for a non-finite table or a numerically singular U.
 @inline function qr_table!(
     F::Vector{T}, Rw::Vector{T}, Rr::Vector{Float64}, jst::SchurJacobianStructure,
-    scaling_e::AbstractVector{T}, lambda::T, e::Int, s_de::Union{StaticInt, Int}
+    scaling_e::AbstractVector, lambda::Float64, e::Int, s_de::Union{StaticInt, Int}
 ) where T
     de = dimval(s_de)
     @inbounds begin
@@ -58,7 +58,7 @@ end
         end
         so = jst.schur.boffsets_e[e]
         for k in 1:de
-            F[off + (ce + k - 1) * M + me + k - 1] = sqrt(lambda * scaling_e[so + k - 1])
+            F[off + (ce + k - 1) * M + me + k - 1] = T(sqrt(lambda * scaling_e[so + k - 1]))   # formed in Float64
         end
     end
     # Relative singularity threshold on the diagonal of U, scaled by the number of rows: the rounding left on an
@@ -122,7 +122,7 @@ end
 
 function qr_group!(
     F::Vector{T}, Rw::Vector{T}, Rr::Vector{Float64}, failed_block::Base.Threads.Atomic{Int}, jst::SchurJacobianStructure,
-    scaling_e::AbstractVector{T}, lambda::T, e_chunk::UnitRange{Int}, s_de::Union{StaticInt, Int}
+    scaling_e::AbstractVector, lambda::Float64, e_chunk::UnitRange{Int}, s_de::Union{StaticInt, Int}
 ) where T
     @inbounds for e in e_chunk
         fb = failed_block[]                  # a lower failure elsewhere: no block above it can be the lowest
@@ -137,8 +137,8 @@ end
 
 # reduce_qr!(ws::QRReductionWorkspace, J::SchurBlockJacobian, scaling_e, lambda) -> Bool
 # QR elimination of every eliminated block.
-function reduce_qr!(ws::QRReductionWorkspace{T}, J::SchurBlockJacobian{T}, scaling_e::AbstractVector{T}, lambda_in::Real) where T
-    lambda = T(lambda_in)
+function reduce_qr!(ws::QRReductionWorkspace{T}, J::SchurBlockJacobian{T}, scaling_e::AbstractVector, lambda_in::Real) where T
+    lambda = Float64(lambda_in)
     jst = ws.structure
     J.structure === jst || throw(ArgumentError("The Jacobian and the workspace were built for different structures"))
     st = jst.schur

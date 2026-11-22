@@ -19,17 +19,20 @@ end
 # Back-substitution
 # ------------------------------------------------------------------------------------------------------------------
 
+# x_e may be wider than the factored tables (Float64 x_e of a Float32 system): the right-hand side is then accumulated
+# in x_e's element type
 function qr_backsubstitute_group!(
-    x_e::AbstractVector{T}, x_r::AbstractVector, F::Vector{T}, jst::SchurJacobianStructure,
+    x_e::AbstractVector{TX}, x_r::AbstractVector, F::Vector{T}, jst::SchurJacobianStructure,
     ::Vector{T}, e_chunk::UnitRange{Int}, s_de::StaticInt{De}
-) where {T, De}
+) where {TX, T, De}
     st = jst.schur
+    TA = promote_type(TX, T)
     @inbounds for e in e_chunk
         M = jst.table_nrows[e]
         C = jst.table_ncols[e]
         off = jst.table_offsets[e]
         ce = C - De - 1
-        t = make_svec(F, off + (C - 1) * M, s_de)                    # q
+        t = SVector{De, TA}(make_svec(F, off + (C - 1) * M, s_de))   # q
         for u in jst.table_ptr[e]:jst.table_ptr[e + 1] - 1
             r = jst.entry_retained[u]
             ro = st.boffsets_r[r]
@@ -53,7 +56,7 @@ function qr_backsubstitute_group!(
 end
 
 function qr_backsubstitute_group!(
-    x_e::AbstractVector{T}, x_r::AbstractVector, F::Vector{T}, jst::SchurJacobianStructure,
+    x_e::AbstractVector, x_r::AbstractVector, F::Vector{T}, jst::SchurJacobianStructure,
     tbuf::Vector{T}, e_chunk::UnitRange{Int}, de::Int
 ) where T
     st = jst.schur
@@ -91,7 +94,7 @@ end
 
 # backsubstitute!(x_e, x_r, ws::QRReductionWorkspace)
 # Recover the eliminated variables `x_e = U⁻¹ (q - B x_r)` from the retained ones, per table.
-function backsubstitute!(x_e::AbstractVector{T}, x_r::AbstractVector, ws::QRReductionWorkspace{T}) where T
+function backsubstitute!(x_e::AbstractVector, x_r::AbstractVector, ws::QRReductionWorkspace{T}) where T
     jst = ws.structure
     st = jst.schur
     for g_idx in 1:nruns(st.e_dims)
@@ -140,6 +143,15 @@ end
     acc = zero(promote_type(T, eltype(b)))
     @inbounds for i in 0:n - 1
         acc += a[ia + i] * b[ib + i]
+    end
+    return acc
+end
+# The same, accumulated in Float64 whatever the element types (the squared column norms of a Float32 system's J,
+# which every query returns in Float64); for Float64 vectors it is `dot_run`
+@inline function dot_run64(a::AbstractVector, ia::Int, b::AbstractVector, ib::Int, n::Int)
+    acc = 0.0
+    @inbounds for i in 0:n - 1
+        acc += Float64(a[ia + i]) * Float64(b[ib + i])
     end
     return acc
 end
@@ -360,7 +372,7 @@ end
 # Contributions of entry u2 (table t, retained block r2) to g_S[r2] and to block column r2 of S, through every
 # entry u1 <= u2 of the same table (entries are sorted by retained block within a table, so r1 <= r2).
 # `slot(u1, row, col)` returns the index in `Sv` of S[row of r1, col of r2].
-@inline function accumulate_qr_entry!(slot::Fs, Sv::AbstractArray{T}, g_S::AbstractVector{T}, F::Vector{T},
+@inline function accumulate_qr_entry!(slot::Fs, Sv::AbstractArray{T}, g_S::AbstractVector, F::Vector{T},
                                       jst::SchurJacobianStructure, u2::Int) where {Fs, T}
     st = jst.schur
     @inbounds begin
@@ -394,7 +406,7 @@ end
 
 # reduced_normal_dense!(S, g_S, ws::QRReductionWorkspace)
 # Overwrite the upper triangle of `S` with `J̃ᵀJ̃` and `g_S` with `J̃ᵀr̃`.
-function reduced_normal_dense!(S::Matrix{T}, g_S::AbstractVector{T}, ws::QRReductionWorkspace{T}) where T
+function reduced_normal_dense!(S::Matrix{T}, g_S::AbstractVector, ws::QRReductionWorkspace{T}) where T
     jst = ws.structure
     st = jst.schur
     F = ws.factored
@@ -409,7 +421,7 @@ function reduced_normal_dense!(S::Matrix{T}, g_S::AbstractVector{T}, ws::QRReduc
                 for row in 1:nr
                     S[row, col] = zero(T)
                 end
-                g_S[col] = zero(T)
+                g_S[col] = zero(eltype(g_S))
             end
             for k in jst.retained_ptr[r2]:jst.retained_ptr[r2 + 1] - 1
                 u2 = jst.retained_entry[k]
@@ -425,7 +437,7 @@ end
 
 # reduced_normal_sparse!(S::SparseMatrixCSC, g_S, ws::QRReductionWorkspace, pattern)
 # Sparse counterpart of [`reduced_normal_dense!`](@ref), writing `S.nzval`.
-function reduced_normal_sparse!(S::SparseMatrixCSC{T}, g_S::AbstractVector{T}, ws::QRReductionWorkspace{T}, pattern::NamedTuple) where T
+function reduced_normal_sparse!(S::SparseMatrixCSC{T}, g_S::AbstractVector, ws::QRReductionWorkspace{T}, pattern::NamedTuple) where T
     jst = ws.structure
     st = jst.schur
     F = ws.factored
@@ -445,7 +457,7 @@ function reduced_normal_sparse!(S::SparseMatrixCSC{T}, g_S::AbstractVector{T}, w
                 nzval[i] = zero(T)
             end
             for col in ro2:ro2 + dr2 - 1
-                g_S[col] = zero(T)
+                g_S[col] = zero(eltype(g_S))
             end
             col_base = Int(S_colptr[ro2])
             stride = col_heights[r2]
@@ -577,9 +589,9 @@ function jtj_diag!(dg::AbstractVector, src::SchurTables)
     jst = src.structure
     D = table_data(src)
     length(dg) == jst.schur.nr + sum(Int, jst.schur.e_dims; init=0) || throw(DimensionMismatch("d has length $(length(dg)), expected $(jst.schur.nr + sum(Int, jst.schur.e_dims; init=0))"))
-    colfun = (cb, rb, M) -> dot_run(D, cb, D, cb, M)
+    colfun = (cb, rb, M) -> dot_run64(D, cb, D, cb, M)
     foreach_retained(r -> sum_retained_columns!(dg, src, r, colfun), jst)
-    foreach_eliminated_column((i, cb, rb, M) -> (@inbounds dg[i] = dot_run(D, cb, D, cb, M)), src)
+    foreach_eliminated_column((i, cb, rb, M) -> (@inbounds dg[i] = dot_run64(D, cb, D, cb, M)), src)
     return dg
 end
 

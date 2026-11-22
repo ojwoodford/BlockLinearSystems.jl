@@ -78,4 +78,58 @@ pr_solvers(kind) = kind === :dense || PR_CHOLMOD32 ? (:auto, :cholesky, :ldl) : 
     @test systemeltype(makehessiansystem(dense_schur_hessian(p), :auto)) === Float64
 end
 
+# The QR-elimination systems of a SchurBlockJacobian{Float32} (SP-B1, the Jacobian side; decision 12): the tables, their
+# elimination and the reduced solve in Float32; the residual, the gradient Jᵀr, b, x, the damping and every query in
+# Float64. Solutions are compared with a Float64 dense solve of the normal equations of the narrowed J, to a tolerance
+# in units of eps(Float32)·cond(JᵀJ + λD).
+using Main.QRFixtures
+to32(J::SchurBlockJacobian{Float64}, ::Type{R}) where R = SchurBlockJacobian{Float32, R}(Float32.(J.data), copy(J.r), J.structure)
+pr_jsolvers(::Type{Matrix{Float32}}) = (:auto, :qr, :cholesky, :ldl)
+pr_jsolvers(::Type{SparseMatrixCSC{Float32, Int}}) = PR_CHOLMOD32 ? (:cholesky, :ldl) : (:ldl,)
+@testset "precision.jl: QR-elimination systems of a SchurBlockJacobian{Float32}" begin
+    for p in qr_problems(Float64)[[1, 3]], R in (Matrix{Float32}, SparseMatrixCSC{Float32, Int}), s in pr_jsolvers(R)
+        @testset "$(p.name), $R, :$s" begin
+            J = to32(p.J, R)
+            n = size(p.Jf, 2)
+            J64 = Float64.(Float32.(p.Jf))   # the stored Float32 Jacobian
+            ls = makejacobiansystem(J, n, s)
+            @test systemeltype(ls) === Float32
+            @test eltype(getA(ls).J.data) === Float32 && eltype(getA(ls).J.r) === Float64 && eltype(ls.ws.factored) === Float32
+            @test eltype(getb(ls)) === Float64 && eltype(getx(ls)) === Float64
+            gradient!(getb(ls), getA(ls)); markstale!(getA(ls))
+            @test getb(ls) ≈ J64' * Float64.(p.rf) rtol = 1e-13   # accumulated in Float64 from the Float32 J and the Float64 r
+            for (λ, sc) in ((0.0, nothing), (0.3, nothing), (0.3, vec(sum(abs2, J64; dims = 1))))
+                isnothing(sc) ? dampen!(ls, λ) : dampen!(ls, λ, sc)
+                @test solve!(ls, s) in (Success, Indefinite)
+                Ad = J64' * J64 + λ * (isnothing(sc) ? I : Diagonal(sc))
+                ref = Ad \ getb(ls)
+                @test norm(getx(ls) - ref) / norm(ref) <= 16 * n * eps(Float32) * cond(Ad)
+            end
+            @test max_diag(ls) isa Float64 && isapprox(max_diag(ls), maximum(vec(sum(abs2, J64; dims = 1))); rtol = 1e-14)
+            d = zeros(n); getdiag!(d, ls)
+            @test d ≈ vec(sum(abs2, J64; dims = 1)) rtol = 1e-14
+            v = [cos(0.3 * i) for i in 1:n]
+            @test DampedLinearSolve.quadform(getA(ls), v) ≈ norm(J64 * v)^2 rtol = 1e-12
+            @test dampingfloor(ls) == (s in (:cholesky, :ldl) ? Float64(eps(Float32)) : Float64(eps(Float32))^2)
+            # Nothing allocates on the dense routes (CHOLMOD and LDLFactorizations allocate inside the library, as in Float64)
+            dampen!(ls, 0.3)
+            R <: Matrix && @test pr_allocs(ls, static(s)) == 0
+            t = DampedLinearSolve.copy_structure(ls)
+            @test t isa typeof(ls) && systemeltype(t) === Float32 && getx(t) === getx(ls)
+        end
+    end
+    # The checks: element type, and decision 10 for the sparse reduced system (SPQR is Float64 only)
+    p = qr_problems(Float64)[3]
+    n = size(p.Jf, 2)
+    @test DampedLinearSolve.checkjacobian(to32(p.J, Matrix{Float32})) === nothing
+    J16 = SchurBlockJacobian{Float16, Matrix{Float16}}(p.J.structure)
+    err = try DampedLinearSolve.checkjacobian(J16); nothing catch e; e end
+    @test err isa ArgumentError && occursin("Float64 or Float32", err.msg)
+    for s in (:auto, :qr, (PR_CHOLMOD32 ? () : (:cholesky,))...)
+        err = try makejacobiansystem(to32(p.J, SparseMatrixCSC{Float32, Int}), n, s); nothing catch e; e end
+        @test err isa ArgumentError && occursin("does not offer Float32", err.msg) && occursin(":ldl", err.msg)
+    end
+    @test systemeltype(makejacobiansystem(copy(p.J), n, :auto)) === Float64
+end
+
 end # module

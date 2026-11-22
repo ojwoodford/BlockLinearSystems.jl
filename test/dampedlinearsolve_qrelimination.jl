@@ -251,7 +251,8 @@ lp1_bytes(ls, lambda, scaling) = (lp1_solve!(ls, lambda, scaling); @allocated lp
         p = TP3Problem(tp3_structure())
         J = SchurBlockJacobian{Float64, RT}(p.jst)
         @test isnothing(SOO.checkjacobian(J))
-        @test_throws ArgumentError SOO.checkjacobian(SchurBlockJacobian{Float32, RT === Matrix{Float64} ? Matrix{Float32} : SparseMatrixCSC{Float32, Int}}(p.jst))
+        @test isnothing(SOO.checkjacobian(SchurBlockJacobian{Float32, RT === Matrix{Float64} ? Matrix{Float32} : SparseMatrixCSC{Float32, Int}}(p.jst)))   # SP-B1
+        @test_throws ArgumentError SOO.checkjacobian(SchurBlockJacobian{Float16, RT === Matrix{Float64} ? Matrix{Float16} : SparseMatrixCSC{Float16, Int}}(p.jst))
         @test SOO.jacobian_ncols(J) == p.lay.n
         @test SOO.jacobian_nrows(J) == p.lay.m
         @test SOO.structurekey(J) == SOO.structurekey(SchurBlockJacobian{Float64, RT}(p.jst))
