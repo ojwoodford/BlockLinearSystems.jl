@@ -195,7 +195,14 @@ function DampedLinearSolve.makejacobiansystem(J::SchurBlockJacobian, n, linsolve
 end
 DampedLinearSolve.systemeltype(::QRSchurLinearSystem{T}) where T = T
 
-DampedLinearSolve.zero!(ls::QRSchurLinearSystem) = (fill!(ls.b, 0.0); DampedLinearSolve.markstale!(ls.A); ls)
+# A new linearization is a new fill of the dense normal-equation reduced system too: its conditioning scale is reset as
+# for the dense Schur system (the QR reduced systems are marked stale by every solve)
+function DampedLinearSolve.zero!(ls::QRSchurLinearSystem)
+    fill!(ls.b, 0.0)
+    DampedLinearSolve.markstale!(ls.A)
+    ls.reduced isa DenseNormalReduced && DampedLinearSolve.zero!(ls.reduced.sys)
+    return ls
+end
 
 # The trial system: its own tables (with the same entries), factored tables and gradient; the reduced system and the
 # scratch are shared, since only one of the two is solved at a time and every solve refills the reduced system. LSMR's

@@ -264,9 +264,13 @@ function diag_retained!(d, R::SparseBlockLinearSystem{T}, st) where T
     return d
 end
 
+# The dense reduced system is a DampedLinearSolve system, conditioned there with a scale computed at its first solve
+# after a fill (decision 13); a new linearization is a new fill of it, so it is zeroed with the Hessian (its matrix is
+# rewritten by every reduction, so only its conditioning scale is what this resets)
 function DampedLinearSolve.zero!(ls::DenseSchurLinearSystem)
     fill!(ls.b, zero(eltype(ls.b)))
     BlockLinearSystems.zero!(ls.H)
+    DampedLinearSolve.zero!(ls.red)
     return ls
 end
 
