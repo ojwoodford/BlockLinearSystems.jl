@@ -527,10 +527,11 @@ blockrange
 
 """
     SchurBlockJacobian{T, RType}(structure::SchurJacobianStructure)
-    SchurBlockJacobian{T, RType}(data::Vector{T}, structure::SchurJacobianStructure)
+    SchurBlockJacobian{T, RType}(data::Vector{T}, r::Vector{Float64}, structure::SchurJacobianStructure)
 
 Raw storage of a least-squares problem laid out by `structure` (see [`SchurJacobianStructure`](@ref)):
-one dense table per eliminated block and per free group, in one flat vector `data`. It is the Jacobian prototype a caller fills, the analogue of
+one dense table of `J` per eliminated block and per free group, in one flat vector `data` of element type `T`,
+and the residual in a vector `r` of its own, always `Float64`. It is the Jacobian prototype a caller fills, the analogue of
 [`SchurBlockHessian`](@ref) on the Hessian path. `T` may be any floating-point type; `Float64` and
 `Float32` are tested.
 
@@ -541,24 +542,25 @@ system built from `J` (DampedLinearSolve's `makejacobiansystem`) solves after el
 storage option), so that code receiving only `J` can dispatch on `J isa SchurBlockJacobian{T, Matrix{T}}`. There
 is no default. The tables are the same for both.
 
-The data-taking form uses `data` as the storage (no copy); its length must be the structure's table
-length, else `DimensionMismatch`.
+The data-taking form uses `data` and `r` as the storage (no copy); their lengths must be the structure's, else
+`DimensionMismatch`.
 
 Fill it by row block, through [`blockentry`](@ref), [`block`](@ref) and [`residual_block`](@ref). The rows of
 different row blocks are disjoint, so threads that fill different row blocks never write the same memory and need
 no per-thread copies. The damping rows are not reachable through the views and stay zero. The elimination reads
 these tables and never modifies them, so a change of the damping re-factors from them.
 
-**Fields.** `data` and `structure` may be read for operations on the whole system: zero it, copy it, compare
-structures by identity. Where a block lives inside `data` is not public: address it by row block with
+**Fields.** `data`, `r` and `structure` may be read for operations on the whole system: zero it, copy it, compare
+structures by identity. Where a block lives inside `data` or `r` is not public: address it by row block with
 [`blockentry`](@ref), [`block`](@ref) and [`residual_block`](@ref).
 
-`copy(J)` returns a `SchurBlockJacobian` with its own copy of the tables and the same structure, and
-`copyto!(dest, src)` copies the tables of one into another of the same structure.
-[`zero!`](@ref) zeroes every table; [`copy_structure`](@ref) returns a new, zeroed `SchurBlockJacobian`
+`copy(J)` returns a `SchurBlockJacobian` with its own copy of the tables and the residual and the same structure,
+and `copyto!(dest, src)` copies both of one into another of the same structure.
+[`zero!`](@ref) zeroes every table and the residual; [`copy_structure`](@ref) returns a new, zeroed `SchurBlockJacobian`
 of the same type, sharing only the (immutable) structure. Each table is dense in every retained block coupled to its
-eliminated block, `(m_e + d_e) × (c_e + d_e + 1)` for `m_e` rows, `d_e` eliminated and `c_e` coupled retained
-columns, and the elimination keeps a factored copy: far more than the Hessian path's `d_e² + d_e c_e` for an
+eliminated block, `(m_e + d_e) × (c_e + d_e)` for `m_e` rows, `d_e` eliminated and `c_e` coupled retained
+columns (with `m_e + d_e` residual entries), and the elimination keeps a factored copy of each table with its
+residual, `(m_e + d_e) × (c_e + d_e + 1)` in `T`: far more than the Hessian path's `d_e² + d_e c_e` for an
 eliminated block seen by many rows.
 """
 SchurBlockJacobian
@@ -627,7 +629,7 @@ eliminated_block
 """
     residual_block(J::SchurBlockJacobian, k[, nrows])
 
-Mutable view of row block `k`'s rows of the residual column, for a [`SchurBlockJacobian`](@ref) whose
+Mutable view of row block `k`'s rows of the residual, in the `Float64` vector `J.r`, for a [`SchurBlockJacobian`](@ref) whose
 structure was built from a description. `nrows`, if given, must be the row block's number of rows (checked
 under `@boundscheck`); a static `nrows` gives a `SizedVector`, otherwise a plain view. It allocates nothing.
 The residual is `r` of `min ‖J x - r‖²`: callers that hold `f(x) ≈ f(x0) + J dx` store `r = -f(x0)`, or store

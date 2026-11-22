@@ -505,6 +505,15 @@ end
 
 table_data(J::SchurBlockJacobian) = J.data
 table_data(ws::QRReductionWorkspace) = ws.factored
+# Where table t starts in `table_data`, and its residual column in `residual_data`: the raw tables hold no residual
+# column (it is in the Float64 vector J.r); the factored ones hold it last
+@inline table_start(J::SchurBlockJacobian, t::Int) = @inbounds J.structure.raw_offsets[t]
+@inline table_start(ws::QRReductionWorkspace, t::Int) = @inbounds ws.structure.table_offsets[t]
+@inline residual_data(J::SchurBlockJacobian) = J.r
+@inline residual_data(ws::QRReductionWorkspace) = ws.factored
+@inline residual_start(J::SchurBlockJacobian, t::Int) = @inbounds J.structure.residual_offsets[t]
+@inline residual_start(ws::QRReductionWorkspace, t::Int) =
+    @inbounds (jst = ws.structure; jst.table_offsets[t] + (jst.table_ncols[t] - 1) * jst.table_nrows[t])
 
 const SchurTables{T} = Union{SchurBlockJacobian{T}, QRReductionWorkspace{T}}
 
@@ -522,9 +531,8 @@ const SchurTables{T} = Union{SchurBlockJacobian{T}, QRReductionWorkspace{T}}
             u = jst.retained_entry[k]
             t = jst.entry_table[u]
             M = jst.table_nrows[t]
-            off = jst.table_offsets[t]
-            cb = off + (jst.entry_col[u] - 1) * M
-            rb = off + (jst.table_ncols[t] - 1) * M
+            cb = table_start(src, t) + (jst.entry_col[u] - 1) * M
+            rb = residual_start(src, t)
             for j in 1:dr
                 out[ro + j - 1] += colfun(cb + (j - 1) * M, rb, M)
             end
@@ -540,11 +548,11 @@ end
         @inbounds begin
             M = jst.table_nrows[e]
             C = jst.table_ncols[e]
-            off = jst.table_offsets[e]
+            off = table_start(src, e)
             de = Int(st.e_dims[e])
             eo = st.nr + st.boffsets_e[e]
             for k in 1:de
-                f(eo + k - 1, off + (C - de - 2 + k) * M, off + (C - 1) * M, M)
+                f(eo + k - 1, off + (C - de - 2 + k) * M, residual_start(src, e), M)
             end
         end
     end
@@ -555,11 +563,11 @@ end
 # The gradient `g = Jᵀr` of the full problem, `[g_r; g_e]`.
 function jtr!(g::AbstractVector, src::SchurTables)
     jst = src.structure
-    D = table_data(src)
+    D, R = table_data(src), residual_data(src)
     length(g) == jst.schur.nr + sum(Int, jst.schur.e_dims; init=0) || throw(DimensionMismatch("g has length $(length(g)), expected $(jst.schur.nr + sum(Int, jst.schur.e_dims; init=0))"))
-    colfun = (cb, rb, M) -> dot_run(D, cb, D, rb, M)
+    colfun = (cb, rb, M) -> dot_run(D, cb, R, rb, M)
     foreach_retained(r -> sum_retained_columns!(g, src, r, colfun), jst)
-    foreach_eliminated_column((i, cb, rb, M) -> (@inbounds g[i] = dot_run(D, cb, D, rb, M)), src)
+    foreach_eliminated_column((i, cb, rb, M) -> (@inbounds g[i] = dot_run(D, cb, R, rb, M)), src)
     return g
 end
 
@@ -584,18 +592,17 @@ function jtj_quadform(src::SchurTables{T}, v::AbstractVector) where T
     length(v) == st.nr + sum(Int, st.e_dims; init=0) || throw(DimensionMismatch("v has length $(length(v)), expected $(st.nr + sum(Int, st.e_dims; init=0))"))
     total = zero(promote_type(T, eltype(v)))
     for t in 1:jst.ntables
-        total += table_quadratic(D, jst, v, t, total)
+        total += table_quadratic(D, table_start(src, t), jst, v, t, total)
     end
     return total
 end
 
-function table_quadratic(D::Vector{T}, jst::SchurJacobianStructure, v::AbstractVector, t::Int, z::Tacc) where {T, Tacc}
+function table_quadratic(D::Vector{T}, off::Int, jst::SchurJacobianStructure, v::AbstractVector, t::Int, z::Tacc) where {T, Tacc}
     st = jst.schur
     part = zero(z)
     @inbounds begin
         M = jst.table_nrows[t]
         C = jst.table_ncols[t]
-        off = jst.table_offsets[t]
         de = t <= st.neblocks ? Int(st.e_dims[t]) : 0
         eo = t <= st.neblocks ? st.nr + st.boffsets_e[t] : 0
         urng = jst.table_ptr[t]:jst.table_ptr[t + 1] - 1

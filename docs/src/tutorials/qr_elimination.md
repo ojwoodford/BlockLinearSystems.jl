@@ -27,7 +27,9 @@ The same as for the Schur systems, so that the two routes give the same numbers:
 
 The rows that involve eliminated block `e` (the row blocks that touch it) are stored as one dense, column-major
 table, with the columns of every retained block coupled to `e`, then `e`'s own columns, then the residual. `d_e`
-damping rows sit underneath, zero in the raw storage:
+damping rows sit underneath, zero in the raw storage. The raw storage keeps the residual column apart, in a
+`Float64` vector of its own (`J.r`, a column per table), so that it and the gradient stay in double precision
+whatever the tables' element type; the elimination's working copy holds the whole table:
 
 ```
                  retained blocks coupled to e      e     r

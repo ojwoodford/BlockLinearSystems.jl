@@ -338,7 +338,7 @@ end
             serial = qr_problems(T; nchunks=1, min_work=1 << 40)
             for (k, p1) in enumerate(serial)
                 p4 = qr_problems(T; nchunks=4, min_work=0)[k]
-                @test p4.J.data == p1.J.data
+                @test p4.J.data == p1.J.data && p4.J.r == p1.J.r
                 jst1, jst4 = p1.J.structure, p4.J.structure
                 @test length(jst4.col_chunks) == 4
                 @test reduce(vcat, collect.(jst4.col_chunks)) == collect(1:jst4.schur.nrblocks)

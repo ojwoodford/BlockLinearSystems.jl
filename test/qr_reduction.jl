@@ -45,8 +45,12 @@ end
                 row += m
             end
             # Free tables are copied unchanged
-            o = jst.table_offsets[st.neblocks + 1]
-            @test ws.factored[o:end] == J.data[o:end]
+            for t in st.neblocks+1:jst.ntables
+                M, C = jst.table_nrows[t], jst.table_ncols[t]
+                Tf = reshape(ws.factored[jst.table_offsets[t]:jst.table_offsets[t+1]-1], M, C)
+                @test Tf[:, 1:C-1] == reshape(J.data[jst.raw_offsets[t]:jst.raw_offsets[t+1]-1], M, C - 1)
+                @test Tf[:, C] == T.(J.r[jst.residual_offsets[t]:jst.residual_offsets[t+1]-1])
+            end
         end
     end
 end
@@ -114,7 +118,7 @@ reduce_allocs(ws, J, sc, lambda) = @allocated reduce_qr!(ws, J, sc, lambda)
         jst = J.structure
         nr, n = jst.schur.nr, size(p.Jf, 2)
         sc_e = qr_scaling(p, rng)[nr+1:n]
-        raw = copy(J.data)
+        raw, rawr = copy(J.data), copy(J.r)
         ws = QRReductionWorkspace(J)
         reduce_qr!(ws, J, sc_e, T(0.1))                       # warm-up
         for lambda in T.((2.0, 0.0, 0.5, 1e-3))
@@ -123,7 +127,7 @@ reduce_allocs(ws, J, sc, lambda) = @allocated reduce_qr!(ws, J, sc, lambda)
             @test reduce_qr!(fresh, J, sc_e, lambda)
             @test ws.factored == fresh.factored
         end
-        @test J.data == raw                                   # the raw tables are kept
+        @test J.data == raw && J.r == rawr                    # the raw tables are kept
         # No allocation, serial or threaded (R2; bounded when threaded on Julia 1.10)
         for minwork in (typemax(Int), 0)
             Jm = with_min_work(J, minwork)
@@ -164,8 +168,8 @@ end
     for T in (Float64, Float32), p in qr_problems(T)
         jst = p.J.structure
         ws = QRReductionWorkspace(p.J)
-        @test schur_jacobian_bytes(jst, T) == sizeof(p.J.data) + sizeof(ws.factored) + sum(sizeof, ws.scratch)
-        @test schur_jacobian_bytes(jst, T; workspace=false) == sizeof(p.J.data)
+        @test schur_jacobian_bytes(jst, T) == sizeof(p.J.data) + sizeof(p.J.r) + sizeof(ws.factored) + sum(sizeof, ws.scratch)
+        @test schur_jacobian_bytes(jst, T; workspace=false) == sizeof(p.J.data) + sizeof(p.J.r)
     end
     # The estimate needs only the structure, and grows with couplings times rows
     big = SchurJacobianStructure(fill(6, 10), fill(3, 1000), [collect(1:10) for _ in 1:1000], fill(40, 1000))

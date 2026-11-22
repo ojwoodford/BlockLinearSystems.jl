@@ -7,7 +7,7 @@
 # Factored tables and scratch for QR elimination.
 struct QRReductionWorkspace{T}
     structure::SchurJacobianStructure
-    factored::Vector{T}                   # Qᵀ T_e for every table (free tables copied), same layout as the raw data
+    factored::Vector{T}                   # Qᵀ T_e for every whole table (free tables copied), the residual narrowed to T
     scratch::Vector{Vector{T}}            # Per chunk: max_De scratch for blocks above D_STATIC (empty otherwise)
     failed_block::Base.Threads.Atomic{Int}
 end
@@ -37,11 +37,12 @@ end
     return true
 end
 
-# Copy table e from raw to factored, write its damping rows and QR-factor its eliminated columns in place,
+# Copy table e from raw to factored (its columns from the raw table, its residual from the residual vector, narrowed
+# to T), write its damping rows and QR-factor its eliminated columns in place,
 # applying Qᵀ to the rest of the table. The reflectors are not kept: the eliminated columns end as [U; 0].
 # Returns false for a non-finite table or a numerically singular U.
 @inline function qr_table!(
-    F::Vector{T}, Rw::Vector{T}, jst::SchurJacobianStructure,
+    F::Vector{T}, Rw::Vector{T}, Rr::Vector{Float64}, jst::SchurJacobianStructure,
     scaling_e::AbstractVector{T}, lambda::T, e::Int, s_de::Union{StaticInt, Int}
 ) where T
     de = dimval(s_de)
@@ -51,13 +52,7 @@ end
         off = jst.table_offsets[e]
         me = M - de
         ce = C - de - 1                  # retained columns
-        bad = zero(T)
-        for i in off:off + M * C - 1
-            x = Rw[i]
-            F[i] = x
-            bad += x - x                 # NaN for an infinite or NaN entry, zero otherwise
-        end
-        isnan(bad) && return false
+        copy_table!(F, Rw, Rr, jst, e) || return false
         for j in 1:C, i in me + 1:M
             F[off + (j - 1) * M + i - 1] = zero(T)
         end
@@ -126,13 +121,13 @@ end
 end
 
 function qr_group!(
-    F::Vector{T}, Rw::Vector{T}, failed_block::Base.Threads.Atomic{Int}, jst::SchurJacobianStructure,
+    F::Vector{T}, Rw::Vector{T}, Rr::Vector{Float64}, failed_block::Base.Threads.Atomic{Int}, jst::SchurJacobianStructure,
     scaling_e::AbstractVector{T}, lambda::T, e_chunk::UnitRange{Int}, s_de::Union{StaticInt, Int}
 ) where T
     @inbounds for e in e_chunk
         fb = failed_block[]                  # a lower failure elsewhere: no block above it can be the lowest
         fb != 0 && e > fb && return false
-        if !qr_table!(F, Rw, jst, scaling_e, lambda, e, s_de)
+        if !qr_table!(F, Rw, Rr, jst, scaling_e, lambda, e, s_de)
             record_failure!(failed_block, e)
             return false
         end
@@ -150,20 +145,45 @@ function reduce_qr!(ws::QRReductionWorkspace{T}, J::SchurBlockJacobian{T}, scali
     length(scaling_e) == sum(Int, st.e_dims; init=0) || throw(DimensionMismatch("scaling_e has length $(length(scaling_e)), expected $(sum(Int, st.e_dims; init=0))"))
     check_damping(lambda_in, scaling_e, :scaling_e)
     ws.failed_block[] = 0
-    F, Rw = ws.factored, J.data
+    F, Rw, Rr = ws.factored, J.data, J.r
     for g_idx in 1:nruns(st.e_dims)
         chunks = st.chunks[g_idx]
         threaded = qr_threaded(jst, length(chunks))
         dispatch_dim(runblocksize(st.e_dims, g_idx)) do s_de
             foreach_index(length(chunks), threaded) do k
-                qr_group!(F, Rw, ws.failed_block, jst, scaling_e, lambda, chunks[k], s_de)
+                qr_group!(F, Rw, Rr, ws.failed_block, jst, scaling_e, lambda, chunks[k], s_de)
             end
         end
         ws.failed_block[] != 0 && return false
     end
     # Free tables need no factorization
-    o1 = jst.table_offsets[st.neblocks + 1]
-    n = jst.table_offsets[end] - o1
-    n > 0 && copyto!(F, o1, Rw, o1, n)
+    for t in st.neblocks + 1:jst.ntables
+        copy_table!(F, Rw, Rr, jst, t)
+    end
     return true
+end
+
+# Copy table t into the factored storage: its columns from the raw table, then its residual column from the residual
+# vector, narrowed to T. Returns false if an entry is not finite.
+@inline function copy_table!(F::Vector{T}, Rw::Vector{T}, Rr::Vector{Float64}, jst::SchurJacobianStructure, t::Int) where T
+    @inbounds begin
+        M = jst.table_nrows[t]
+        C = jst.table_ncols[t]
+        off = jst.table_offsets[t]
+        roff = jst.raw_offsets[t] - off
+        bad = zero(T)
+        for i in off:off + M * (C - 1) - 1
+            x = Rw[i + roff]
+            F[i] = x
+            bad += x - x                 # NaN for an infinite or NaN entry, zero otherwise
+        end
+        rb = off + M * (C - 1)
+        qoff = jst.residual_offsets[t] - rb
+        for i in rb:rb + M - 1
+            x = T(Rr[i + qoff])
+            F[i] = x
+            bad += x - x
+        end
+    end
+    return !isnan(bad)
 end

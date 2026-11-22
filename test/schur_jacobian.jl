@@ -16,7 +16,9 @@ using Main.QRFixtures, Main.DescriptionFixtures
     @test jst.table_nrows == [8, 7, 4, 3, 2]                    # m_e + d_e damping rows; free groups have none
     @test jst.table_ncols == [16, 7, 3, 13, 4]
     @test jst.table_top == [3, 3, 2, 0, 0]
-    @test jst.table_offsets == cumsum([1; jst.table_nrows .* jst.table_ncols])
+    @test jst.table_offsets == cumsum([1; jst.table_nrows .* jst.table_ncols])         # the whole tables (factored copy)
+    @test jst.raw_offsets == cumsum([1; jst.table_nrows .* (jst.table_ncols .- 1)])  # the raw tables, without the residual
+    @test jst.residual_offsets == cumsum([1; jst.table_nrows])                      # the residual vector
     # Coupling entries keep the SchurStructure's order (sorted by retained block), free entries follow, also sorted
     @test jst.entry_retained == [1, 3, 2, 1, 3, 2]
     @test jst.entry_retained[1:length(st.entry_retained)] == st.entry_retained
@@ -56,29 +58,35 @@ end
     p = qr_problems(Float64)[3]
     J = p.J
     jst = J.structure
-    @test length(J.data) == jst.table_offsets[end] - 1
-    @test_throws DimensionMismatch SchurBlockJacobian{Float64, Matrix{Float64}}(zeros(3), jst)
-    @test SchurBlockJacobian{Float64, Matrix{Float64}}(copy(J.data), jst).data == J.data
+    @test length(J.data) == jst.raw_offsets[end] - 1 && length(J.r) == jst.residual_offsets[end] - 1 && J.r isa Vector{Float64}
+    @test_throws DimensionMismatch SchurBlockJacobian{Float64, Matrix{Float64}}(zeros(3), copy(J.r), jst)
+    @test_throws DimensionMismatch SchurBlockJacobian{Float64, Matrix{Float64}}(copy(J.data), zeros(3), jst)
+    @test SchurBlockJacobian{Float64, Matrix{Float64}}(copy(J.data), copy(J.r), jst).data == J.data
+    @test SchurBlockJacobian{Float32, Matrix{Float32}}(jst).r isa Vector{Float64}
     @test SchurBlockJacobian{Float32, Matrix{Float32}}(jst).data isa Vector{Float32}
     C = copy_structure(J)
     @test C.structure === J.structure && C.data !== J.data && all(iszero, C.data) && length(C.data) == length(J.data)
+    @test C.r !== J.r && all(iszero, C.r) && length(C.r) == length(J.r)
     before = copy(J.data)
     C.data .= 1
     @test J.data == before
-    @test zero!(C) === C && all(iszero, C.data)
+    C.r .= 1
+    @test zero!(C) === C && all(iszero, C.data) && all(iszero, C.r)
     # copy has its own tables with the same values; copyto! copies values between Jacobians of one structure
     D = copy(J)
     @test typeof(D) === typeof(J) && D.structure === J.structure && D.data !== J.data && D.data == J.data
-    @test copyto!(C, J) === C && C.data == J.data
+    @test D.r !== J.r && D.r == J.r
+    @test copyto!(C, J) === C && C.data == J.data && C.r == J.r
     @test_throws ArgumentError copyto!(C, qr_problems(Float64)[3].J)   # an equal but distinct structure
     # The damping rows are zero in the raw storage
     for e in 1:jst.schur.neblocks
         M, de = jst.table_nrows[e], jst.table_top[e]
-        T_e = reshape(J.data[jst.table_offsets[e]:jst.table_offsets[e+1]-1], M, :)
-        @test all(iszero, T_e[M-de+1:M, :])
+        T_e = reshape(J.data[jst.raw_offsets[e]:jst.raw_offsets[e+1]-1], M, :)
+        @test all(iszero, T_e[M-de+1:M, :]) && all(iszero, J.r[jst.residual_offsets[e] .+ (M-de:M-1)])
     end
-    @test schur_jacobian_bytes(jst, Float64; workspace=false) == sizeof(J.data)
-    @test schur_jacobian_bytes(jst, Float32; workspace=false) == sizeof(SchurBlockJacobian{Float32, Matrix{Float32}}(jst).data)
+    @test schur_jacobian_bytes(jst, Float64; workspace=false) == sizeof(J.data) + sizeof(J.r)
+    J32 = SchurBlockJacobian{Float32, Matrix{Float32}}(jst)
+    @test schur_jacobian_bytes(jst, Float32; workspace=false) == sizeof(J32.data) + sizeof(J32.r)
 end
 
 @testset "SchurBlockJacobian reduced storage type (R1)" begin
@@ -86,8 +94,8 @@ end
         p = qr_problems(T)[3]
         jst = p.J.structure
         st = jst.schur
-        Jd = SchurBlockJacobian{T, Matrix{T}}(copy(p.J.data), jst)
-        Js = SchurBlockJacobian{T, SparseMatrixCSC{T, Int}}(copy(p.J.data), jst)
+        Jd = SchurBlockJacobian{T, Matrix{T}}(copy(p.J.data), copy(p.J.r), jst)
+        Js = SchurBlockJacobian{T, SparseMatrixCSC{T, Int}}(copy(p.J.data), copy(p.J.r), jst)
         @test Jd isa SchurBlockJacobian{T, Matrix{T}} && Js isa SchurBlockJacobian{T, SparseMatrixCSC{T, Int}}
         @test SchurBlockJacobian{T, SparseMatrixCSC{T, Int}}(jst).data == zeros(T, length(p.J.data))
         # Only the two reduced storages that have kernels; no default
@@ -118,7 +126,7 @@ end
 end
 
 # Linear index of entry (row, col) of table t in the flat storage
-flat_index(jst, t, row, col) = jst.table_offsets[t] + (col - 1) * jst.table_nrows[t] + row - 1
+flat_index(jst, t, row, col) = jst.raw_offsets[t] + (col - 1) * jst.table_nrows[t] + row - 1   # in the raw tables
 
 fill_static!(J, u, e, t) = (coupling_block(J, u, 2, static(2), static(6)) .= 1; eliminated_block(J, e, 1, static(2), static(3)) .= 2;
                             table_residual_block(J, t, 3, static(2)) .= 3; nothing)
@@ -157,12 +165,13 @@ allocs_fill_dynamic(J, u, e, t) = @allocated fill_dynamic!(J, u, e, t)
             rv = table_residual_block(J, t)
             @test size(rv) == (m,)
             rv .= 0.5 .* (1:m)
-            @test all(J.data[flat_index(jst, t, i, jst.table_ncols[t])] == 0.5i for i in 1:m)
+            @test all(J.r[jst.residual_offsets[t] + i - 1] == 0.5i for i in 1:m)
             @test table_residual_block(J, t, m - 1, 2) == rv[m-1:m]
         end
         # Nothing was written to the damping rows
         for e in 1:st.neblocks
-            @test all(iszero(J.data[flat_index(jst, e, i, j)]) for i in jst.e_rows[e]+1:jst.table_nrows[e], j in 1:jst.table_ncols[e])
+            @test all(iszero(J.data[flat_index(jst, e, i, j)]) for i in jst.e_rows[e]+1:jst.table_nrows[e], j in 1:jst.table_ncols[e]-1)
+            @test all(iszero(J.r[jst.residual_offsets[e] + i - 1]) for i in jst.e_rows[e]+1:jst.table_nrows[e])
         end
         # Out of range: past the data rows (into the damping rows), wrong column count, unknown entry or table
         u = coupling_entry(jst, 1, 2)
@@ -183,7 +192,7 @@ allocs_fill_dynamic(J, u, e, t) = @allocated fill_dynamic!(J, u, e, t)
         @test coupling_block(J, u, 1, static(2), 6) isa HybridArray
         @test coupling_block(J, u, 1, 2, static(6)) isa HybridArray
         @test eliminated_block(J, 1, 1, static(2), static(3)) isa SizedMatrix{2, 3, T}
-        @test table_residual_block(J, 1, 1, static(2)) isa SizedVector{2, T}
+        @test table_residual_block(J, 1, 1, static(2)) isa SizedVector{2, Float64}   # the residual is Float64 (decision 12)
         coupling_block(J, u, 1, static(2), static(6)) .= SMatrix{2, 6, T}(1:12)
         @test coupling_block(J, u)[1:2, :] == reshape(T.(1:12), 2, 6)
         @inferred coupling_block(J, u, 1, static(2), static(6))

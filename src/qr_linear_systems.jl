@@ -172,7 +172,7 @@ function QRSchurLinearSystem(J::SchurBlockJacobian{Float64}, linsolver)
     return QRSchurLinearSystem(SchurJacobianHessian(J), zeros(n), zeros(n), ws, reduced_system(J, ws, linsolver),
                                linsolver_symbol(linsolver), ones(n), zeros(nr), zeros(n - nr), zeros(nr), 0.0, nothing)
 end
-DampedLinearSolve.isfinitesystem(ls::QRSchurLinearSystem) = all(isfinite, ls.A.J.data)   # the tables hold J and r
+DampedLinearSolve.isfinitesystem(ls::QRSchurLinearSystem) = all(isfinite, ls.A.J.data) && all(isfinite, ls.A.J.r)
 
 DampedLinearSolve.makejacobiansystem(J::SchurBlockJacobian{Float64}, n, linsolver) = QRSchurLinearSystem(J, linsolver)
 
@@ -183,7 +183,7 @@ DampedLinearSolve.zero!(ls::QRSchurLinearSystem) = (fill!(ls.b, 0.0); DampedLine
 # reduced system reads J̃ from its own reduction workspace, so the trial system has its own.
 function DampedLinearSolve.copy_structure(ls::QRSchurLinearSystem{RType}) where RType
     J = ls.A.J
-    At = SchurJacobianHessian(SchurBlockJacobian{Float64, RType}(copy(J.data), J.structure))
+    At = SchurJacobianHessian(SchurBlockJacobian{Float64, RType}(copy(J.data), copy(J.r), J.structure))
     ws = trial_workspace(ls.ws)
     reduced = ls.linsolver === :lsmr ? reduced_system(J, ws, static(:lsmr)) : ls.reduced
     return QRSchurLinearSystem(At, zeros(length(ls.b)), ls.x, ws, reduced, ls.linsolver, ls.unit, ls.xr, ls.xe, ls.sr, ls.lambda, ls.scaling)
