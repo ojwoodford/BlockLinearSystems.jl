@@ -156,7 +156,7 @@ the same for both. `linsolver` then chooses how the reduced problem is solved:
   factored tables and never formed, block-Jacobi preconditioned.
 
 ```@example qr
-Js = SchurBlockJacobian{Float64, SparseMatrixCSC{Float64, Int}}(copy(J.data), jst)   # the same tables, sparse J̃
+Js = SchurBlockJacobian{Float64, SparseMatrixCSC{Float64, Int}}(copy(J.data), copy(J.r), jst)   # the same tables, sparse J̃
 lss = makejacobiansystem(Js, n, :qr)
 DampedLinearSolve.gradient!(getb(lss), getA(lss)); markstale!(getA(lss))
 dampen!(lss, lambda, s); solve!(lss, :qr)

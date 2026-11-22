@@ -12,16 +12,19 @@ contract (SecondOrderOptimization.jl, for one) runs on them unchanged; nothing e
 |---|---|---|
 | [`SchurBlockHessian`](@ref) with a dense `R` | dense Schur complement | `:auto`, `:cholesky` (Cholesky, falling back to Bunch–Kaufman), `:ldl` (Bunch–Kaufman) |
 | [`SchurBlockHessian`](@ref) with a [`SparseBlockLinearSystem`](@ref) `R` | sparse Schur complement | `:auto`, `:cholesky` (CHOLMOD, falling back to LDLᵀ), `:ldl` (LDLᵀ) |
-| [`SchurBlockJacobian`](@ref)`{Float64, Matrix{Float64}}` | QR elimination, dense reduced system | `:auto`, `:qr` (QR of the reduced Jacobian); `:cholesky`, `:ldl` (its normal equations); `:lsmr` (with Krylov.jl) |
-| [`SchurBlockJacobian`](@ref)`{Float64, SparseMatrixCSC{Float64, Int}}` | QR elimination, sparse reduced system | `:auto`, `:qr` (SPQR of the reduced Jacobian); `:cholesky`, `:ldl` (its normal equations); `:lsmr` (with Krylov.jl) |
+| [`SchurBlockJacobian`](@ref)`{T, Matrix{T}}` | QR elimination, dense reduced system | `:auto`, `:qr` (QR of the reduced Jacobian); `:cholesky`, `:ldl` (its normal equations); `:lsmr` (with Krylov.jl) |
+| [`SchurBlockJacobian`](@ref)`{T, SparseMatrixCSC{T, Int}}` | QR elimination, sparse reduced system | `:auto`, `:qr` (SPQR of the reduced Jacobian); `:cholesky`, `:ldl` (its normal equations); `:lsmr` (with Krylov.jl) |
 
 **Element type.** A `SchurBlockHessian{T}` gives a Schur system in `T`, `Float64` or `Float32`: the
 Hessian, its reduction, the reduced system and its factorization are held in `T`, while `b`, `x`, the damping
 and every query are `Float64` (DampedLinearSolve's `systemeltype` gives `T`). Of the sparse reduced solvers,
 `:ldl` offers `Float32` on every Julia version and `:auto` and `:cholesky` (CHOLMOD) only where SparseArrays
 factorizes in single precision (1.13, not 1.10); a solver that does not offer it is an `ArgumentError` when the
-system is built. The QR-eliminated systems are `Float64` only: a `SchurBlockJacobian`'s tables hold the
-residual, which stays in `Float64`.
+system is built. A `SchurBlockJacobian{T}` gives a QR-eliminated system in `T` likewise: the tables, their
+elimination and the reduced solve in `T`; the residual (a `Float64` vector of its own, beside the tables), the
+gradient `Jᵀr`, `x` and every query in `Float64`. With the dense reduced storage every solver offers `Float32`;
+with the sparse one SPQR does not (`:auto`, `:qr`), `:cholesky` only where CHOLMOD factorizes in single precision,
+and `:ldl` and `:lsmr` always.
 
 `makehessiansystem(H, linsolver)` builds the Schur systems and `makejacobiansystem(J, n, linsolver)` the
 QR-eliminated ones; `checkhessian`, `checkjacobian` and `check_jacobian_linsolver` validate a
