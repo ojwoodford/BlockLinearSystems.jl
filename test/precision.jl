@@ -1,7 +1,7 @@
 module PrecisionTests
 
 using Test, Random, LinearAlgebra, SparseArrays, StaticArrays, Static
-using DampedLinearSolve, BlockLinearSystems, Polyester
+using DampedLinearSolve, BlockLinearSystems, Polyester, Krylov
 include("fixtures/load.jl")
 using Main.SchurFixtures
 
@@ -84,8 +84,8 @@ end
 # in units of eps(Float32)·cond(JᵀJ + λD).
 using Main.QRFixtures
 to32(J::SchurBlockJacobian{Float64}, ::Type{R}) where R = SchurBlockJacobian{Float32, R}(Float32.(J.data), copy(J.r), J.structure)
-pr_jsolvers(::Type{Matrix{Float32}}) = (:auto, :qr, :cholesky, :ldl)
-pr_jsolvers(::Type{SparseMatrixCSC{Float32, Int}}) = PR_CHOLMOD32 ? (:cholesky, :ldl) : (:ldl,)
+pr_jsolvers(::Type{Matrix{Float32}}) = (:auto, :qr, :cholesky, :ldl, :lsmr)
+pr_jsolvers(::Type{SparseMatrixCSC{Float32, Int}}) = PR_CHOLMOD32 ? (:cholesky, :ldl, :lsmr) : (:ldl, :lsmr)
 @testset "precision.jl: QR-elimination systems of a SchurBlockJacobian{Float32}" begin
     for p in qr_problems(Float64)[[1, 3]], R in (Matrix{Float32}, SparseMatrixCSC{Float32, Int}), s in pr_jsolvers(R)
         @testset "$(p.name), $R, :$s" begin
@@ -103,7 +103,8 @@ pr_jsolvers(::Type{SparseMatrixCSC{Float32, Int}}) = PR_CHOLMOD32 ? (:cholesky, 
                 @test solve!(ls, s) in (Success, Indefinite)
                 Ad = J64' * J64 + λ * (isnothing(sc) ? I : Diagonal(sc))
                 ref = Ad \ getb(ls)
-                @test norm(getx(ls) - ref) / norm(ref) <= 16 * n * eps(Float32) * cond(Ad)
+                # LSMR (SP-B3, in Float32) stops at its tolerance √eps(Float32), relative to the problem's size
+                @test norm(getx(ls) - ref) / norm(ref) <= (s === :lsmr ? sqrt(eps(Float32)) * cond(Ad) : 16 * n * eps(Float32) * cond(Ad))
             end
             @test max_diag(ls) isa Float64 && isapprox(max_diag(ls), maximum(vec(sum(abs2, J64; dims = 1))); rtol = 1e-14)
             d = zeros(n); getdiag!(d, ls)
@@ -111,6 +112,7 @@ pr_jsolvers(::Type{SparseMatrixCSC{Float32, Int}}) = PR_CHOLMOD32 ? (:cholesky, 
             v = [cos(0.3 * i) for i in 1:n]
             @test DampedLinearSolve.quadform(getA(ls), v) ≈ norm(J64 * v)^2 rtol = 1e-12
             @test dampingfloor(ls) == (s in (:cholesky, :ldl) ? Float64(eps(Float32)) : Float64(eps(Float32))^2)
+            s === :lsmr && @test eltype(ls.reduced.kws.x) === Float32 && eltype(ls.reduced.D) === Float32   # SP-B3: Krylov in T
             # Nothing allocates on the dense routes (CHOLMOD and LDLFactorizations allocate inside the library, as in Float64)
             dampen!(ls, 0.3)
             R <: Matrix && @test pr_allocs(ls, static(s)) == 0
