@@ -38,6 +38,19 @@ filled and nothing more is held or allocated. Powers of two make it exact: what 
 (in `Float32`) and the decisions made by comparing magnitudes, such as the sparse reduced solvers' indefiniteness
 test. The `1e-12` and the `2^16` are starting values.
 
+**Refinement.** In `Float32` the QR-eliminated solve with the dense reduced storage (`:auto`, `:qr`) is refined over
+the whole system, the tables included: one step of Björck's iterative refinement of the augmented system (the
+residual carried as an unknown), as DampedLinearSolve refines its dense Jacobian QR (its contract's "Refinement").
+The residuals are formed in `Float64` from the tables as filled, `r`, the scale and the damping, over every table
+and every variable; the correction is solved with the `Float32` factors, applied in `Float64`: each eliminated
+block's reflectors (kept for it, in the system's own storage) and triangle, and the reduced system's factors
+(DampedLinearSolve's `qrfactors`). Refining the reduced solve alone would converge to the reduction of a perturbed
+`J`. On the package's test problems with a large residual at the solution one step takes the error from 0.15–1.9 to
+about 1e-7, two to that of the `Float64` eliminated solve. The one step is a starting value. Not refined: `Float64`
+systems (no refinement storage is held), the normal-equation reduced solvers (`:cholesky`, `:ldl`, dense and
+sparse) and LSMR. Its storage is the eliminated columns of the tables again (in `T`) and `Float64` vectors of the
+residual's length (two), the number of variables (three) and the reduced rows (one).
+
 `makehessiansystem(H, linsolver)` builds the Schur systems and `makejacobiansystem(J, n, linsolver)` the
 QR-eliminated ones; `checkhessian`, `checkjacobian` and `check_jacobian_linsolver` validate a
 prototype first, and `structurekey` identifies its structure for a cache.

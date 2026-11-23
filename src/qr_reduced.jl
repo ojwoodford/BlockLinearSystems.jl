@@ -93,8 +93,9 @@ function qr_backsubstitute_group!(
 end
 
 # backsubstitute!(x_e, x_r, ws::QRReductionWorkspace)
-# Recover the eliminated variables `x_e = U⁻¹ (q - B x_r)` from the retained ones, per table.
-function backsubstitute!(x_e::AbstractVector, x_r::AbstractVector, ws::QRReductionWorkspace{T}) where T
+# Recover the eliminated variables `x_e = U⁻¹ (q - B x_r)` from the retained ones, per table. `q` is the top rows of each
+# table in `Fr` (J.r's layout): the transformed residual by default; the refinement (qr_refinement.jl) hands its own.
+function backsubstitute!(x_e::AbstractVector, x_r::AbstractVector, ws::QRReductionWorkspace{T}, Fr::Vector{Float64} = ws.fres) where T
     jst = ws.structure
     st = jst.schur
     for g_idx in 1:nruns(st.e_dims)
@@ -102,7 +103,7 @@ function backsubstitute!(x_e::AbstractVector, x_r::AbstractVector, ws::QRReducti
         threaded = qr_threaded(jst, length(chunks))
         dispatch_dim(runblocksize(st.e_dims, g_idx)) do s_de
             foreach_index(length(chunks), threaded) do k
-                qr_backsubstitute_group!(x_e, x_r, ws.factored, ws.fres, jst, ws.scratch[k], chunks[k], s_de)
+                qr_backsubstitute_group!(x_e, x_r, ws.factored, Fr, jst, ws.scratch[k], chunks[k], s_de)
             end
         end
     end

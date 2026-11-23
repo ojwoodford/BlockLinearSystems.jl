@@ -32,7 +32,7 @@ const TEST_GROUPS = (
               "schur_jacobian.jl", "schur_description.jl", "schur_hessian.jl", "diagonal_blocks.jl", "schur_assembly.jl", "zero.jl", "readme.jl", "precision.jl", "conditioning.jl",
               # the DampedLinearSolve extension: the QR-eliminated systems through the linear-system contract
               "dampedlinearsolve_qrelimination.jl"],
-    threaded = ["schur_problems_threaded.jl", "schur_jacobian_threaded.jl", "qr_reduction.jl", "schur_qr.jl",
+    threaded = ["schur_problems_threaded.jl", "schur_jacobian_threaded.jl", "qr_reduction.jl", "schur_qr.jl", "qr_refinement.jl",
                 "threading.jl",
                 # the DampedLinearSolve extension: the Schur systems through the linear-system contract
                 "dampedlinearsolve_schurhessian.jl"],
