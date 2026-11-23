@@ -26,6 +26,18 @@ gradient `Jᵀr`, `x` and every query in `Float64`. With the dense reduced stora
 with the sparse one SPQR does not (`:auto`, `:qr`), `:cholesky` only where CHOLMOD factorizes in single precision,
 and `:ldl` and `:lsmr` always.
 
+**Conditioning.** Every system but LSMR's conditions the damped problem before the elimination, as
+DampedLinearSolve's systems do (its contract's "Conditioning"): with `S = Diagonal(s)` over all the variables,
+retained and eliminated, the reduction, the reduced solve and the back-substitution run on the scaled system
+(`S H S` and `S b`; on the Jacobian side the columns of `J` scaled, with the damping in the scaled variables) and
+`x = S y` is returned. `s_j` is the power of two nearest to `1/(1e-12 + √|d_j + λ₀ D_jj|)`, `d_j` the diagonal as
+filled (on the Jacobian side the squared column norms) and `λ₀ D` the first solve's damping after a fill, reused
+for the fill's later dampings and recomputed when one has moved far from it (the scaled damped diagonal outside
+`[2^-16, 2^16]`). The scale is applied where the kernels read the stored values, so `H`, `J`, `b` and `r` are left as
+filled and nothing more is held or allocated. Powers of two make it exact: what it changes is the range of the entries
+(in `Float32`) and the decisions made by comparing magnitudes, such as the sparse reduced solvers' indefiniteness
+test. The `1e-12` and the `2^16` are starting values.
+
 `makehessiansystem(H, linsolver)` builds the Schur systems and `makejacobiansystem(J, n, linsolver)` the
 QR-eliminated ones; `checkhessian`, `checkjacobian` and `check_jacobian_linsolver` validate a
 prototype first, and `structurekey` identifies its structure for a cache.

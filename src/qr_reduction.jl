@@ -45,9 +45,11 @@ end
 # into the Float64 Fr), write its damping rows and QR-factor its eliminated columns in place,
 # applying Qᵀ to the rest of the table and, in Float64, to its residual. The reflectors are not kept: the eliminated
 # columns end as [U; 0]. Returns false for a non-finite table or a numerically singular U.
+# Conditioned (conditioning.jl; `cs` the scale over all the variables, ones when off), the table's columns are scaled as
+# they are copied and the damping rows are √(λ·sc)·s: the elimination is that of J S.
 @inline function qr_table!(
     F::Vector{T}, Fr::Vector{Float64}, Rw::Vector{T}, Rr::Vector{Float64}, jst::SchurJacobianStructure,
-    scaling_e::AbstractVector, lambda::Float64, e::Int, s_de::Union{StaticInt, Int}
+    scaling_e::AbstractVector, lambda::Float64, e::Int, s_de::Union{StaticInt, Int}, cs::AbstractVector
 ) where T
     de = dimval(s_de)
     @inbounds begin
@@ -57,7 +59,7 @@ end
         rq = jst.residual_offsets[e] - 1 # Fr[rq + i] is row i of the residual
         me = M - de
         ce = C - de                      # retained columns
-        copy_table!(F, Fr, Rw, Rr, jst, e) || return false
+        copy_table!(F, Fr, Rw, Rr, jst, e, cs) || return false
         for j in 1:C, i in me + 1:M
             F[off + (j - 1) * M + i - 1] = zero(T)
         end
@@ -65,8 +67,9 @@ end
             Fr[rq + i] = 0.0
         end
         so = jst.schur.boffsets_e[e]
+        nr = jst.schur.nr
         for k in 1:de
-            F[off + (ce + k - 1) * M + me + k - 1] = T(sqrt(lambda * scaling_e[so + k - 1]))   # formed in Float64
+            F[off + (ce + k - 1) * M + me + k - 1] = T(sqrt(lambda * scaling_e[so + k - 1]) * cs[nr + so + k - 1])   # formed in Float64
         end
     end
     # Relative singularity threshold on the diagonal of U, scaled by the number of rows: the rounding left on an
@@ -141,12 +144,12 @@ end
 
 function qr_group!(
     F::Vector{T}, Fr::Vector{Float64}, Rw::Vector{T}, Rr::Vector{Float64}, failed_block::Base.Threads.Atomic{Int}, jst::SchurJacobianStructure,
-    scaling_e::AbstractVector, lambda::Float64, e_chunk::UnitRange{Int}, s_de::Union{StaticInt, Int}
+    scaling_e::AbstractVector, lambda::Float64, e_chunk::UnitRange{Int}, s_de::Union{StaticInt, Int}, s::AbstractVector
 ) where T
     @inbounds for e in e_chunk
         fb = failed_block[]                  # a lower failure elsewhere: no block above it can be the lowest
         fb != 0 && e > fb && return false
-        if !qr_table!(F, Fr, Rw, Rr, jst, scaling_e, lambda, e, s_de)
+        if !qr_table!(F, Fr, Rw, Rr, jst, scaling_e, lambda, e, s_de, s)
             record_failure!(failed_block, e)
             return false
         end
@@ -154,9 +157,10 @@ function qr_group!(
     return true
 end
 
-# reduce_qr!(ws::QRReductionWorkspace, J::SchurBlockJacobian, scaling_e, lambda) -> Bool
-# QR elimination of every eliminated block.
-function reduce_qr!(ws::QRReductionWorkspace{T}, J::SchurBlockJacobian{T}, scaling_e::AbstractVector, lambda_in::Real) where T
+# reduce_qr!(ws::QRReductionWorkspace, J::SchurBlockJacobian, scaling_e, lambda, s = ones) -> Bool
+# QR elimination of every eliminated block; conditioned, of J S, with `s` the scale over all the variables.
+function reduce_qr!(ws::QRReductionWorkspace{T}, J::SchurBlockJacobian{T}, scaling_e::AbstractVector, lambda_in::Real,
+                    s::AbstractVector=UnitScale(0)) where T
     lambda = Float64(lambda_in)
     jst = ws.structure
     J.structure === jst || throw(ArgumentError("The Jacobian and the workspace were built for different structures"))
@@ -170,30 +174,40 @@ function reduce_qr!(ws::QRReductionWorkspace{T}, J::SchurBlockJacobian{T}, scali
         threaded = qr_threaded(jst, length(chunks))
         dispatch_dim(runblocksize(st.e_dims, g_idx)) do s_de
             foreach_index(length(chunks), threaded) do k
-                qr_group!(F, Fr, Rw, Rr, ws.failed_block, jst, scaling_e, lambda, chunks[k], s_de)
+                qr_group!(F, Fr, Rw, Rr, ws.failed_block, jst, scaling_e, lambda, chunks[k], s_de, s)
             end
         end
         ws.failed_block[] != 0 && return false
     end
     # Free tables need no factorization
     for t in st.neblocks + 1:jst.ntables
-        copy_table!(F, Fr, Rw, Rr, jst, t)
+        copy_table!(F, Fr, Rw, Rr, jst, t, s)
     end
     return true
 end
 
 # Copy table t into the factored storage: its columns from the raw table (the same layout), and its residual from the
-# residual vector into the Float64 Fr (the same layout). Returns false if an entry is not finite.
-@inline function copy_table!(F::Vector{T}, Fr::Vector{Float64}, Rw::Vector{T}, Rr::Vector{Float64}, jst::SchurJacobianStructure, t::Int) where T
+# residual vector into the Float64 Fr (the same layout). Returns false if an entry is not finite. Conditioned, each
+# column is scaled by its variable's s as it is copied (formed in Float64, narrowed once).
+@inline function copy_table!(F::Vector{T}, Fr::Vector{Float64}, Rw::Vector{T}, Rr::Vector{Float64}, jst::SchurJacobianStructure, t::Int,
+                             s::AbstractVector=UnitScale(0)) where T
     @inbounds begin
         M = jst.table_nrows[t]
         C = jst.table_ncols[t] - 1
         off = jst.raw_offsets[t]
         bad = zero(T)
-        for i in off:off + M * C - 1
-            x = Rw[i]
-            F[i] = x
-            bad += x - x                 # NaN for an infinite or NaN entry, zero otherwise
+        if s isa UnitScale
+            for i in off:off + M * C - 1
+                x = Rw[i]
+                F[i] = x
+                bad += x - x             # NaN for an infinite or NaN entry, zero otherwise
+            end
+        else
+            for i in off:off + M * C - 1
+                x = Rw[i]
+                bad += x - x
+            end
+            scale_table_columns!(F, Rw, jst, t, s)
         end
         rb = jst.residual_offsets[t]
         badr = 0.0
@@ -204,4 +218,38 @@ end
         end
     end
     return !isnan(bad) && !isnan(badr)
+end
+
+# F's columns of table t, from the raw table Rw scaled by their variables' s: the retained blocks' columns, then (for an
+# eliminated block's table) its eliminated columns
+@inline function scale_table_columns!(F::Vector{T}, Rw::Vector{T}, jst::SchurJacobianStructure, t::Int, s::AbstractVector) where T
+    st = jst.schur
+    @inbounds begin
+        M = jst.table_nrows[t]
+        C = jst.table_ncols[t] - 1
+        off = jst.raw_offsets[t]
+        for u in jst.table_ptr[t]:jst.table_ptr[t + 1] - 1
+            r = jst.entry_retained[u]
+            ro = st.boffsets_r[r]
+            for k in 1:Int(st.r_dims[r])
+                f = s[ro + k - 1]
+                cb = off + (jst.entry_col[u] + k - 2) * M
+                for i in cb:cb + M - 1
+                    F[i] = scaled(T, Rw[i], f)
+                end
+            end
+        end
+        if t <= st.neblocks
+            de = Int(st.e_dims[t])
+            eo = st.nr + st.boffsets_e[t] - 1
+            for k in 1:de
+                f = s[eo + k]
+                cb = off + (C - de + k - 1) * M
+                for i in cb:cb + M - 1
+                    F[i] = scaled(T, Rw[i], f)
+                end
+            end
+        end
+    end
+    return F
 end

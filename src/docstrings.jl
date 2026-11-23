@@ -704,9 +704,11 @@ factored tables are needed for back-substitution after the solve), with the scra
 trial_workspace(::QRReductionWorkspace)
 
 """
-    reduce_qr!(ws::QRReductionWorkspace{T}, J::SchurBlockJacobian{T}, scaling_e, lambda) -> Bool
+    reduce_qr!(ws::QRReductionWorkspace{T}, J::SchurBlockJacobian{T}, scaling_e, lambda, s = ones) -> Bool
 
-Eliminate every eliminated block of `J` by QR, into `ws`. For each eliminated block `e`:
+Eliminate every eliminated block of `J` by QR, into `ws`. With a conditioning scale `s` over all the variables
+(SP-B2; the system's solve passes it), the tables' columns are scaled by it as they are copied and the damping rows
+are `√(lambda * scaling_e)·s`: the elimination is that of `J S`, in the scaled variables. For each eliminated block `e`:
 
 1. copy its raw table to `ws.factored`, and its residual to `ws.fres`;
 2. write the damping rows `[0 | √(lambda * scaling_e[e]) | 0]` (a diagonal `d_e × d_e` block), so that the

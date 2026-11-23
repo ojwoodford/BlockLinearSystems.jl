@@ -47,13 +47,15 @@ mutable struct DenseSchurLinearSystem{T, R} <: AbstractLinearSystem
     scaling_r::SubArray{Float64, 1, Vector{Float64}, Tuple{UnitRange{Int}}, true}
     scaling_e::SubArray{Float64, 1, Vector{Float64}, Tuple{UnitRange{Int}}, true}
     workspace::SchurReductionWorkspace{T}
+    cond::EliminationConditioning     # the conditioning scale over every variable (conditioning.jl)
 end
 
 function DenseSchurLinearSystem(
     H::SchurBlockHessian{T, Matrix{T}},
     b::Vector{Float64}, x::Vector{Float64},
     scaling::Vector{Float64}=ones(length(b));
-    nchunks::Int=0
+    nchunks::Int=0,
+    condition::Bool=true              # the internal switch of the conditioning (conditioning.jl), for tests
 ) where T
     nr = H.structure.nr
     tot_dim = length(b)
@@ -74,7 +76,8 @@ function DenseSchurLinearSystem(
     ws = SchurReductionWorkspace{T}(H.structure, K)
 
     return DenseSchurLinearSystem{T, typeof(red)}(
-        H, b, x, b_r, b_e, x_r, x_e, red, getb(red), getA(red), 0.0, scaling, scaling_r, scaling_e, ws
+        H, b, x, b_r, b_e, x_r, x_e, red, getb(red), getA(red), 0.0, scaling, scaling_r, scaling_e, ws,
+        EliminationConditioning(tot_dim, condition)
     )
 end
 
@@ -111,6 +114,7 @@ mutable struct SparseSchurLinearSystem{T, Ti, TL, TF, TC} <: AbstractLinearSyste
     scaling_r::SubArray{Float64, 1, Vector{Float64}, Tuple{UnitRange{Int}}, true}
     scaling_e::SubArray{Float64, 1, Vector{Float64}, Tuple{UnitRange{Int}}, true}
     workspace::SchurReductionWorkspace{T}
+    cond::EliminationConditioning
 end
 
 function SparseSchurLinearSystem(
@@ -119,7 +123,8 @@ function SparseSchurLinearSystem(
     scaling::Vector{Float64}=ones(length(b));
     nchunks::Int=0,
     pattern=nothing,
-    cholmod::Bool=true
+    cholmod::Bool=true,
+    condition::Bool=true
 ) where T
     nr = H.structure.nr
     tot_dim = length(b)
@@ -166,7 +171,7 @@ function SparseSchurLinearSystem(
         H, b, x, b_r, b_e, x_r, x_e, g_S, S, S_factor, S_factor_ldl, S_chol, zeros(T, nr), zeros(T, nr),
         r_to_s_map, pattern.diag_inds,
         pattern.block_rowval, pattern.block_colptr, pattern.block_row_offsets, pattern.col_heights,
-        0.0, scaling, scaling_r, scaling_e, ws
+        0.0, scaling, scaling_r, scaling_e, ws, EliminationConditioning(tot_dim, condition)
     )
 end
 
@@ -271,23 +276,36 @@ function DampedLinearSolve.zero!(ls::DenseSchurLinearSystem)
     fill!(ls.b, zero(eltype(ls.b)))
     BlockLinearSystems.zero!(ls.H)
     DampedLinearSolve.zero!(ls.red)
+    ls.cond.stale = true
     return ls
 end
 
 function DampedLinearSolve.zero!(ls::SparseSchurLinearSystem)
     fill!(ls.b, zero(eltype(ls.b)))
     BlockLinearSystems.zero!(ls.H)
+    ls.cond.stale = true
     return ls
 end
 
-# Build the reduced system S and g_S, with the damping, from scratch. Called at the start of each solve.
-function build_reduced!(ls::DenseSchurLinearSystem)
-    reset_schur_dense!(ls.S, ls.H.R, ls.scaling_r, ls.lambda, ls.workspace)
+# The solve with the conditioning scale (conditioning.jl), from the diagonal of H as filled and the damping, split into
+# its retained and eliminated parts; unconditioned, with unit scales
+function conditioned_schur_solve!(ls::Union{DenseSchurLinearSystem{T}, SparseSchurLinearSystem{T}}, solver_opt) where T
+    nr, n = length(ls.x_r), length(ls.x)
+    ls.cond.on || return schur_solve!(ls, solver_opt, UnitScale(n), UnitScale(nr), UnitScale(n - nr))
+    s = prepare_scale!(ls.cond, d -> DampedLinearSolve.getdiag!(d, ls), ls.lambda, ls.scaling, T)
+    return schur_solve!(ls, solver_opt, s, view(s, 1:nr), view(s, nr+1:n))
+end
+
+# Build the reduced system S and g_S, with the damping, from scratch, in the scaled variables. Called at the start of
+# each solve. Without a scale, unconditioned (for tests).
+function build_reduced!(ls::DenseSchurLinearSystem, s_r::AbstractVector, s_e::AbstractVector)
+    reset_schur_dense!(ls.S, ls.H.R, ls.scaling_r, ls.lambda, ls.workspace, s_r)
     return reduce_schur_dense!(
         ls.S, ls.g_S, ls.b_r, ls.b_e, ls.scaling_e, ls.lambda,
-        ls.H.structure, ls.H.E_data, ls.H.C_data, ls.workspace
+        ls.H.structure, ls.H.E_data, ls.H.C_data, ls.workspace, s_r, s_e
     )
 end
+build_reduced!(ls::DenseSchurLinearSystem) = build_reduced!(ls, UnitScale(length(ls.x_r)), UnitScale(length(ls.x_e)))
 
 # The reduced solve of a dense S, through the DampedLinearSolve system holding it (which factors a copy, so S
 # is left as built): Cholesky, falling back to Bunch-Kaufman, for :auto and :cholesky; Bunch-Kaufman for :ldl
@@ -303,12 +321,16 @@ end
 DampedLinearSolve.solve!(ls::DenseSchurLinearSystem) = DampedLinearSolve.solve!(ls, static(:auto))
 DampedLinearSolve.solve!(ls::DenseSchurLinearSystem, s::StaticSymbol) = check_reduced_solver(s)   # throws: not a ReducedSolver
 function DampedLinearSolve.solve!(ls::DenseSchurLinearSystem, solver_opt::ReducedSolver)
-    build_reduced!(ls) || return NotPositiveDefinite
+    return conditioned_schur_solve!(ls, solver_opt)
+end
+function schur_solve!(ls::DenseSchurLinearSystem, solver_opt::ReducedSolver, s, s_r, s_e)
+    build_reduced!(ls, s_r, s_e) || return NotPositiveDefinite
     status = solve_reduced_dense!(ls.red, solver_opt)
     status == NotPositiveDefinite && return status
     # An Indefinite solve has solved too: the whole of x, as DampedLinearSolve's contract requires
     copyto!(ls.x_r, getx(ls.red))
-    backsubstitute!(ls.x_e, ls.x_r, ls.H.structure, ls.H.C_data, ls.workspace)
+    backsubstitute!(ls.x_e, ls.x_r, ls.H.structure, ls.H.C_data, ls.workspace, s_r, s_e)
+    unscale!(ls.x, s)
     # A non-finite R or C can pass the factorization; a non-finite solution does not
     return all(isfinite, ls.x) ? status : NotPositiveDefinite
 end
@@ -335,14 +357,17 @@ end
 DampedLinearSolve.solve!(ls::SparseSchurLinearSystem) = DampedLinearSolve.solve!(ls, static(:auto))
 DampedLinearSolve.solve!(ls::SparseSchurLinearSystem, s::StaticSymbol) = check_reduced_solver(s)   # throws: not a ReducedSolver
 function DampedLinearSolve.solve!(ls::SparseSchurLinearSystem, solver_opt::ReducedSolver)
+    return conditioned_schur_solve!(ls, solver_opt)
+end
+function schur_solve!(ls::SparseSchurLinearSystem, solver_opt::ReducedSolver, s, s_r, s_e)
     reset_schur_sparse!(
-        ls.S.nzval, ls.H.R.data, ls.r_to_s_map, ls.diag_inds, ls.scaling_r, ls.lambda, ls.workspace
+        ls.S.nzval, ls.H.R.data, ls.r_to_s_map, ls.diag_inds, ls.scaling_r, ls.lambda, ls.workspace, s_r, ls.S
     )
     success = reduce_schur_sparse!(
         ls.S, ls.g_S, ls.b_r, ls.b_e, ls.scaling_e, ls.lambda,
         ls.H.structure, ls.H.E_data, ls.H.C_data,
         ls.block_colptr, ls.block_rowval, ls.block_row_offsets, ls.col_heights,
-        ls.workspace
+        ls.workspace, s_r, s_e
     )
     if !success
         return NotPositiveDefinite
@@ -374,7 +399,8 @@ function DampedLinearSolve.solve!(ls::SparseSchurLinearSystem, solver_opt::Reduc
     copyto!(ls.x_r, ls.sol)
 
     # An Indefinite solve has solved too: the whole of x, as DampedLinearSolve's contract requires
-    backsubstitute!(ls.x_e, ls.x_r, ls.H.structure, ls.H.C_data, ls.workspace)
+    backsubstitute!(ls.x_e, ls.x_r, ls.H.structure, ls.H.C_data, ls.workspace, s_r, s_e)
+    unscale!(ls.x, s)
     # A non-finite R or C can pass the factorization; a non-finite solution does not
     return all(isfinite, ls.x) ? status : NotPositiveDefinite
 end
@@ -401,7 +427,7 @@ function DampedLinearSolve.copy_structure(ls::DenseSchurLinearSystem{T, R}) wher
         view(x, 1:nr), view(x, nr+1:length(x)),
         red, getb(red), getA(red), ls.lambda, scaling,
         view(scaling, 1:nr), view(scaling, nr+1:length(scaling)),
-        ws_trial
+        ws_trial, EliminationConditioning(length(b), ls.cond.on)
     )
 end
 
@@ -422,7 +448,7 @@ function DampedLinearSolve.copy_structure(ls::SparseSchurLinearSystem{T, Ti, TL,
         ls.block_rowval, ls.block_colptr, ls.block_row_offsets, ls.col_heights,
         ls.lambda, scaling,
         view(scaling, 1:nr), view(scaling, nr+1:length(scaling)),
-        ws_trial
+        ws_trial, EliminationConditioning(length(b), ls.cond.on)
     )
 end
 
@@ -439,7 +465,7 @@ function DampedLinearSolve.sharex(ls::DenseSchurLinearSystem{T, R}, from) where 
         view(x, 1:nr), view(x, nr+1:length(x)),
         ls.red, ls.g_S, ls.S, ls.lambda, ls.scaling,
         ls.scaling_r, ls.scaling_e,
-        ls.workspace
+        ls.workspace, ls.cond
     )
 end
 
@@ -456,7 +482,7 @@ function DampedLinearSolve.sharex(ls::SparseSchurLinearSystem{T, Ti, TL, TF, TC}
         ls.block_rowval, ls.block_colptr, ls.block_row_offsets, ls.col_heights,
         ls.lambda, ls.scaling,
         ls.scaling_r, ls.scaling_e,
-        ls.workspace
+        ls.workspace, ls.cond
     )
 end
 
