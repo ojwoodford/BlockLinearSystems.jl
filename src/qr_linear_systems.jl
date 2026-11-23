@@ -170,7 +170,7 @@ The linear system of a [`JacobianObjective`](@ref) with a `SchurBlockJacobian` p
 `(JᵀJ + λD) x = Jᵀr` solved by QR elimination of the eliminated blocks and a solve of the reduced problem in the
 retained variables. Nothing allocates after construction.
 """
-mutable struct QRSchurLinearSystem{T, RType, R, F} <: AbstractLinearSystem
+mutable struct QRSchurLinearSystem{T, RType, R} <: AbstractLinearSystem
     const A::SchurJacobianHessian{T, RType}
     const b::Vector{Float64}           # Jᵀr
     const x::Vector{Float64}
@@ -181,7 +181,6 @@ mutable struct QRSchurLinearSystem{T, RType, R, F} <: AbstractLinearSystem
     const xr::Vector{Float64}          # x_r, n_r
     const xe::Vector{Float64}          # x_e
     const sr::Vector{Float64}          # s_r, the retained part of the scaling, for a reduced system that is damped
-    const refine::F                    # the whole-system refinement's storage (qr_refinement.jl): Float32 with the dense reduced QR only, nothing otherwise
     lambda::Float64
     scaling::Union{Nothing, Vector{Float64}}
 end
@@ -191,9 +190,8 @@ function QRSchurLinearSystem(J::SchurBlockJacobian, linsolver; condition::Bool =
     nr = J.structure.schur.nr
     ws = QRReductionWorkspace(J)
     on = condition && linsolver_symbol(linsolver) !== :lsmr
-    red = reduced_system(J, ws, linsolver)
-    return QRSchurLinearSystem(SchurJacobianHessian(J, on), zeros(n), zeros(n), ws, red, linsolver_symbol(linsolver), ones(n),
-                               zeros(nr), zeros(n - nr), zeros(nr), elimination_refinement(J, red), 0.0, nothing)
+    return QRSchurLinearSystem(SchurJacobianHessian(J, on), zeros(n), zeros(n), ws, reduced_system(J, ws, linsolver),
+                               linsolver_symbol(linsolver), ones(n), zeros(nr), zeros(n - nr), zeros(nr), 0.0, nothing)
 end
 DampedLinearSolve.isfinitesystem(ls::QRSchurLinearSystem) = all(isfinite, ls.A.J.data) && all(isfinite, ls.A.J.r)
 
@@ -221,10 +219,10 @@ function DampedLinearSolve.copy_structure(ls::QRSchurLinearSystem{T, RType}) whe
     At = SchurJacobianHessian(SchurBlockJacobian{T, RType}(copy(J.data), copy(J.r), J.structure), ls.A.cond.on)
     ws = trial_workspace(ls.ws)
     reduced = ls.linsolver === :lsmr ? reduced_system(J, ws, static(:lsmr)) : ls.reduced
-    return QRSchurLinearSystem(At, zeros(length(ls.b)), ls.x, ws, reduced, ls.linsolver, ls.unit, ls.xr, ls.xe, ls.sr, ls.refine, ls.lambda, ls.scaling)
+    return QRSchurLinearSystem(At, zeros(length(ls.b)), ls.x, ws, reduced, ls.linsolver, ls.unit, ls.xr, ls.xe, ls.sr, ls.lambda, ls.scaling)
 end
 DampedLinearSolve.sharex(ls::QRSchurLinearSystem, from) = ls.x === from.x ? ls :
-    QRSchurLinearSystem(ls.A, ls.b, from.x, ls.ws, ls.reduced, ls.linsolver, ls.unit, ls.xr, ls.xe, ls.sr, ls.refine, ls.lambda, ls.scaling)
+    QRSchurLinearSystem(ls.A, ls.b, from.x, ls.ws, ls.reduced, ls.linsolver, ls.unit, ls.xr, ls.xe, ls.sr, ls.lambda, ls.scaling)
 
 # The QR routes resolve a damping down to about eps² of the diagonal (as the Jacobian systems do); those that form
 # S = J̃ᵀJ̃ only to about eps (as Cholesky of the normal equations)
@@ -238,21 +236,18 @@ scaling_of(ls::QRSchurLinearSystem) = isnothing(ls.scaling) ? ls.unit : ls.scali
 
 # Conditioned (conditioning.jl), the elimination is of J S, the reduced problem's damping is λ·s_r·S_r² (its variables
 # are the scaled ones), and x = S y; unconditioned, with a unit scale
-# A Float32 system with the dense reduced QR is then refined over the whole system (qr_refinement.jl;
-# `steps` and `bjorck` other than the defaults for tests)
-DampedLinearSolve.solve!(ls::QRSchurLinearSystem, s::ReducedSym) = refined_solve!(ls, s, ELIMINATION_REFINEMENT_STEPS, false)
-function refined_solve!(ls::QRSchurLinearSystem{T}, s::ReducedSym, steps::Integer, bjorck::Bool) where T
+function DampedLinearSolve.solve!(ls::QRSchurLinearSystem{T}, s::ReducedSym) where T
     A = ls.A
     nr = A.J.structure.schur.nr
-    A.cond.on || return qr_schur_solve!(ls, s, UnitScale(length(ls.x)), view(scaling_of(ls), 1:nr), steps, bjorck)
+    A.cond.on || return qr_schur_solve!(ls, s, UnitScale(length(ls.x)), view(scaling_of(ls), 1:nr))
     sc = scaling_of(ls)
     cs = prepare_scale!(A.cond, d -> copyto!(d, colnorms2!(A)), ls.lambda, sc, T)
     @inbounds for i in 1:nr
         ls.sr[i] = sc[i] * (cs[i] * cs[i])
     end
-    return qr_schur_solve!(ls, s, cs, ls.sr, steps, bjorck)
+    return qr_schur_solve!(ls, s, cs, ls.sr)
 end
-function qr_schur_solve!(ls::QRSchurLinearSystem, s::ReducedSym, cs::AbstractVector, s_r::AbstractVector, steps::Integer, bjorck::Bool)
+function qr_schur_solve!(ls::QRSchurLinearSystem, s::ReducedSym, cs::AbstractVector, s_r::AbstractVector)
     J = ls.A.J
     jst = J.structure
     nr = jst.schur.nr
@@ -260,13 +255,12 @@ function qr_schur_solve!(ls::QRSchurLinearSystem, s::ReducedSym, cs::AbstractVec
     sc = scaling_of(ls)
     # A failed block (non-finite, or numerically singular, as an under-determined block is undamped) is reported
     # as the Schur systems report a singular eliminated block
-    reduce_qr!(ls.ws, J, view(sc, nr+1:length(sc)), lambda, cs, ls.refine) || return NotPositiveDefinite
+    reduce_qr!(ls.ws, J, view(sc, nr+1:length(sc)), lambda, cs) || return NotPositiveDefinite
     status = reduced_solve!(ls, ls.reduced, s, lambda, s_r)
     status == NotPositiveDefinite && return status
     # An Indefinite solve (the normal equations' LDLᵀ) has solved too: the whole of x, as DampedLinearSolve's
     # contract requires
     backsubstitute!(ls.xe, ls.xr, ls.ws)
-    refine_elimination!(ls.refine, ls, cs, lambda, sc, steps, bjorck)
     @inbounds for i in 1:nr
         ls.x[i] = ls.xr[i]
     end

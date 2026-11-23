@@ -43,14 +43,13 @@ end
 
 # Copy table e from raw to factored (its columns from the raw table into F, its residual from the residual vector
 # into the Float64 Fr), write its damping rows and QR-factor its eliminated columns in place,
-# applying Qᵀ to the rest of the table and, in Float64, to its residual. The reflectors are not kept in the table: the
-# eliminated columns end as [U; 0]; a refined system (`rf`, qr_refinement.jl) keeps them in its own storage first.
-# Returns false for a non-finite table or a numerically singular U.
+# applying Qᵀ to the rest of the table and, in Float64, to its residual. The reflectors are not kept: the eliminated
+# columns end as [U; 0]. Returns false for a non-finite table or a numerically singular U.
 # Conditioned (conditioning.jl; `cs` the scale over all the variables, ones when off), the table's columns are scaled as
 # they are copied and the damping rows are √(λ·sc)·s: the elimination is that of J S.
 @inline function qr_table!(
     F::Vector{T}, Fr::Vector{Float64}, Rw::Vector{T}, Rr::Vector{Float64}, jst::SchurJacobianStructure,
-    scaling_e::AbstractVector, lambda::Float64, e::Int, s_de::Union{StaticInt, Int}, cs::AbstractVector, rf = nothing
+    scaling_e::AbstractVector, lambda::Float64, e::Int, s_de::Union{StaticInt, Int}, cs::AbstractVector
 ) where T
     de = dimval(s_de)
     @inbounds begin
@@ -123,7 +122,6 @@ end
             for i in k + 1:M
                 Fr[rq + i] -= s * F[cb + i]
             end
-            keep_reflector!(rf, F, cb, M, e, k, so, tau)
             for i in k + 1:M
                 F[cb + i] = zero(T)
             end
@@ -146,12 +144,12 @@ end
 
 function qr_group!(
     F::Vector{T}, Fr::Vector{Float64}, Rw::Vector{T}, Rr::Vector{Float64}, failed_block::Base.Threads.Atomic{Int}, jst::SchurJacobianStructure,
-    scaling_e::AbstractVector, lambda::Float64, e_chunk::UnitRange{Int}, s_de::Union{StaticInt, Int}, s::AbstractVector, rf = nothing
+    scaling_e::AbstractVector, lambda::Float64, e_chunk::UnitRange{Int}, s_de::Union{StaticInt, Int}, s::AbstractVector
 ) where T
     @inbounds for e in e_chunk
         fb = failed_block[]                  # a lower failure elsewhere: no block above it can be the lowest
         fb != 0 && e > fb && return false
-        if !qr_table!(F, Fr, Rw, Rr, jst, scaling_e, lambda, e, s_de, s, rf)
+        if !qr_table!(F, Fr, Rw, Rr, jst, scaling_e, lambda, e, s_de, s)
             record_failure!(failed_block, e)
             return false
         end
@@ -160,10 +158,9 @@ function qr_group!(
 end
 
 # reduce_qr!(ws::QRReductionWorkspace, J::SchurBlockJacobian, scaling_e, lambda, s = ones) -> Bool
-# QR elimination of every eliminated block; conditioned, of J S, with `s` the scale over all the variables. With `rf`
-# (internal: a refined system's storage, qr_refinement.jl) the tables' reflectors are kept there.
+# QR elimination of every eliminated block; conditioned, of J S, with `s` the scale over all the variables.
 function reduce_qr!(ws::QRReductionWorkspace{T}, J::SchurBlockJacobian{T}, scaling_e::AbstractVector, lambda_in::Real,
-                    s::AbstractVector=UnitScale(0), rf = nothing) where T
+                    s::AbstractVector=UnitScale(0)) where T
     lambda = Float64(lambda_in)
     jst = ws.structure
     J.structure === jst || throw(ArgumentError("The Jacobian and the workspace were built for different structures"))
@@ -177,7 +174,7 @@ function reduce_qr!(ws::QRReductionWorkspace{T}, J::SchurBlockJacobian{T}, scali
         threaded = qr_threaded(jst, length(chunks))
         dispatch_dim(runblocksize(st.e_dims, g_idx)) do s_de
             foreach_index(length(chunks), threaded) do k
-                qr_group!(F, Fr, Rw, Rr, ws.failed_block, jst, scaling_e, lambda, chunks[k], s_de, s, rf)
+                qr_group!(F, Fr, Rw, Rr, ws.failed_block, jst, scaling_e, lambda, chunks[k], s_de, s)
             end
         end
         ws.failed_block[] != 0 && return false

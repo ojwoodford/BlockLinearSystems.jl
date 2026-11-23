@@ -39,7 +39,6 @@ include("schur_assembly.jl")
 include("linear_systems.jl")
 include("schur_linear_systems.jl")
 include("qr_linear_systems.jl")
-include("qr_refinement.jl")
 include("linear_system_conformance.jl")
 include("docstrings.jl")
 
