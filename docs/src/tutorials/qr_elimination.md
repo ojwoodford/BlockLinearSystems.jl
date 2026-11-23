@@ -29,7 +29,10 @@ The rows that involve eliminated block `e` (the row blocks that touch it) are st
 table, with the columns of every retained block coupled to `e`, then `e`'s own columns, then the residual. `d_e`
 damping rows sit underneath, zero in the raw storage. The raw storage keeps the residual column apart, in a
 `Float64` vector of its own (`J.r`, a column per table), so that it and the gradient stay in double precision
-whatever the tables' element type; the elimination's working copy holds the whole table:
+whatever the tables' element type. The elimination keeps it apart too: its working copy of the tables has the
+raw layout, and the residual goes through the elimination in a `Float64` vector of the same layout, the
+reflectors applied to it in `Float64`, so that the back-substitution's `q` and the reduced residual `r̃` are
+`Float64` too:
 
 ```
                  retained blocks coupled to e      e     r

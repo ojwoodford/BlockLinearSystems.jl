@@ -5,23 +5,27 @@
 # QRReductionWorkspace{T}(structure::SchurJacobianStructure)
 # QRReductionWorkspace(J::SchurBlockJacobian)
 # Factored tables and scratch for QR elimination.
+# The factored tables have the raw tables' layout (`raw_offsets`: no residual column); the residual column goes
+# through the elimination in Float64, in `fres` (`J.r`'s layout, `residual_offsets`), to which the T reflectors are
+# applied in Float64 (SP-B6): Qᵀr, whose top rows are the back-substitution's q and the rest the reduced residual r̃.
 struct QRReductionWorkspace{T}
     structure::SchurJacobianStructure
-    factored::Vector{T}                   # Qᵀ T_e for every whole table (free tables copied), the residual narrowed to T
-    scratch::Vector{Vector{T}}            # Per chunk: max_De scratch for blocks above D_STATIC (empty otherwise)
+    factored::Vector{T}                   # Qᵀ T_e for every table (free tables copied), without the residual column
+    fres::Vector{Float64}                 # Qᵀ r_e for every table (free tables copied), in Float64
+    scratch::Vector{Vector{Float64}}      # Per chunk: max_De scratch for blocks above D_STATIC (empty otherwise)
     failed_block::Base.Threads.Atomic{Int}
 end
 
 function QRReductionWorkspace{T}(jst::SchurJacobianStructure) where T
-    scratch = [Vector{T}(undef, qr_scratch_length(jst)) for _ in 1:qr_nscratch(jst)]
-    return QRReductionWorkspace{T}(jst, zeros(T, table_length(jst)), scratch, Base.Threads.Atomic{Int}(0))
+    scratch = [Vector{Float64}(undef, qr_scratch_length(jst)) for _ in 1:qr_nscratch(jst)]
+    return QRReductionWorkspace{T}(jst, zeros(T, raw_length(jst)), zeros(residual_length(jst)), scratch, Base.Threads.Atomic{Int}(0))
 end
 QRReductionWorkspace(J::SchurBlockJacobian{T}) where T = QRReductionWorkspace{T}(J.structure)
 
 # trial_workspace(ws::QRReductionWorkspace)
 # A workspace for a second system with the same structure: its own factored tables and failure flag, shared scratch.
 trial_workspace(ws::QRReductionWorkspace{T}) where T =
-    QRReductionWorkspace{T}(ws.structure, similar(ws.factored), ws.scratch, Base.Threads.Atomic{Int}(0))
+    QRReductionWorkspace{T}(ws.structure, similar(ws.factored), similar(ws.fres), ws.scratch, Base.Threads.Atomic{Int}(0))
 
 # Unrolled over the columns for a static dimension; stops (returning false) as soon as f(k) returns false
 @generated function unrolled_all(f::F, ::StaticInt{D}) where {F, D}
@@ -37,24 +41,28 @@ end
     return true
 end
 
-# Copy table e from raw to factored (its columns from the raw table, its residual from the residual vector, narrowed
-# to T), write its damping rows and QR-factor its eliminated columns in place,
-# applying Qᵀ to the rest of the table. The reflectors are not kept: the eliminated columns end as [U; 0].
-# Returns false for a non-finite table or a numerically singular U.
+# Copy table e from raw to factored (its columns from the raw table into F, its residual from the residual vector
+# into the Float64 Fr), write its damping rows and QR-factor its eliminated columns in place,
+# applying Qᵀ to the rest of the table and, in Float64, to its residual. The reflectors are not kept: the eliminated
+# columns end as [U; 0]. Returns false for a non-finite table or a numerically singular U.
 @inline function qr_table!(
-    F::Vector{T}, Rw::Vector{T}, Rr::Vector{Float64}, jst::SchurJacobianStructure,
+    F::Vector{T}, Fr::Vector{Float64}, Rw::Vector{T}, Rr::Vector{Float64}, jst::SchurJacobianStructure,
     scaling_e::AbstractVector, lambda::Float64, e::Int, s_de::Union{StaticInt, Int}
 ) where T
     de = dimval(s_de)
     @inbounds begin
         M = jst.table_nrows[e]
-        C = jst.table_ncols[e]
-        off = jst.table_offsets[e]
+        C = jst.table_ncols[e] - 1       # columns in F (the residual is in Fr)
+        off = jst.raw_offsets[e]
+        rq = jst.residual_offsets[e] - 1 # Fr[rq + i] is row i of the residual
         me = M - de
-        ce = C - de - 1                  # retained columns
-        copy_table!(F, Rw, Rr, jst, e) || return false
+        ce = C - de                      # retained columns
+        copy_table!(F, Fr, Rw, Rr, jst, e) || return false
         for j in 1:C, i in me + 1:M
             F[off + (j - 1) * M + i - 1] = zero(T)
+        end
+        for i in me + 1:M
+            Fr[rq + i] = 0.0
         end
         so = jst.schur.boffsets_e[e]
         for k in 1:de
@@ -100,6 +108,17 @@ end
                     F[yb + i] -= s * F[cb + i]
                 end
             end
+            # and to the residual, in Float64: the same operations (for T = Float64, the same values as when the
+            # residual was the table's last column)
+            s = Fr[rq + k]
+            for i in k + 1:M
+                s += F[cb + i] * Fr[rq + i]
+            end
+            s *= tau
+            Fr[rq + k] -= s
+            for i in k + 1:M
+                Fr[rq + i] -= s * F[cb + i]
+            end
             for i in k + 1:M
                 F[cb + i] = zero(T)
             end
@@ -121,13 +140,13 @@ end
 end
 
 function qr_group!(
-    F::Vector{T}, Rw::Vector{T}, Rr::Vector{Float64}, failed_block::Base.Threads.Atomic{Int}, jst::SchurJacobianStructure,
+    F::Vector{T}, Fr::Vector{Float64}, Rw::Vector{T}, Rr::Vector{Float64}, failed_block::Base.Threads.Atomic{Int}, jst::SchurJacobianStructure,
     scaling_e::AbstractVector, lambda::Float64, e_chunk::UnitRange{Int}, s_de::Union{StaticInt, Int}
 ) where T
     @inbounds for e in e_chunk
         fb = failed_block[]                  # a lower failure elsewhere: no block above it can be the lowest
         fb != 0 && e > fb && return false
-        if !qr_table!(F, Rw, Rr, jst, scaling_e, lambda, e, s_de)
+        if !qr_table!(F, Fr, Rw, Rr, jst, scaling_e, lambda, e, s_de)
             record_failure!(failed_block, e)
             return false
         end
@@ -145,45 +164,44 @@ function reduce_qr!(ws::QRReductionWorkspace{T}, J::SchurBlockJacobian{T}, scali
     length(scaling_e) == sum(Int, st.e_dims; init=0) || throw(DimensionMismatch("scaling_e has length $(length(scaling_e)), expected $(sum(Int, st.e_dims; init=0))"))
     check_damping(lambda_in, scaling_e, :scaling_e)
     ws.failed_block[] = 0
-    F, Rw, Rr = ws.factored, J.data, J.r
+    F, Fr, Rw, Rr = ws.factored, ws.fres, J.data, J.r
     for g_idx in 1:nruns(st.e_dims)
         chunks = st.chunks[g_idx]
         threaded = qr_threaded(jst, length(chunks))
         dispatch_dim(runblocksize(st.e_dims, g_idx)) do s_de
             foreach_index(length(chunks), threaded) do k
-                qr_group!(F, Rw, Rr, ws.failed_block, jst, scaling_e, lambda, chunks[k], s_de)
+                qr_group!(F, Fr, Rw, Rr, ws.failed_block, jst, scaling_e, lambda, chunks[k], s_de)
             end
         end
         ws.failed_block[] != 0 && return false
     end
     # Free tables need no factorization
     for t in st.neblocks + 1:jst.ntables
-        copy_table!(F, Rw, Rr, jst, t)
+        copy_table!(F, Fr, Rw, Rr, jst, t)
     end
     return true
 end
 
-# Copy table t into the factored storage: its columns from the raw table, then its residual column from the residual
-# vector, narrowed to T. Returns false if an entry is not finite.
-@inline function copy_table!(F::Vector{T}, Rw::Vector{T}, Rr::Vector{Float64}, jst::SchurJacobianStructure, t::Int) where T
+# Copy table t into the factored storage: its columns from the raw table (the same layout), and its residual from the
+# residual vector into the Float64 Fr (the same layout). Returns false if an entry is not finite.
+@inline function copy_table!(F::Vector{T}, Fr::Vector{Float64}, Rw::Vector{T}, Rr::Vector{Float64}, jst::SchurJacobianStructure, t::Int) where T
     @inbounds begin
         M = jst.table_nrows[t]
-        C = jst.table_ncols[t]
-        off = jst.table_offsets[t]
-        roff = jst.raw_offsets[t] - off
+        C = jst.table_ncols[t] - 1
+        off = jst.raw_offsets[t]
         bad = zero(T)
-        for i in off:off + M * (C - 1) - 1
-            x = Rw[i + roff]
+        for i in off:off + M * C - 1
+            x = Rw[i]
             F[i] = x
             bad += x - x                 # NaN for an infinite or NaN entry, zero otherwise
         end
-        rb = off + M * (C - 1)
-        qoff = jst.residual_offsets[t] - rb
+        rb = jst.residual_offsets[t]
+        badr = 0.0
         for i in rb:rb + M - 1
-            x = T(Rr[i + qoff])
-            F[i] = x
-            bad += x - x
+            x = Rr[i]
+            Fr[i] = x
+            badr += x - x
         end
     end
-    return !isnan(bad)
+    return !isnan(bad) && !isnan(badr)
 end

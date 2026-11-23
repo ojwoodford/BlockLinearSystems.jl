@@ -16,7 +16,7 @@ using Main.QRFixtures, Main.DescriptionFixtures
     @test jst.table_nrows == [8, 7, 4, 3, 2]                    # m_e + d_e damping rows; free groups have none
     @test jst.table_ncols == [16, 7, 3, 13, 4]
     @test jst.table_top == [3, 3, 2, 0, 0]
-    @test jst.table_offsets == cumsum([1; jst.table_nrows .* jst.table_ncols])         # the whole tables (factored copy)
+    @test jst.table_offsets == cumsum([1; jst.table_nrows .* jst.table_ncols])         # the whole tables (with the residual column)
     @test jst.raw_offsets == cumsum([1; jst.table_nrows .* (jst.table_ncols .- 1)])  # the raw tables, without the residual
     @test jst.residual_offsets == cumsum([1; jst.table_nrows])                      # the residual vector
     # Coupling entries keep the SchurStructure's order (sorted by retained block), free entries follow, also sorted
@@ -114,7 +114,7 @@ end
         sc, lambda = rand(Random.Xoshiro(2), T, sum(p.e_dims)) .+ T(0.5), T(0.3)
         wsd, wss = QRReductionWorkspace(Jd), QRReductionWorkspace(Js)
         @test reduce_qr!(wsd, Jd, sc, lambda) && reduce_qr!(wss, Js, sc, lambda)
-        @test wsd.factored == wss.factored
+        @test wsd.factored == wss.factored && wsd.fres == wss.fres
         S, g = zeros(T, st.nr, st.nr), zeros(T, st.nr)
         reduced_normal_dense!(S, g, wsd)
         pat = build_schur_pattern(st, T; extra_blocks=free_block_pairs(jst))

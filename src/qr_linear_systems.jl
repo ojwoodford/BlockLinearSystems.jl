@@ -1,6 +1,7 @@
 # QR elimination on the Jacobian path (TP3): the linear system of a JacobianObjective whose prototype is a
 # SchurBlockJacobian{T, RType}, T Float64 or Float32 (the tables, their elimination and the reduced solve in T; the
-# residual, the gradient, x and every query in Float64). Per damping value, `reduce_qr!` eliminates every eliminated block from the
+# residual, the gradient, x and every query in Float64; the residual column goes through the elimination and into the
+# reduced problem in Float64, the T reflectors applied to it in Float64). Per damping value, `reduce_qr!` eliminates every eliminated block from the
 # raw tables (with its damping and scaling), the reduced problem min ‖J̃ x_r − r̃‖² + λ Σ s_r x_r² is solved
 # for the retained variables, and `backsubstitute!` gives x_e. RType, set by whoever built the prototype,
 # chooses the storage of the reduced system, and `linsolver` the solver applied to it (validated up front,
@@ -92,7 +93,8 @@ struct SparseQRReduced{S}
 end
 struct SparseNormalReduced{T, TF, TL, TC, P}
     S::SparseMatrixCSC{T, Int}
-    g::Vector{T}               # J̃ᵀr̃, in T: the factorizations solve in T
+    g::Vector{Float64}         # J̃ᵀr̃, accumulated in Float64 from the T J̃ and the Float64 r̃ (SP-B6)
+    rhs::Vector{T}             # g narrowed: the factorizations solve in T
     sol::Vector{T}
     pattern::P
     diag_inds::Vector{Int}
@@ -132,7 +134,7 @@ function reduced_system(J::SchurBlockJacobian{T, SparseMatrixCSC{T, Int}}, ws, s
     S_factor = usechol ? SparseArrays.CHOLMOD.analyze(S_chol) : nothing
     S_factor_ldl = ldl_analyze(Symmetric(S, :U))
     nr = jst.schur.nr
-    return SparseNormalReduced(S, zeros(T, nr), zeros(T, nr), pattern, collect(Int, pattern.diag_inds), S_chol, S_factor, S_factor_ldl)
+    return SparseNormalReduced(S, zeros(nr), zeros(T, nr), zeros(T, nr), pattern, collect(Int, pattern.diag_inds), S_chol, S_factor, S_factor_ldl)
 end
 # LSMR on J̃, matrix-free: the Krylov extension (KrylovExt) adds the system, for the reduction workspace it reads J̃ from
 function reduced_system(J::SchurBlockJacobian, ws, s::StaticSymbol{:lsmr})
@@ -324,18 +326,19 @@ function reduced_solve!(ls::QRSchurLinearSystem, red::SparseNormalReduced, s::Un
         nz[red.diag_inds[i]] += lambda * s_r[i]   # formed in Float64, narrowed
     end
     all(isfinite, nz) || return NotPositiveDefinite
+    copyto!(red.rhs, red.g)
     if !(s isa StaticSymbol{:ldl}) && !isnothing(red.S_chol)
         refresh_cholmod!(red.S_chol, red.S)
         LinearAlgebra.cholesky!(red.S_factor, red.S_chol; check = false)
         if LinearAlgebra.issuccess(red.S_factor)
-            cholmod_ldiv!(red.sol, red.S_factor, red.g)
+            cholmod_ldiv!(red.sol, red.S_factor, red.rhs)
             copyto!(ls.xr, red.sol)
             return Success
         end
     end
     F = ldl_factorize!(Symmetric(red.S, :U), red.S_factor_ldl)
     factorized(F) || return NotPositiveDefinite
-    ldiv!(red.sol, F, red.g)
+    ldiv!(red.sol, F, red.rhs)
     copyto!(ls.xr, red.sol)
     return is_indefinite(F) ? Indefinite : Success
 end

@@ -47,7 +47,7 @@ with_min_work(jst::SchurJacobianStructure, m) =
 with_min_work(J::SchurBlockJacobian{T, RT}, m) where {T, RT} = SchurBlockJacobian{T, RT}(copy(J.data), copy(J.r), with_min_work(J.structure, m))
 # ... and a QR workspace on the other structure, sharing the factored tables (so it need not be reduced again)
 with_min_work(ws::BlockLinearSystems.QRReductionWorkspace{T}, m) where T =
-    BlockLinearSystems.QRReductionWorkspace{T}(with_min_work(ws.structure, m), ws.factored, ws.scratch, ws.failed_block)
+    BlockLinearSystems.QRReductionWorkspace{T}(with_min_work(ws.structure, m), ws.factored, ws.fres, ws.scratch, ws.failed_block)
 
 # Measured inside a function: @allocated at a testset's top level counts spurious boxing on Julia 1.10
 allocs_dot(x, H, y) = @allocated dot(x, H, y)

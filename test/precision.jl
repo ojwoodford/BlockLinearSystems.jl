@@ -94,7 +94,7 @@ pr_jsolvers(::Type{SparseMatrixCSC{Float32, Int}}) = PR_CHOLMOD32 ? (:cholesky, 
             J64 = Float64.(Float32.(p.Jf))   # the stored Float32 Jacobian
             ls = makejacobiansystem(J, n, s)
             @test systemeltype(ls) === Float32
-            @test eltype(getA(ls).J.data) === Float32 && eltype(getA(ls).J.r) === Float64 && eltype(ls.ws.factored) === Float32
+            @test eltype(getA(ls).J.data) === Float32 && eltype(getA(ls).J.r) === Float64 && eltype(ls.ws.factored) === Float32 && eltype(ls.ws.fres) === Float64
             @test eltype(getb(ls)) === Float64 && eltype(getx(ls)) === Float64
             gradient!(getb(ls), getA(ls)); markstale!(getA(ls))
             @test getb(ls) ≈ J64' * Float64.(p.rf) rtol = 1e-13   # accumulated in Float64 from the Float32 J and the Float64 r
@@ -118,6 +118,19 @@ pr_jsolvers(::Type{SparseMatrixCSC{Float32, Int}}) = PR_CHOLMOD32 ? (:cholesky, 
             R <: Matrix && @test pr_allocs(ls, static(s)) == 0
             t = DampedLinearSolve.copy_structure(ls)
             @test t isa typeof(ls) && systemeltype(t) === Float32 && getx(t) === getx(ls)
+            # SP-B6: the residual goes through the elimination and the reduced solve as computed, not rounded to Float32:
+            # r and the same r rounded to Float32 give different steps (before SP-B6 they were identical, r being
+            # narrowed into the factored tables). LSMR's right-hand side is narrowed (decision 14), so not for it.
+            if s !== :lsmr
+                Jn = to32(p.J, R); Jn.r .= Float64.(Float32.(Jn.r))
+                ln = makejacobiansystem(Jn, n, s)
+                gradient!(getb(ln), getA(ln)); markstale!(getA(ln))
+                for λ in (0.0, 0.3)
+                    dampen!(ls, λ); dampen!(ln, λ)
+                    @test solve!(ls, s) in (Success, Indefinite) && solve!(ln, s) in (Success, Indefinite)
+                    @test getA(ls).J.r != getA(ln).J.r && getx(ls) != getx(ln)
+                end
+            end
         end
     end
     # The checks: element type, and decision 10 for the sparse reduced system (SPQR is Float64 only)

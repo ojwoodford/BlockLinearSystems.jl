@@ -11,7 +11,7 @@
 #
 # The raw storage (`SchurBlockJacobian`) holds each table without its residual column, [ J_r | J_e ] in `T`, and the
 # residual in a Float64 vector of its own, `r`, a column of `table_nrows[t]` entries per table (the damping rows'
-# zero); the reduction's working copy (`QRReductionWorkspace`) holds the whole table, the residual narrowed to `T`.
+# zero); the reduction's working copy (`QRReductionWorkspace`) has the same layout, its residual in `Float64` too (SP-B6).
 #
 # The reduction applies a Householder QR of the (damped) eliminated columns to the whole table. The top d_e rows
 # become [B | U | q] (U upper triangular), giving x_e = U^-1 (q - B x_r); the bottom m_e rows [J~_e | 0 | r~_e]
@@ -35,7 +35,7 @@ struct SchurJacobianStructure
     table_nrows::Vector{Int}         # Rows of each table (m_e + d_e for eliminated blocks, the group's rows for free ones)
     table_ncols::Vector{Int}         # Columns of each table (retained columns, eliminated columns, residual)
     table_top::Vector{Int}           # Rows of each table that do not belong to the reduced problem (d_e, or 0)
-    table_offsets::Vector{Int}       # Start of each whole table (with the residual) in the factored data, length ntables + 1
+    table_offsets::Vector{Int}       # Start of each whole table (with the residual) in a whole-table layout, length ntables + 1: its total is the threading decision's work measure
     raw_offsets::Vector{Int}         # Start of each raw table (without the residual) in the raw data, length ntables + 1
     residual_offsets::Vector{Int}    # Start of each table's residual column in the residual vector, length ntables + 1
     table_ptr::Vector{Int}           # Table-major CSR pointer into the entries, length ntables + 1
@@ -394,6 +394,6 @@ qr_scratch_length(jst::SchurJacobianStructure) = (d = max_run_blocksize(jst.schu
 # Bytes of element data allocated by a `SchurBlockJacobian{T}` (and its `QRReductionWorkspace{T}`).
 function schur_jacobian_bytes(jst::SchurJacobianStructure, ::Type{T}=Float64; workspace::Bool=true) where T
     bytes = raw_length(jst) * sizeof(T) + residual_length(jst) * sizeof(Float64)
-    workspace && (bytes += (table_length(jst) + qr_nscratch(jst) * qr_scratch_length(jst)) * sizeof(T))
+    workspace && (bytes += raw_length(jst) * sizeof(T) + (residual_length(jst) + qr_nscratch(jst) * qr_scratch_length(jst)) * sizeof(Float64))
     return bytes
 end
