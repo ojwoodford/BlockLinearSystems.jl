@@ -9,6 +9,10 @@
 # eliminated columns, then the residual. The last d_e rows are damping rows, zero in the raw storage and written
 # by the reduction. Rows that involve no eliminated block live in "free" tables [ J_r | r ], one per free group.
 #
+# The raw storage (`SchurBlockJacobian`) holds each table without its residual column, [ J_r | J_e ] in `T`, and the
+# residual in a Float64 vector of its own, `r`, a column of `table_nrows[t]` entries per table (the damping rows'
+# zero); the reduction's working copy (`QRReductionWorkspace`) has the same layout, its residual in `Float64` too (SP-B6).
+#
 # The reduction applies a Householder QR of the (damped) eliminated columns to the whole table. The top d_e rows
 # become [B | U | q] (U upper triangular), giving x_e = U^-1 (q - B x_r); the bottom m_e rows [J~_e | 0 | r~_e]
 # do not involve x_e. The bottom rows of every table, then the free rows, form the reduced problem
@@ -31,7 +35,9 @@ struct SchurJacobianStructure
     table_nrows::Vector{Int}         # Rows of each table (m_e + d_e for eliminated blocks, the group's rows for free ones)
     table_ncols::Vector{Int}         # Columns of each table (retained columns, eliminated columns, residual)
     table_top::Vector{Int}           # Rows of each table that do not belong to the reduced problem (d_e, or 0)
-    table_offsets::Vector{Int}       # Start of each table in the flat data, length ntables + 1
+    table_offsets::Vector{Int}       # Start of each whole table (with the residual) in a whole-table layout, length ntables + 1: its total is the threading decision's work measure
+    raw_offsets::Vector{Int}         # Start of each raw table (without the residual) in the raw data, length ntables + 1
+    residual_offsets::Vector{Int}    # Start of each table's residual column in the residual vector, length ntables + 1
     table_ptr::Vector{Int}           # Table-major CSR pointer into the entries, length ntables + 1
     entry_retained::Vector{Int}      # Retained block of each entry: the coupling entries of `schur`, then the free entries
     entry_col::Vector{Int}           # First column of each entry's retained block inside its table
@@ -112,11 +118,15 @@ function SchurJacobianStructure(
     end
 
     table_offsets = Vector{Int}(undef, ntables + 1)
+    raw_offsets = Vector{Int}(undef, ntables + 1)
+    residual_offsets = Vector{Int}(undef, ntables + 1)
     reduced_offsets = Vector{Int}(undef, ntables + 1)
-    table_offsets[1] = 1
+    table_offsets[1] = raw_offsets[1] = residual_offsets[1] = 1
     reduced_offsets[1] = 1
     for t in 1:ntables
         table_offsets[t + 1] = table_offsets[t] + table_nrows[t] * table_ncols[t]
+        raw_offsets[t + 1] = raw_offsets[t] + table_nrows[t] * (table_ncols[t] - 1)
+        residual_offsets[t + 1] = residual_offsets[t] + table_nrows[t]
         reduced_offsets[t + 1] = reduced_offsets[t] + table_nrows[t] - table_top[t]
     end
 
@@ -142,7 +152,7 @@ function SchurJacobianStructure(
 
     return SchurJacobianStructure(
         st, collect(Int, e_rows), collect(Int, free_rows), ntables,
-        table_nrows, table_ncols, table_top, table_offsets, table_ptr,
+        table_nrows, table_ncols, table_top, table_offsets, raw_offsets, residual_offsets, table_ptr,
         entry_retained, entry_col, entry_table, retained_ptr, retained_entry,
         reduced_offsets, doffsets, partition_columns(retained_ptr, nchunks),
         rowblocks.table, rowblocks.first, rowblocks.nrows, rowblocks.ptr, rowblocks.blocks
@@ -157,8 +167,11 @@ function SchurJacobianStructure(
     return SchurJacobianStructure(SchurStructure(r_dims, e_dims, couplings; nchunks, min_work), e_rows; nchunks, kwargs...)
 end
 
-# Total number of stored table entries, the work measure for the threading decision
+# Total number of entries of the whole tables (the factored copy), the work measure for the threading decision; of the
+# raw tables (without the residual); and of the residual vector
 @inline table_length(jst::SchurJacobianStructure) = jst.table_offsets[end] - 1
+@inline raw_length(jst::SchurJacobianStructure) = jst.raw_offsets[end] - 1
+@inline residual_length(jst::SchurJacobianStructure) = jst.residual_offsets[end] - 1
 @inline qr_threaded(jst::SchurJacobianStructure, nitems::Integer) = use_threads(nitems, table_length(jst), jst.schur.min_work)
 # The number of ranges the QR kernels that loop over tables or eliminated blocks split into: the structure's chunks
 @inline qr_nchunks(jst::SchurJacobianStructure) = max(jst.schur.nchunks, length(jst.col_chunks))
@@ -179,33 +192,36 @@ end
 # `reduced_normal_sparse!`). It is a type parameter, not a field, so that code receiving only the Jacobian can
 # dispatch on it; no method of this package reads it.
 struct SchurBlockJacobian{T, RType}
-    data::Vector{T}                  # Every table, column-major, at structure.table_offsets
+    data::Vector{T}                  # Every table without its residual column, column-major, at structure.raw_offsets
+    r::Vector{Float64}               # The residual: each table's column at structure.residual_offsets
     structure::SchurJacobianStructure
-    function SchurBlockJacobian{T, RType}(data::Vector{T}, jst::SchurJacobianStructure) where {T, RType}
+    function SchurBlockJacobian{T, RType}(data::Vector{T}, r::Vector{Float64}, jst::SchurJacobianStructure) where {T, RType}
         (RType === Matrix{T} || RType === SparseMatrixCSC{T, Int}) ||
             throw(ArgumentError("Reduced storage $RType is not supported; use Matrix{$T} or SparseMatrixCSC{$T, Int}"))
-        length(data) == table_length(jst) || throw(DimensionMismatch("Data has length $(length(data)), the structure needs $(table_length(jst))"))
-        return new{T, RType}(data, jst)
+        length(data) == raw_length(jst) || throw(DimensionMismatch("Data has length $(length(data)), the structure needs $(raw_length(jst))"))
+        length(r) == residual_length(jst) || throw(DimensionMismatch("The residual has length $(length(r)), the structure needs $(residual_length(jst))"))
+        return new{T, RType}(data, r, jst)
     end
 end
 
 SchurBlockJacobian{T, RType}(jst::SchurJacobianStructure) where {T, RType} =
-    SchurBlockJacobian{T, RType}(zeros(T, table_length(jst)), jst)
+    SchurBlockJacobian{T, RType}(zeros(T, raw_length(jst)), zeros(residual_length(jst)), jst)
 
-zero!(J::SchurBlockJacobian) = (fill!(J.data, zero(eltype(J.data))); J)
+zero!(J::SchurBlockJacobian) = (fill!(J.data, zero(eltype(J.data))); fill!(J.r, 0.0); J)
 
 # copy_structure(J::SchurBlockJacobian)
 # A new `SchurBlockJacobian` with the same (shared, immutable) structure, the same reduced storage type, and freshly
 # allocated, zeroed tables.
 copy_structure(J::SchurBlockJacobian{T, RType}) where {T, RType} =
-    SchurBlockJacobian{T, RType}(zeros(T, length(J.data)), J.structure)
+    SchurBlockJacobian{T, RType}(zeros(T, length(J.data)), zeros(length(J.r)), J.structure)
 
 # A copy with its own tables (the same values) and the same structure, and a copy of the values into a
 # `SchurBlockJacobian` of the same structure (as a cache of systems needs for a prototype)
-Base.copy(J::SchurBlockJacobian{T, RType}) where {T, RType} = SchurBlockJacobian{T, RType}(copy(J.data), J.structure)
+Base.copy(J::SchurBlockJacobian{T, RType}) where {T, RType} = SchurBlockJacobian{T, RType}(copy(J.data), copy(J.r), J.structure)
 function Base.copyto!(dest::SchurBlockJacobian, src::SchurBlockJacobian)
     dest.structure === src.structure || throw(ArgumentError("copyto!: the two SchurBlockJacobians have different structures"))
     copyto!(dest.data, src.data)
+    copyto!(dest.r, src.r)
     return dest
 end
 
@@ -213,8 +229,9 @@ end
 # Assembly views
 # ------------------------------------------------------------------------------------------------------------------
 
+# The raw table t, without its residual column
 @inline table_matrix(data::Vector, jst::SchurJacobianStructure, t::Int) =
-    @inbounds reshape(view(data, jst.table_offsets[t]:jst.table_offsets[t + 1] - 1), jst.table_nrows[t], jst.table_ncols[t])
+    @inbounds reshape(view(data, jst.raw_offsets[t]:jst.raw_offsets[t + 1] - 1), jst.table_nrows[t], jst.table_ncols[t] - 1)
 
 @inline sized_view(A, row, ::StaticInt{R}, col, ::StaticInt{C}) where {R, C} =
     SizedMatrix{R, C}(view(A, SR(0, R - 1) .+ row, SR(0, C - 1) .+ col))
@@ -288,14 +305,16 @@ end
 end
 
 # table_residual_block(J::SchurBlockJacobian, t[, row, nrows])
-# View of the rows `row:row+nrows-1` of the residual column of table `t`.
+# View of the rows `row:row+nrows-1` of the residual of table `t`, in the residual vector.
 @inline function table_residual_block(J::SchurBlockJacobian, t::Integer, row::Integer, nrows)
     jst = J.structure
     @boundscheck (1 <= t <= jst.ntables) || throw(BoundsError(J, t))
     nr_ = as_size(nrows)
     @boundscheck check_rows(J, Int(t), row, dynamic(nr_))
-    return sized_vview(table_matrix(J.data, jst, Int(t)), Int(row), nr_, @inbounds(jst.table_ncols[t]))
+    return sized_rview(J.r, @inbounds(jst.residual_offsets[t]) + Int(row) - 1, nr_)
 end
+@inline sized_rview(r, first, ::StaticInt{R}) where R = SizedVector{R}(view(r, SR(0, R - 1) .+ first))
+@inline sized_rview(r, first, nrows::Integer) = view(r, blockrange(first, nrows))
 @inline function table_residual_block(J::SchurBlockJacobian, t::Integer)
     jst = J.structure
     @boundscheck (1 <= t <= jst.ntables) || throw(BoundsError(J, t))
@@ -374,7 +393,7 @@ qr_scratch_length(jst::SchurJacobianStructure) = (d = max_run_blocksize(jst.schu
 # schur_jacobian_bytes(structure::SchurJacobianStructure, T=Float64; workspace=true) -> Int
 # Bytes of element data allocated by a `SchurBlockJacobian{T}` (and its `QRReductionWorkspace{T}`).
 function schur_jacobian_bytes(jst::SchurJacobianStructure, ::Type{T}=Float64; workspace::Bool=true) where T
-    n = table_length(jst)
-    workspace && (n += table_length(jst) + qr_nscratch(jst) * qr_scratch_length(jst))
-    return n * sizeof(T)
+    bytes = raw_length(jst) * sizeof(T) + residual_length(jst) * sizeof(Float64)
+    workspace && (bytes += raw_length(jst) * sizeof(T) + (residual_length(jst) + qr_nscratch(jst) * qr_scratch_length(jst)) * sizeof(Float64))
+    return bytes
 end

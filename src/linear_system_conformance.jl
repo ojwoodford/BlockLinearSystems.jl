@@ -63,8 +63,7 @@ function foreach_table_block(f, J::SchurBlockJacobian)
     end
     return nothing
 end
-table_view(J::SchurBlockJacobian, t) = reshape(view(J.data, J.structure.table_offsets[t]:J.structure.table_offsets[t+1]-1),
-                                               J.structure.table_nrows[t], J.structure.table_ncols[t])
+table_view(J::SchurBlockJacobian, t) = table_matrix(J.data, J.structure, t)   # without the residual column
 
 function dense_jacobian(J::SchurBlockJacobian)
     Jd = zeros(jacobian_nrows(J), jacobian_ncols(J))
@@ -162,7 +161,7 @@ function DampedLinearSolve.conformance_fillb!(ls::QRSchurLinearSystem, b::Abstra
     row0 = 0
     for t in 1:jst.ntables
         m = data_rows(jst, t)
-        table_view(J, t)[1:m, end] .= r[row0 .+ (1:m)]
+        view(J.r, jst.residual_offsets[t] .+ (0:m-1)) .= r[row0 .+ (1:m)]
         row0 += m
     end
     return ls

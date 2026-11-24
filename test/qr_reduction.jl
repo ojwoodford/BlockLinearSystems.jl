@@ -7,12 +7,14 @@ using Main.QRFixtures, Main.AllocFixtures
 
 # The QR elimination kernel. Test problems come from fixtures/QRFixtures.jl.
 
-# U, B and q of table e (the top d_e rows), and the rows below U in the eliminated columns
+# U, B and q of table e (the top d_e rows), and the rows below U in the eliminated columns. The factored tables have
+# the raw layout (no residual column); q = (Qᵀr)[1:d_e] is in the Float64 `fres` (SP-B6)
 function qr_factors(ws::QRReductionWorkspace, e)
     jst = ws.structure
     M, C, de = jst.table_nrows[e], jst.table_ncols[e], jst.table_top[e]
-    Tm = reshape(ws.factored[jst.table_offsets[e]:jst.table_offsets[e+1]-1], M, C)
-    return (U = Tm[1:de, C-de:C-1], B = Tm[1:de, 1:C-de-1], q = Tm[1:de, C], below = Tm[de+1:M, C-de:C-1])
+    Tm = reshape(ws.factored[jst.raw_offsets[e]:jst.raw_offsets[e+1]-1], M, C - 1)
+    q = ws.fres[jst.residual_offsets[e] .+ (0:de-1)]
+    return (U = Tm[1:de, C-de:C-1], B = Tm[1:de, 1:C-de-1], q, below = Tm[de+1:M, C-de:C-1])
 end
 
 @testset "QR kernel: UᵀU = E + λ diag(s_e), UᵀB = C, Uᵀq = b_e (E2)" begin
@@ -45,8 +47,12 @@ end
                 row += m
             end
             # Free tables are copied unchanged
-            o = jst.table_offsets[st.neblocks + 1]
-            @test ws.factored[o:end] == J.data[o:end]
+            for t in st.neblocks+1:jst.ntables
+                M, C = jst.table_nrows[t], jst.table_ncols[t]
+                Tf = reshape(ws.factored[jst.raw_offsets[t]:jst.raw_offsets[t+1]-1], M, C - 1)
+                @test Tf == reshape(J.data[jst.raw_offsets[t]:jst.raw_offsets[t+1]-1], M, C - 1)
+                @test ws.fres[jst.residual_offsets[t]:jst.residual_offsets[t+1]-1] == J.r[jst.residual_offsets[t]:jst.residual_offsets[t+1]-1]   # not narrowed
+            end
         end
     end
 end
@@ -114,16 +120,16 @@ reduce_allocs(ws, J, sc, lambda) = @allocated reduce_qr!(ws, J, sc, lambda)
         jst = J.structure
         nr, n = jst.schur.nr, size(p.Jf, 2)
         sc_e = qr_scaling(p, rng)[nr+1:n]
-        raw = copy(J.data)
+        raw, rawr = copy(J.data), copy(J.r)
         ws = QRReductionWorkspace(J)
         reduce_qr!(ws, J, sc_e, T(0.1))                       # warm-up
         for lambda in T.((2.0, 0.0, 0.5, 1e-3))
             reduce_qr!(ws, J, sc_e, lambda)
             fresh = QRReductionWorkspace(J)
             @test reduce_qr!(fresh, J, sc_e, lambda)
-            @test ws.factored == fresh.factored
+            @test ws.factored == fresh.factored && ws.fres == fresh.fres
         end
-        @test J.data == raw                                   # the raw tables are kept
+        @test J.data == raw && J.r == rawr                    # the raw tables are kept
         # No allocation, serial or threaded (R2; bounded when threaded on Julia 1.10)
         for minwork in (typemax(Int), 0)
             Jm = with_min_work(J, minwork)
@@ -144,28 +150,28 @@ end
         @test reduce_qr!(ws1, p1.J, sc_e, 0.2)
         ws4 = QRReductionWorkspace(p4.J)
         @test reduce_qr!(ws4, p4.J, sc_e, 0.2)
-        @test ws4.factored == ws1.factored
+        @test ws4.factored == ws1.factored && ws4.fres == ws1.fres
     end
     p = qr_problems(Float64)[2]
     ws = QRReductionWorkspace(p.J)
     tw = trial_workspace(ws)
     @test tw.structure === ws.structure && tw.scratch === ws.scratch
-    @test tw.factored !== ws.factored && tw.failed_block !== ws.failed_block
+    @test tw.factored !== ws.factored && tw.fres !== ws.fres && tw.failed_block !== ws.failed_block
     n_e = size(p.Jf, 2) - p.J.structure.schur.nr
     @test reduce_qr!(ws, p.J, ones(n_e), 0.1)
-    before = copy(ws.factored)
+    before, beforer = copy(ws.factored), copy(ws.fres)
     J2 = copy_structure(p.J)
     eliminated_block(J2, 1) .= 0                      # fails at block 1
     @test !reduce_qr!(tw, J2, ones(n_e), 0.0)
-    @test tw.failed_block[] == 1 && ws.failed_block[] == 0 && ws.factored == before
+    @test tw.failed_block[] == 1 && ws.failed_block[] == 0 && ws.factored == before && ws.fres == beforer
 end
 
 @testset "Memory estimate matches the allocation (E2)" begin
     for T in (Float64, Float32), p in qr_problems(T)
         jst = p.J.structure
         ws = QRReductionWorkspace(p.J)
-        @test schur_jacobian_bytes(jst, T) == sizeof(p.J.data) + sizeof(ws.factored) + sum(sizeof, ws.scratch)
-        @test schur_jacobian_bytes(jst, T; workspace=false) == sizeof(p.J.data)
+        @test schur_jacobian_bytes(jst, T) == sizeof(p.J.data) + sizeof(p.J.r) + sizeof(ws.factored) + sizeof(ws.fres) + sum(sizeof, ws.scratch)
+        @test schur_jacobian_bytes(jst, T; workspace=false) == sizeof(p.J.data) + sizeof(p.J.r)
     end
     # The estimate needs only the structure, and grows with couplings times rows
     big = SchurJacobianStructure(fill(6, 10), fill(3, 1000), [collect(1:10) for _ in 1:1000], fill(40, 1000))

@@ -16,12 +16,11 @@ import BlockLinearSystems: QRReductionWorkspace, reduced_nrows, reduced_mul!, re
     reduced_diagonal_blocks!, factor_diagonal_blocks!, solve_diagonal_blocks!
 
 # LSMR's stopping tolerances: Krylov's own defaults, stated here so that a change in Krylov does not change them, and
-# equal to those of DampedLinearSolve's LSMR on a Jacobian. Starting values, not measured (rules.md 26; improvements.md
-# item 5). itmax is Krylov's default, m̃ + n_r iterations.
-const LSMR_ETOL = sqrt(eps(Float64))
-const LSMR_AXTOL = sqrt(eps(Float64))
-const LSMR_BTOL = sqrt(eps(Float64))
-const LSMR_CONLIM = 1 / sqrt(eps(Float64))
+# equal to those of DampedLinearSolve's LSMR on a Jacobian: √eps(T) and 1/√eps(T) for the system's element type T
+# (class (a), single-precision.md). Starting values, not measured (rules.md 26; improvements.md item 5). itmax is
+# Krylov's default, m̃ + n_r iterations.
+lsmr_tol(::Type{T}) where T = sqrt(eps(T))
+lsmr_conlim(::Type{T}) where T = 1 / sqrt(eps(T))
 
 # The reduced problem min ‖J̃ x_r − r̃‖² + λ Σ s_r x_r², solved by LSMR as the least-squares problem
 #     min ‖Ā x_r − [r̃; 0]‖,  Ā = [J̃; Diagonal(√(λ s_r))]   (m̃ + n_r rows; with λ = 0 the damping rows are zero),
@@ -32,25 +31,26 @@ const LSMR_CONLIM = 1 / sqrt(eps(Float64))
 # damping rows: it is not replaced by N. itmax is set explicitly to m̃ + n_r.
 # The reduced system of the QR-eliminated system: it implements what that system calls (dampen!, solve!, getx), with
 # r̃, J̃ and the diagonal blocks read from the reduction workspace, which the QR-eliminated system has factored before
-# each solve.
-mutable struct LsmrReducedSystem{W} <: AbstractLinearSystem
-    const ws::QRReductionWorkspace{Float64}
+# each solve. In the element type T of the factored tables, Krylov's vectors included (decision 11: Krylov runs in the
+# system's element type); λ is Float64, and √(λ s_r) is formed in Float64 and narrowed.
+mutable struct LsmrReducedSystem{T, W} <: AbstractLinearSystem
+    const ws::QRReductionWorkspace{T}
     const kws::W                 # Krylov's workspace, for m̃ + n_r rows
-    const rhs::Vector{Float64}   # [r̃; 0]
-    const sqd::Vector{Float64}   # √(λ s_r), the damping rows' diagonal
-    const D::Vector{Float64}     # the diagonal blocks of ĀᵀĀ, then their Cholesky factors
-    const x::Vector{Float64}
+    const rhs::Vector{T}         # [r̃; 0]
+    const sqd::Vector{T}         # √(λ s_r), the damping rows' diagonal
+    const D::Vector{T}           # the diagonal blocks of ĀᵀĀ, then their Cholesky factors
+    const x::Vector{T}
     const mt::Int
     lambda::Float64
     scaling::Union{Nothing, Vector{Float64}}
 end
 DampedLinearSolve.dampen!(red::LsmrReducedSystem, lambda::Real) = (red.lambda = Float64(lambda); red.scaling = nothing; red)
 DampedLinearSolve.dampen!(red::LsmrReducedSystem, lambda::Real, scaling) = (red.lambda = Float64(lambda); red.scaling = scaling; red)
-function DampedLinearSolve.makejacobiansystem(ws::QRReductionWorkspace{Float64}, nr::Integer, ::StaticSymbol{:lsmr})
+function DampedLinearSolve.makejacobiansystem(ws::QRReductionWorkspace{T}, nr::Integer, ::StaticSymbol{:lsmr}) where T
     jst = ws.structure
     mt, n = reduced_nrows(jst), Int(nr)
-    return LsmrReducedSystem(ws, Krylov.LsmrWorkspace(mt + n, n, Vector{Float64}), zeros(mt + n), zeros(n),
-                             zeros(jst.doffsets[end] - 1), zeros(n), mt, 0.0, nothing)
+    return LsmrReducedSystem(ws, Krylov.LsmrWorkspace(mt + n, n, Vector{T}), zeros(T, mt + n), zeros(T, n),
+                             zeros(T, jst.doffsets[end] - 1), zeros(T, n), mt, 0.0, nothing)
 end
 
 # Ā (and its adjoint) over a system whose reduction workspace is factored and whose damping rows are set
@@ -63,7 +63,7 @@ end
 Base.size(A::AugmentedOperator) = (A.red.mt + length(A.red.x), length(A.red.x))
 Base.size(A::AugmentedOperatorT) = reverse(size(AugmentedOperator(A.red)))
 Base.size(A::Union{AugmentedOperator, AugmentedOperatorT}, d::Integer) = size(A)[d]
-Base.eltype(::Union{AugmentedOperator, AugmentedOperatorT}) = Float64
+Base.eltype(A::Union{AugmentedOperator, AugmentedOperatorT}) = eltype(A.red.x)
 Base.adjoint(A::AugmentedOperator) = AugmentedOperatorT(A.red)
 function LinearAlgebra.mul!(y::AbstractVector, A::AugmentedOperator, v::AbstractVector)
     red = A.red
@@ -90,7 +90,7 @@ struct BlockJacobi{S}
 end
 Base.size(N::BlockJacobi) = (length(N.red.x), length(N.red.x))
 Base.size(N::BlockJacobi, d::Integer) = size(N)[d]
-Base.eltype(::BlockJacobi) = Float64
+Base.eltype(N::BlockJacobi) = eltype(N.red.x)
 LinearAlgebra.mul!(y::AbstractVector, N::BlockJacobi, v::AbstractVector) =
     solve_diagonal_blocks!(y, N.red.D, N.red.ws.structure.schur.r_dims, v)
 
@@ -105,7 +105,7 @@ function DampedLinearSolve.solve!(red::LsmrReducedSystem, ::StaticSymbol{:lsmr})
     s_r = red.scaling
     @inbounds for i in 1:nr
         red.sqd[i] = sqrt(lambda * (isnothing(s_r) ? 1.0 : s_r[i]))
-        red.rhs[mt + i] = 0.0
+        red.rhs[mt + i] = 0
     end
     # D = the diagonal blocks of J̃ᵀJ̃, plus λ s_r on their diagonals; a block that is not positive definite (or not
     # finite) is reported as the other reduced solves report a singular reduced matrix
@@ -121,8 +121,10 @@ function DampedLinearSolve.solve!(red::LsmrReducedSystem, ::StaticSymbol{:lsmr})
         k += d
     end
     factor_diagonal_blocks!(red.D, st.r_dims) || return NotPositiveDefinite
+    T = eltype(red.x)
+    tol = lsmr_tol(T)
     Krylov.lsmr!(red.kws, AugmentedOperator(red), red.rhs; N = BlockJacobi(red), itmax = mt + nr,
-                 etol = LSMR_ETOL, axtol = LSMR_AXTOL, btol = LSMR_BTOL, conlim = LSMR_CONLIM)
+                 etol = tol, axtol = tol, btol = tol, conlim = lsmr_conlim(T))
     x = red.kws.x
     (red.kws.stats.solved && all(isfinite, x)) || return NotPositiveDefinite
     copyto!(red.x, x)

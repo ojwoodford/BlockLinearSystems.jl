@@ -527,10 +527,11 @@ blockrange
 
 """
     SchurBlockJacobian{T, RType}(structure::SchurJacobianStructure)
-    SchurBlockJacobian{T, RType}(data::Vector{T}, structure::SchurJacobianStructure)
+    SchurBlockJacobian{T, RType}(data::Vector{T}, r::Vector{Float64}, structure::SchurJacobianStructure)
 
 Raw storage of a least-squares problem laid out by `structure` (see [`SchurJacobianStructure`](@ref)):
-one dense table per eliminated block and per free group, in one flat vector `data`. It is the Jacobian prototype a caller fills, the analogue of
+one dense table of `J` per eliminated block and per free group, in one flat vector `data` of element type `T`,
+and the residual in a vector `r` of its own, always `Float64`. It is the Jacobian prototype a caller fills, the analogue of
 [`SchurBlockHessian`](@ref) on the Hessian path. `T` may be any floating-point type; `Float64` and
 `Float32` are tested.
 
@@ -541,25 +542,26 @@ system built from `J` (DampedLinearSolve's `makejacobiansystem`) solves after el
 storage option), so that code receiving only `J` can dispatch on `J isa SchurBlockJacobian{T, Matrix{T}}`. There
 is no default. The tables are the same for both.
 
-The data-taking form uses `data` as the storage (no copy); its length must be the structure's table
-length, else `DimensionMismatch`.
+The data-taking form uses `data` and `r` as the storage (no copy); their lengths must be the structure's, else
+`DimensionMismatch`.
 
 Fill it by row block, through [`blockentry`](@ref), [`block`](@ref) and [`residual_block`](@ref). The rows of
 different row blocks are disjoint, so threads that fill different row blocks never write the same memory and need
 no per-thread copies. The damping rows are not reachable through the views and stay zero. The elimination reads
 these tables and never modifies them, so a change of the damping re-factors from them.
 
-**Fields.** `data` and `structure` may be read for operations on the whole system: zero it, copy it, compare
-structures by identity. Where a block lives inside `data` is not public: address it by row block with
+**Fields.** `data`, `r` and `structure` may be read for operations on the whole system: zero it, copy it, compare
+structures by identity. Where a block lives inside `data` or `r` is not public: address it by row block with
 [`blockentry`](@ref), [`block`](@ref) and [`residual_block`](@ref).
 
-`copy(J)` returns a `SchurBlockJacobian` with its own copy of the tables and the same structure, and
-`copyto!(dest, src)` copies the tables of one into another of the same structure.
-[`zero!`](@ref) zeroes every table; [`copy_structure`](@ref) returns a new, zeroed `SchurBlockJacobian`
+`copy(J)` returns a `SchurBlockJacobian` with its own copy of the tables and the residual and the same structure,
+and `copyto!(dest, src)` copies both of one into another of the same structure.
+[`zero!`](@ref) zeroes every table and the residual; [`copy_structure`](@ref) returns a new, zeroed `SchurBlockJacobian`
 of the same type, sharing only the (immutable) structure. Each table is dense in every retained block coupled to its
-eliminated block, `(m_e + d_e) × (c_e + d_e + 1)` for `m_e` rows, `d_e` eliminated and `c_e` coupled retained
-columns, and the elimination keeps a factored copy: far more than the Hessian path's `d_e² + d_e c_e` for an
-eliminated block seen by many rows.
+eliminated block, `(m_e + d_e) × (c_e + d_e)` for `m_e` rows, `d_e` eliminated and `c_e` coupled retained
+columns (with `m_e + d_e` residual entries), and the elimination keeps a factored copy of each table, in `T`,
+and of its residual, in `Float64`: far more than the Hessian path's `d_e² + d_e c_e` for an eliminated block seen
+by many rows.
 """
 SchurBlockJacobian
 
@@ -568,8 +570,8 @@ SchurBlockJacobian
 
 Bytes of element data a [`SchurBlockJacobian{T}`](@ref SchurBlockJacobian) (of either reduced storage) for `structure` allocates
 and, with `workspace=true`, its [`QRReductionWorkspace{T}`](@ref QRReductionWorkspace) too (a factored
-copy of every table, plus scratch for eliminated blocks above `BlockLinearSystems.D_STATIC`
-dimensions). Computed from the structure alone, so a caller can refuse, or choose the Schur route,
+copy of every table in `T` and of the residual in `Float64`, plus `Float64` scratch for eliminated blocks above
+`BlockLinearSystems.D_STATIC` dimensions). Computed from the structure alone, so a caller can refuse, or choose the Schur route,
 before allocating anything.
 
 Each table is dense in every retained block coupled to its eliminated block, so its size is
@@ -627,7 +629,7 @@ eliminated_block
 """
     residual_block(J::SchurBlockJacobian, k[, nrows])
 
-Mutable view of row block `k`'s rows of the residual column, for a [`SchurBlockJacobian`](@ref) whose
+Mutable view of row block `k`'s rows of the residual, in the `Float64` vector `J.r`, for a [`SchurBlockJacobian`](@ref) whose
 structure was built from a description. `nrows`, if given, must be the row block's number of rows (checked
 under `@boundscheck`); a static `nrows` gives a `SizedVector`, otherwise a plain view. It allocates nothing.
 The residual is `r` of `min ‖J x - r‖²`: callers that hold `f(x) ≈ f(x0) + J dx` store `r = -f(x0)`, or store
@@ -678,14 +680,16 @@ coupling_entry
     QRReductionWorkspace(J::SchurBlockJacobian)
 
 Storage for QR elimination, the analogue of [`SchurReductionWorkspace`](@ref): `factored`, a factored
-copy of every table in the layout of the raw storage (free tables are copied unchanged), per-chunk
-scratch for back-substitution of eliminated blocks above `BlockLinearSystems.D_STATIC` dimensions, and
-the failure flag `failed_block` (an `Atomic{Int}`: 0, or the lowest failing eliminated block).
+copy of every table in the layout of the raw storage, in `T` (free tables are copied unchanged); `fres`, the
+factored residual, in `Float64` and in the layout of `J.r`; per-chunk `Float64` scratch for back-substitution
+of eliminated blocks above `BlockLinearSystems.D_STATIC` dimensions; and the failure flag `failed_block` (an
+`Atomic{Int}`: 0, or the lowest failing eliminated block).
 
-After [`reduce_qr!`](@ref), the top `d_e` rows of table `e` hold `[B | U | q]` with `U` upper
-triangular, and the rows below hold `[J̃_e | 0 | r̃_e]`. The Householder reflectors are not kept (nothing
-needs `Q` afterwards), so the eliminated columns hold exactly `[U; 0]` and each factored table equals
-`Qᵀ` times the damped raw table. All the kernels of the reduced problem read these tables.
+After [`reduce_qr!`](@ref), the top `d_e` rows of table `e` hold `[B | U]` with `U` upper triangular, and the
+rows below hold `[J̃_e | 0]`; the residual's top `d_e` rows hold `q`, and the rest `r̃_e`. The Householder
+reflectors are not kept (nothing needs `Q` afterwards), so the eliminated columns hold exactly `[U; 0]`, each
+factored table equals `Qᵀ` times the damped raw table, and the factored residual `Qᵀ r`, the `T` reflectors
+applied to it in `Float64`. All the kernels of the reduced problem read these.
 
 [`trial_workspace`](@ref) gives a second workspace for a trial system with the same structure.
 """
@@ -700,14 +704,17 @@ factored tables are needed for back-substitution after the solve), with the scra
 trial_workspace(::QRReductionWorkspace)
 
 """
-    reduce_qr!(ws::QRReductionWorkspace{T}, J::SchurBlockJacobian{T}, scaling_e, lambda) -> Bool
+    reduce_qr!(ws::QRReductionWorkspace{T}, J::SchurBlockJacobian{T}, scaling_e, lambda, s = ones) -> Bool
 
-Eliminate every eliminated block of `J` by QR, into `ws`. For each eliminated block `e`:
+Eliminate every eliminated block of `J` by QR, into `ws`. With a conditioning scale `s` over all the variables
+(SP-B2; the system's solve passes it), the tables' columns are scaled by it as they are copied and the damping rows
+are `√(lambda * scaling_e)·s`: the elimination is that of `J S`, in the scaled variables. For each eliminated block `e`:
 
-1. copy its raw table to `ws.factored`;
+1. copy its raw table to `ws.factored`, and its residual to `ws.fres`;
 2. write the damping rows `[0 | √(lambda * scaling_e[e]) | 0]` (a diagonal `d_e × d_e` block), so that the
    factored table represents `[J; √λ·D]` with `D = Diagonal(√scaling_e)`;
-3. Householder-factor the eliminated columns, applying `Qᵀ` to the whole table in place.
+3. Householder-factor the eliminated columns, applying `Qᵀ` to the whole table in place, and to the residual in
+   `Float64`.
 
 This solves the eliminated part of `(JᵀJ + λ·Diagonal(s)) x = Jᵀr`; `scaling_e` (length
 `sum(e_dims)`) is the eliminated part of `s`, in the units of `diag(JᵀJ)` (for Marquardt scaling,

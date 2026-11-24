@@ -11,10 +11,11 @@ const BLS = BlockLinearSystems
 rng = Random.Xoshiro(3)
 layout(minwork) = SchurJacobianStructure(fill(6, 8), [3, 3, 9, 12, 3, 3], [[1, 2], [2, 3], [4], [5, 6], [7], [8, 1]], fill(14, 6);
                                          nchunks=2, min_work=minwork)
-data = randn(rng, length(SchurBlockJacobian{Float64, Matrix{Float64}}(layout(0)).data))
+J0 = SchurBlockJacobian{Float64, Matrix{Float64}}(layout(0))
+data, res = randn(rng, length(J0.data)), randn(rng, length(J0.r))
 sc = ones(sum(Int, layout(0).schur.e_dims))
 function factored(minwork)
-    J = SchurBlockJacobian{Float64, Matrix{Float64}}(copy(data), layout(minwork))
+    J = SchurBlockJacobian{Float64, Matrix{Float64}}(copy(data), copy(res), layout(minwork))
     ws = QRReductionWorkspace(J)
     reduce_qr!(ws, J, sc, 0.1) || error("reduce_qr! failed")
     return copy(ws.factored)

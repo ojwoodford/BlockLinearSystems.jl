@@ -222,7 +222,7 @@ end
             residual_block(J, k) .= r
             table_residual_block(J0, table[k], first[k], m) .= r
         end
-        @test J.data == J0.data
+        @test J.data == J0.data && J.r == J0.r
         n = sum(bs)
         g = BlockLinearSystems.jtr!(zeros(n), J)
         scaling = 0.5 .+ rand(rng, n)
