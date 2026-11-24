@@ -114,7 +114,8 @@ Base.@propagate_inbounds Base.getindex(c::ScaledColumn{T}, i::Int) where T = sca
 Base.eltype(::Type{<:ScaledColumn{T}}) where T = T
 @inline scaled_column(C::Vector{T}, off::Int, s::AbstractVector, so::Int, f::Float64, ::Int) where T = ScaledColumn{T, Vector{T}, typeof(s)}(C, off, s, so, f)
 
-# dot_dim with one operand a (scaled) column: the same operations, in the same order, as dot_dim of the stored arrays
+# dot(a[ia:ia+de-1], v[1:de]) (or v against b) with a static or run-time dimension, one operand a (scaled) column,
+# accumulated in the promoted element type (Float64 for a Float32 block against a Float64 vector)
 @inline function dot_col(a::Vector, ia::Int, v, s_de::Union{StaticInt, Int})
     acc = zero(promote_type(eltype(a), eltype(v)))
     @inbounds for i in 0:dimval(s_de) - 1
