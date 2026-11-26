@@ -173,6 +173,7 @@ Expand a block-level permutation into a scalar-level permutation vector.
 function expand_block_perm(block_perm::AbstractVector{<:Integer}, block_sizes::AbstractVector{<:Integer})
     nblocks = length(block_sizes)
     length(block_perm) == nblocks || throw(DimensionMismatch("block_perm has length $(length(block_perm)), but there are $nblocks block sizes"))
+    isperm(block_perm) || throw(ArgumentError("block_perm must be a permutation of 1:$nblocks (each block once), got $(block_perm)"))
     total_dim = sum(Int, block_sizes; init=0)
     scalar_perm = Vector{Int}(undef, total_dim)
     boffsets = Vector{Int}(undef, nblocks)
