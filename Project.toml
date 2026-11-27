@@ -1,6 +1,6 @@
 name = "BlockLinearSystems"
 uuid = "a7d4e89f-9c3b-4d0e-8f5a-5b8c7d1e4f28"
-version = "0.3.0"
+version = "0.3.1"
 authors = ["Oliver Woodford"]
 
 [deps]
@@ -8,6 +8,7 @@ DampedLinearSolve = "d0bc3897-303a-4c2a-8def-9d5e444f89b8"
 HybridArrays = "1baab800-613f-4b0a-84e4-9cd3431bfbb9"
 LDLFactorizations = "40e66cde-538c-5869-a4ad-c39174c6795b"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+PrecompileTools = "aea7be01-6a6a-4083-8856-8a6e6704d82a"
 SIRBSDispatch = "c8e4d12a-5f3b-4a9c-8d2e-1f6b3a7c9e04"
 SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
 Static = "aedffcd0-7271-4cad-89d0-dc628f76c6d3"
@@ -29,6 +30,7 @@ Krylov = "0.10"
 LDLFactorizations = "0.10"
 LinearAlgebra = "1.10"
 Polyester = "0.7"
+PrecompileTools = "1"
 Random = "1.10"
 SIRBSDispatch = "0.1.2"
 SparseArrays = "1.10"

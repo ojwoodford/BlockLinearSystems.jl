@@ -17,12 +17,15 @@ jobs:
   test:
     name: Julia ${{ matrix.version }} - ${{ matrix.threads }} thread(s) - ${{ matrix.test_args || 'all groups' }} - ${{ matrix.os }} - ${{ matrix.arch }} - ${{ github.event_name }}
     runs-on: ${{ matrix.os }}
+    # Nightly is informational: its failures (often in dependencies, on an unreleased Julia) do not fail the run
+    continue-on-error: ${{ matrix.version == 'nightly' }}
     strategy:
       fail-fast: false
       matrix:
         version:
           - '1.10'
           - '1'
+          - 'nightly'
         os:
           - ubuntu-latest
         arch:
@@ -32,8 +35,8 @@ jobs:
         test_args:
           - ''          # every test group (test/runtests.jl)
         include:
-          # The threaded kernels only take their threaded paths with more than one thread: on 4 threads, only the
-          # thread-dependent test group runs (rules.md 30)
+          # The threaded paths are only taken with more than one thread: on 4 threads, only the thread-dependent test
+          # group runs (rules.md 30)
           - version: '1.10'
             os: ubuntu-latest
             arch: x64
@@ -54,36 +57,17 @@ jobs:
           arch: ${{ matrix.arch }}
       - uses: julia-actions/cache@v3
       - uses: julia-actions/julia-buildpkg@v1
+        continue-on-error: ${{ matrix.version == 'nightly' }}
       - uses: julia-actions/julia-runtest@v1
+        continue-on-error: ${{ matrix.version == 'nightly' }}
         with:
           test_args: ${{ matrix.test_args }}
+      # Nightly's coverage is not uploaded: a partial or differently counted run would change the merged figure
       - uses: julia-actions/julia-processcoverage@v1
+        if: matrix.version != 'nightly'
       - uses: codecov/codecov-action@v7
+        if: matrix.version != 'nightly'
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
-          slug: ojwoodford/BlockLinearSystems.jl
           fail_ci_if_error: false
-  docs:
-    name: Documentation
-    runs-on: ubuntu-latest
-    permissions:
-      actions: write
-      contents: write
-      statuses: write
-    steps:
-      - uses: actions/checkout@v7
-      - uses: julia-actions/setup-julia@v3
-        with:
-          version: '1'
-      - uses: julia-actions/cache@v3
-      - name: Configure doc environment
-        shell: julia --project=docs --color=yes {0}
-        run: |
-          using Pkg
-          Pkg.develop(PackageSpec(path=pwd()))
-          Pkg.instantiate()
-      - name: Build and deploy documentation
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          DOCUMENTER_KEY: ${{ secrets.DOCUMENTER_KEY }}
-        run: julia --project=docs --color=yes docs/make.jl
+          slug: ojwoodford/BlockLinearSystems.jl

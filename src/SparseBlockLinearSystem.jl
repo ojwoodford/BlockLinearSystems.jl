@@ -28,6 +28,8 @@ struct SparseBlockLinearSystem{T}
     end
 
     function SparseBlockLinearSystem{T}(data::Vector{T}, indices::SparseArrays.SparseMatrixCSC{Int, Int}, indicestransposed::SparseArrays.SparseMatrixCSC{Int, Int}, rowblocksizes::BlockRLE{BlockSize, Int}, colblocksizes::BlockRLE{BlockSize, Int}, m::Integer, n::Integer) where T
+        m == sum(rowblocksizes) || throw(DimensionMismatch("m = $m, but the row block sizes sum to $(Int(sum(rowblocksizes)))"))
+        n == sum(colblocksizes) || throw(DimensionMismatch("n = $n, but the column block sizes sum to $(Int(sum(colblocksizes)))"))
         return new{T}(data, indices, indicestransposed, rowblocksizes, colblocksizes, Int(m), Int(n))
     end
 end

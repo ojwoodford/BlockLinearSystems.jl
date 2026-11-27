@@ -295,4 +295,10 @@ lp1_bytes(ls, lambda, scaling) = (lp1_solve!(ls, lambda, scaling); @allocated lp
     end
 end
 
+# The precompile workload (src/precompile.jl), which the package and its Polyester extension run while they are
+# precompiled: it runs
+@testset "precompile workload" begin
+    @test isnothing(BlockLinearSystems.precompile_workload())
+end
+
 end # module DampedLinearSolveQREliminationTests

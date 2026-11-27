@@ -345,6 +345,12 @@ end
 @testset "Input validation throws ArgumentError or DimensionMismatch, not AssertionError (AB12)" begin
     # expand_block_perm and sort_schur_blocks: lengths
     @test_throws DimensionMismatch BlockLinearSystems.expand_block_perm([1, 2], [2, 3, 4])
+    # A5: a block_perm that repeats, omits or names a block that does not exist is not a permutation
+    for bad in ([1, 1, 3], [2, 3, 3], [1, 2, 4], [0, 1, 2])
+        err = try BlockLinearSystems.expand_block_perm(bad, [2, 3, 4]); nothing catch e e end
+        @test err isa ArgumentError && occursin("permutation", err.msg)
+    end
+    @test BlockLinearSystems.expand_block_perm([3, 1, 2], [2, 3, 4]) == [6, 7, 8, 9, 1, 2, 3, 4, 5]
     @test_throws DimensionMismatch sort_schur_blocks([true, false], [2, 3, 4], [[2], Int[]])
     @test_throws DimensionMismatch sort_schur_blocks([true, false], [2, 3], [[2]])
     @test sort_schur_blocks([true, false], [2, 3], [[2], Int[]]) isa Vector{Int}

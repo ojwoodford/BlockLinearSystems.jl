@@ -1,7 +1,8 @@
 module PolyesterExt
 
 import Polyester
-import BlockLinearSystems: batch_foreach, threadargs, fromthreadargs
+import BlockLinearSystems: batch_foreach, threadargs, fromthreadargs, precompile_workload
+using PrecompileTools: @compile_workload
 
 # Kept out of line so that the serial path does not pay for the closure Polyester builds. `f` (a closure over the
 # kernel's arrays and structures) reaches the threads as `threadargs(f)`, an isbits value, so the launch allocates
@@ -60,5 +61,8 @@ end
     return Expr(:block, Expr(:meta, :inline), :(ThreadArgs{$x, Tuple{$(types...)}}($(Expr(:tuple, leaves...)))))
 end
 @generated fromthreadargs(a::ThreadArgs{T}) where T = fromthreadargs_expr(T, :a, Ref(0))
+
+# The workload of src/precompile.jl again, compiled with the threaded method of `batch_foreach` above
+@compile_workload precompile_workload()
 
 end # module PolyesterExt

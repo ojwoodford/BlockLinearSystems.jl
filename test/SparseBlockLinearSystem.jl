@@ -114,6 +114,13 @@ end
     # Direct data constructor
     b_direct = SparseBlockLinearSystem{Float64}(copy(b.data), b.indices, b.indicestransposed, b.rowblocksizes, b.columnblocksizes, b.m, b.n)
     @test Matrix(b_direct) == out
+    # A5: m and n must be the sums of the row and column block sizes, in both forms of the data constructor
+    for (m, n) in ((b.m + 1, b.n), (b.m, b.n - 1))
+        err = try SparseBlockLinearSystem{Float64}(copy(b.data), b.indices, b.indicestransposed, b.rowblocksizes, b.columnblocksizes, m, n); nothing catch e e end
+        @test err isa DimensionMismatch && occursin("block sizes", err.msg)
+        err = try SparseBlockLinearSystem{Float64}(copy(b.data), b.indices, b.indicestransposed, collect(b.rowblocksizes), collect(b.columnblocksizes), m, n); nothing catch e e end
+        @test err isa DimensionMismatch && occursin("block sizes", err.msg)
+    end
 
     # Bounds & dimension checks
     @test_throws BoundsError block(b, 10, 1)
